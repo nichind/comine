@@ -267,6 +267,14 @@
       section: 'downloads',
       keywords: ['aria2', 'splits', 'chunks', 'pieces', 'части'],
     },
+    aria2DisableIPv6: {
+      section: 'downloads',
+      keywords: ['aria2', 'ipv6', 'ipv4', 'network', 'disable', 'сеть'],
+    },
+    aria2CustomArgs: {
+      section: 'downloads',
+      keywords: ['aria2', 'custom', 'args', 'arguments', 'advanced', 'аргументы'],
+    },
     downloadSpeedLimit: {
       section: 'downloads',
       keywords: ['speed', 'limit', 'throttle', 'bandwidth', 'скорость', 'лимит'],
@@ -1686,6 +1694,41 @@
                 />
                 <span class="slider-value">{$settings.aria2Splits}</span>
               </div>
+            </SettingItem>
+          {/if}
+
+          <!-- Aria2 Disable IPv6 -->
+          {#if matchesSearch('aria2DisableIPv6')}
+            <SettingItem
+              title={$t('settings.downloads.aria2DisableIPv6')}
+              description={$t('settings.downloads.aria2DisableIPv6Description')}
+              icon="globe"
+              value={$settings.aria2DisableIPv6}
+              defaultValue={defaultSettings.aria2DisableIPv6}
+              onReset={() => updateSetting('aria2DisableIPv6', defaultSettings.aria2DisableIPv6)}
+            >
+              <Toggle
+                checked={$settings.aria2DisableIPv6}
+                onchange={(checked) => updateSetting('aria2DisableIPv6', checked)}
+              />
+            </SettingItem>
+          {/if}
+
+          <!-- Aria2 Custom Args -->
+          {#if matchesSearch('aria2CustomArgs')}
+            <SettingItem
+              title={$t('settings.downloads.aria2CustomArgs')}
+              description={$t('settings.downloads.aria2CustomArgsDescription')}
+              icon="code"
+              value={$settings.aria2CustomArgs}
+              defaultValue={defaultSettings.aria2CustomArgs}
+              onReset={() => updateSetting('aria2CustomArgs', defaultSettings.aria2CustomArgs)}
+            >
+              <Input
+                value={$settings.aria2CustomArgs}
+                placeholder={$t('settings.downloads.aria2CustomArgsPlaceholder')}
+                onchange={(value) => updateSetting('aria2CustomArgs', value)}
+              />
             </SettingItem>
           {/if}
 

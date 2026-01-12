@@ -178,6 +178,8 @@ export interface AppSettings {
   aria2Connections: number;
   aria2Splits: number;
   aria2MinSplitSize: string;
+  aria2DisableIPv6: boolean;
+  aria2CustomArgs: string;
 
   downloadSpeedLimit: number;
 
@@ -314,6 +316,8 @@ export const defaultSettings: AppSettings = {
   aria2Connections: 8,
   aria2Splits: 8,
   aria2MinSplitSize: '1M',
+  aria2DisableIPv6: true,
+  aria2CustomArgs: '',
 
   downloadSpeedLimit: 0,
 

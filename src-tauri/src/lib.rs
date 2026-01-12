@@ -176,6 +176,8 @@ async fn download_video(
     aria2_connections: Option<u32>,
     aria2_splits: Option<u32>,
     aria2_min_split_size: Option<String>,
+    aria2_disable_ipv6: Option<bool>,
+    aria2_custom_args: Option<String>,
     no_playlist: Option<bool>,
     cookies_from_browser: Option<String>,
     custom_cookies: Option<String>,
@@ -525,15 +527,31 @@ async fn download_video(
                 let connections = aria2_connections.unwrap_or(8).min(16).max(1);
                 let splits = aria2_splits.unwrap_or(8).min(16).max(1);
                 let min_split = aria2_min_split_size.as_deref().unwrap_or("1M");
-                info!("Using aria2 as external downloader: {:?} (connections: {}, splits: {}, min-split: {})", aria2_path, connections, splits, min_split);
+                let disable_ipv6 = aria2_disable_ipv6.unwrap_or(true);
+                let custom_args = aria2_custom_args.as_deref().unwrap_or("");
+                
+                info!("Using aria2 as external downloader: {:?} (connections: {}, splits: {}, min-split: {}, disable-ipv6: {})", aria2_path, connections, splits, min_split, disable_ipv6);
+                
+                let mut aria2_args = format!(
+                    "aria2c:-x {} -s {} -k {} --file-allocation=none --retry-wait=2 --min-tls-version=TLSv1.2 --enable-color=false",
+                    connections, splits, min_split
+                );
+                
+                if disable_ipv6 {
+                    aria2_args.push_str(" --disable-ipv6=true");
+                }
+                
+                if !custom_args.is_empty() {
+                    aria2_args.push(' ');
+                    aria2_args.push_str(custom_args);
+                    info!("Using custom aria2 args: {}", custom_args);
+                }
+                
                 args.extend([
                     "--downloader".to_string(),
                     aria2_path.to_string_lossy().to_string(),
                     "--downloader-args".to_string(),
-                    format!(
-                        "aria2c:-x {} -s {} -k {} --file-allocation=none",
-                        connections, splits, min_split
-                    ),
+                    aria2_args,
                 ]);
             } else {
                 info!("aria2 requested but not installed, using default downloader");

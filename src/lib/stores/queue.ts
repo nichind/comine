@@ -890,8 +890,6 @@ function createQueueStore() {
     );
 
     try {
-      // Always fetch video info to get accurate title/author
-      // The prefetchedInfo is only used for initial display, not for final metadata
       logs.debug('queue', `Fetching video info before download for: ${url.slice(0, 50)}...`);
       try {
         await fetchVideoInfo(
@@ -1092,11 +1090,9 @@ function createQueueStore() {
             logs.info('queue', `Converted yt-dlp format string to lux auto-select`);
           }
 
-          // Only pass customCookies if cookiesFromBrowser is 'custom'
-          const luxCookies =
-            pendingItem.options?.cookiesFromBrowser === 'custom'
-              ? (pendingItem.options?.customCookies ?? '')
-              : '';
+          const luxCookies = pendingItem.options?.cookiesFromBrowser === 'custom' 
+            ? (pendingItem.options?.customCookies ?? '') 
+            : '';
 
           downloadPromise = invoke<string>('lux_download_video', {
             url: url,
@@ -1121,6 +1117,8 @@ function createQueueStore() {
             aria2Connections: currentSettings.aria2Connections,
             aria2Splits: currentSettings.aria2Splits,
             aria2MinSplitSize: currentSettings.aria2MinSplitSize,
+            aria2DisableIpv6: currentSettings.aria2DisableIPv6 ?? true,
+            aria2CustomArgs: currentSettings.aria2CustomArgs ?? '',
             noPlaylist: pendingItem.options?.ignoreMixes ?? true,
             cookiesFromBrowser: pendingItem.options?.cookiesFromBrowser ?? '',
             customCookies: pendingItem.options?.customCookies ?? '',
