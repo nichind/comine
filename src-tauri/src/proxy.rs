@@ -19,12 +19,22 @@ impl ProxyCache {
 static PROXY_CACHE: Mutex<ProxyCache> = Mutex::new(ProxyCache::new());
 const PROXY_CACHE_TTL: Duration = Duration::from_secs(300);
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyConfig {
     pub mode: String,
     pub custom_url: String,
     pub retry_without_proxy: bool,
+}
+
+impl Default for ProxyConfig {
+    fn default() -> Self {
+        Self {
+            mode: "system".to_string(),
+            custom_url: String::new(),
+            retry_without_proxy: true,
+        }
+    }
 }
 
 #[derive(serde::Serialize, Clone, Debug)]

@@ -141,3 +141,59 @@ pub enum NotificationMonitor {
     Primary,
     Cursor,
 }
+
+// ==================== Dependencies ====================
+
+#[derive(Serialize, Clone, Default)]
+pub struct ReleaseInfo {
+    pub tag: String,
+    pub name: String,
+    pub published_at: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+pub struct DependencyStatus {
+    pub installed: bool,
+    pub version: Option<String>,
+    pub path: Option<String>,
+    pub update_available: Option<String>,
+}
+
+impl DependencyStatus {
+    pub fn not_installed() -> Self {
+        Self::default()
+    }
+
+    pub fn embedded(description: &str) -> Self {
+        Self {
+            installed: true,
+            version: Some("embedded".to_string()),
+            path: Some(description.to_string()),
+            update_available: None,
+        }
+    }
+
+    pub fn installed(version: String, path: String) -> Self {
+        Self {
+            installed: true,
+            version: Some(version),
+            path: Some(path),
+            update_available: None,
+        }
+    }
+
+    pub fn with_update(mut self, update_version: Option<String>) -> Self {
+        self.update_available = update_version;
+        self
+    }
+}
+
+#[derive(Serialize, Clone, Default)]
+pub struct InstallProgress {
+    pub stage: String,
+    pub progress: u8,
+    pub downloaded: u64,
+    pub total: u64,
+    pub speed: f64,
+    pub message: String,
+}
