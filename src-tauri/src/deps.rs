@@ -3,7 +3,7 @@ use futures_util::StreamExt;
 use log::info;
 #[cfg(not(target_os = "android"))]
 use log::{debug, error, warn};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 use tauri::{Emitter, Manager};
 #[cfg(not(target_os = "android"))]
@@ -15,12 +15,45 @@ use crate::utils::CommandHideConsole;
 #[cfg(not(target_os = "android"))]
 use std::io::Read;
 
-// ProxyConfig is needed for function signatures on all platforms
 #[cfg(not(target_os = "android"))]
 use crate::proxy::proxy_strategies;
 use crate::proxy::ProxyConfig;
+use crate::types::{DependencyStatus, InstallProgress, ReleaseInfo};
 
-// ==================== Binary names per platform ====================
+#[cfg(not(target_os = "android"))]
+const HTTP_TIMEOUT_SECS: u64 = 600;
+#[cfg(not(target_os = "android"))]
+const HTTP_CONNECT_TIMEOUT_SECS: u64 = 60;
+#[cfg(not(target_os = "android"))]
+const TCP_KEEPALIVE_SECS: u64 = 30;
+#[cfg(not(target_os = "android"))]
+const MAX_REDIRECTS: usize = 10;
+#[cfg(not(target_os = "android"))]
+const MAX_RETRY_ATTEMPTS: u32 = 5;
+#[cfg(not(target_os = "android"))]
+const ARIA2_FALLBACK_VERSION: &str = "1.37.0";
+#[cfg(not(target_os = "android"))]
+const PROGRESS_EMIT_INTERVAL_MS: u128 = 100;
+#[cfg(not(target_os = "android"))]
+const HTTP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+#[cfg(not(target_os = "android"))]
+const RATELIMIT_DELAY_SECS: u64 = 10;
+#[cfg(not(target_os = "android"))]
+const RATELIMIT_MAX_DELAY_SECS: u64 = 60;
+
+#[cfg(not(target_os = "android"))]
+const ARIA2_CONNECTIONS: &str = "16";
+#[cfg(not(target_os = "android"))]
+const ARIA2_SPLIT: &str = "16";
+#[cfg(not(target_os = "android"))]
+const ARIA2_MIN_SPLIT_SIZE: &str = "1M";
+
+const EVENT_YTDLP_PROGRESS: &str = "ytdlp-install-progress";
+const EVENT_FFMPEG_PROGRESS: &str = "ffmpeg-install-progress";
+const EVENT_ARIA2_PROGRESS: &str = "aria2-install-progress";
+const EVENT_DENO_PROGRESS: &str = "deno-install-progress";
+const EVENT_QUICKJS_PROGRESS: &str = "quickjs-install-progress";
+const EVENT_LUX_PROGRESS: &str = "lux-install-progress";
 
 #[cfg(target_os = "windows")]
 const YTDLP_BINARY: &str = "yt-dlp.exe";
@@ -28,15 +61,6 @@ const YTDLP_BINARY: &str = "yt-dlp.exe";
 const YTDLP_BINARY: &str = "yt-dlp_macos";
 #[cfg(target_os = "linux")]
 const YTDLP_BINARY: &str = "yt-dlp_linux";
-#[cfg(target_os = "android")]
-#[allow(dead_code)]
-const YTDLP_BINARY: &str = "yt-dlp_linux_aarch64";
-
-// ==================== Path helpers ====================
-
-// Android doesn't support direct yt-dlp execution - requires Termux
-// The embedded Python approach was attempted but the libpython.so from
-// youtubedl-android is just a JNI stub, not a standalone Python interpreter.
 
 fn get_bin_dir(app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(target_os = "android")]
@@ -59,21 +83,17 @@ fn get_bin_dir(app: &AppHandle) -> Result<PathBuf, String> {
     }
 }
 
-/// Get the path where yt-dlp should be stored
 pub fn get_ytdlp_path(app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(target_os = "windows")]
     let binary_name = "yt-dlp.exe";
-
     #[cfg(target_os = "android")]
-    let binary_name = "libytdlp.so"; // Bundled as native library in APK
-
+    let binary_name = "libytdlp.so";
     #[cfg(all(not(target_os = "windows"), not(target_os = "android")))]
     let binary_name = "yt-dlp";
 
     Ok(get_bin_dir(app)?.join(binary_name))
 }
 
-/// Get the path where ffmpeg should be stored
 pub fn get_ffmpeg_path(app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(target_os = "windows")]
     let binary_name = "ffmpeg.exe";
@@ -83,7 +103,6 @@ pub fn get_ffmpeg_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(get_bin_dir(app)?.join(binary_name))
 }
 
-/// Get the path where aria2c should be stored
 pub fn get_aria2_path(app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(target_os = "windows")]
     let binary_name = "aria2c.exe";
@@ -93,7 +112,6 @@ pub fn get_aria2_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(get_bin_dir(app)?.join(binary_name))
 }
 
-/// Get the path where deno should be stored
 pub fn get_deno_path(app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(target_os = "windows")]
     let binary_name = "deno.exe";
@@ -103,7 +121,6 @@ pub fn get_deno_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(get_bin_dir(app)?.join(binary_name))
 }
 
-/// Get the path where quickjs (qjs) should be stored
 pub fn get_quickjs_path(app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(target_os = "windows")]
     let binary_name = "qjs.exe";
@@ -113,7 +130,6 @@ pub fn get_quickjs_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(get_bin_dir(app)?.join(binary_name))
 }
 
-/// Get the path where lux should be stored
 pub fn get_lux_path(app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(target_os = "windows")]
     let binary_name = "lux.exe";
@@ -123,18 +139,19 @@ pub fn get_lux_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(get_bin_dir(app)?.join(binary_name))
 }
 
-// ==================== HTTP Client ====================
-
 #[cfg(not(target_os = "android"))]
 fn http_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .timeout(std::time::Duration::from_secs(600)) // 10 min for large files
-        .connect_timeout(std::time::Duration::from_secs(60)) // 1 min to connect
-        .pool_max_idle_per_host(0)
-        .tcp_keepalive(std::time::Duration::from_secs(30))
-        .danger_accept_invalid_certs(false); // Keep security, but could enable for debugging
+        .user_agent(HTTP_USER_AGENT)
+        .redirect(reqwest::redirect::Policy::limited(MAX_REDIRECTS))
+        .timeout(std::time::Duration::from_secs(HTTP_TIMEOUT_SECS))
+        .connect_timeout(std::time::Duration::from_secs(HTTP_CONNECT_TIMEOUT_SECS))
+        .pool_max_idle_per_host(4)
+        .tcp_keepalive(std::time::Duration::from_secs(TCP_KEEPALIVE_SECS))
+        .tcp_nodelay(true)
+        .gzip(true)
+        .brotli(true)
+        .danger_accept_invalid_certs(false);
 
     match proxy_url {
         Some(url) if !url.is_empty() => {
@@ -154,7 +171,6 @@ fn http_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> {
         .map_err(|e| format!("Failed to create HTTP client: {}", e))
 }
 
-/// Download with proxy strategies based on config
 #[cfg(not(target_os = "android"))]
 async fn fetch(url: &str, proxy_config: &ProxyConfig) -> Result<reqwest::Response, String> {
     let strategies = proxy_strategies(proxy_config);
@@ -173,7 +189,7 @@ async fn fetch(url: &str, proxy_config: &ProxyConfig) -> Result<reqwest::Respons
             }
         };
 
-        for attempt in 0..5 {
+        for attempt in 0..MAX_RETRY_ATTEMPTS {
             if attempt > 0 {
                 let delay = std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
                 info!("Retry {} after {:?}...", attempt, delay);
@@ -187,9 +203,11 @@ async fn fetch(url: &str, proxy_config: &ProxyConfig) -> Result<reqwest::Respons
                         info!("Download started successfully {}", strategy_name);
                         return Ok(response);
                     } else if status.as_u16() == 429 || status.as_u16() == 503 {
-                        warn!("Server busy ({}), waiting...", status);
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                        last_error = format!("Server returned {}", status);
+                        let delay = RATELIMIT_DELAY_SECS * 2u64.pow(attempt.min(3));
+                        let delay = delay.min(RATELIMIT_MAX_DELAY_SECS);
+                        warn!("Rate limited ({}), waiting {}s...", status, delay);
+                        tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                        last_error = format!("Rate limited ({})", status);
                     } else if status.as_u16() == 403 {
                         last_error = format!("Access denied ({})", status);
                         break;
@@ -220,25 +238,27 @@ async fn fetch(url: &str, proxy_config: &ProxyConfig) -> Result<reqwest::Respons
     Err(format!("All download attempts failed: {}", last_error))
 }
 
-/// Fetch with default system proxy
 #[cfg(not(target_os = "android"))]
-async fn fetch_default(url: &str) -> Result<reqwest::Response, String> {
-    let default_config = ProxyConfig {
-        mode: "system".to_string(),
-        custom_url: String::new(),
-        retry_without_proxy: true,
-    };
-    fetch(url, &default_config).await
+async fn fetch_github_release(
+    repo: &str,
+    proxy_config: &ProxyConfig,
+) -> Result<GitHubRelease, String> {
+    let api_url = format!("https://api.github.com/repos/{}/releases/latest", repo);
+
+    let response = fetch(&api_url, proxy_config).await?;
+
+    response
+        .json::<GitHubRelease>()
+        .await
+        .map_err(|e| format!("Failed to parse release for {}: {}", repo, e))
 }
 
-// ==================== aria2-accelerated download ====================
-
-/// Download a file using aria2c with multi-connection support (much faster for large files)
+#[allow(clippy::too_many_arguments)]
 #[cfg(not(target_os = "android"))]
 async fn download_with_aria2(
     app: &AppHandle,
     url: &str,
-    dest: &PathBuf,
+    dest: &Path,
     window: &tauri::Window,
     event_name: &str,
     dep_name: &str,
@@ -251,13 +271,12 @@ async fn download_with_aria2(
         return Err("aria2 not installed".to_string());
     }
 
-    info!(
-        "Using aria2 for accelerated download: {} -> {:?}",
-        url, dest
-    );
+    info!("Using aria2 to download: {} -> {:?}", url, dest);
 
     if dest.exists() {
-        let _ = tokio::fs::remove_file(&dest).await;
+        if let Err(e) = tokio::fs::remove_file(&dest).await {
+            warn!("Failed to remove existing file before download: {}", e);
+        }
     }
 
     if let Some(parent) = dest.parent() {
@@ -278,18 +297,29 @@ async fn download_with_aria2(
         .to_string();
 
     let mut cmd = tokio::process::Command::new(&aria2_path);
+
+    let x_arg = format!("-x{}", ARIA2_CONNECTIONS);
+    let s_arg = format!("-s{}", ARIA2_SPLIT);
+    let k_arg = format!("-k{}", ARIA2_MIN_SPLIT_SIZE);
+
     let mut args = vec![
-        "-x16",
-        "-s16",
-        "-k1M",
+        x_arg.as_str(),
+        s_arg.as_str(),
+        k_arg.as_str(),
         "--file-allocation=none",
-        "--max-tries=5",
-        "--retry-wait=2",
+        "--max-tries=10",
+        "--retry-wait=3",
+        "--max-file-not-found=5",
+        "--connect-timeout=30",
+        "--timeout=600",
         "--summary-interval=1",
         "--console-log-level=notice",
         "--download-result=hide",
         "--allow-overwrite=true",
         "--auto-file-renaming=false",
+        "--disable-ipv6=true",
+        "--enable-http-pipelining=true",
+        "--stream-piece-selector=inorder",
     ];
 
     let proxy_arg;
@@ -322,7 +352,10 @@ async fn download_with_aria2(
             downloaded: 0,
             total: 0,
             speed: 0.0,
-            message: format!("Downloading {} {} (aria2 x16)...", dep_name, version),
+            message: format!(
+                "Downloading {} {} (aria2 x{})...",
+                dep_name, version, ARIA2_CONNECTIONS
+            ),
         },
     );
 
@@ -335,6 +368,7 @@ async fn download_with_aria2(
     let dep_name = dep_name.to_string();
     let version = version.to_string();
     let window = window.clone();
+    let connections = ARIA2_CONNECTIONS;
 
     let progress_task = tokio::spawn(async move {
         use tokio::io::AsyncReadExt;
@@ -353,7 +387,7 @@ async fn download_with_aria2(
                     while let Some(cr_pos) = line_buffer.find('\r') {
                         let line = &line_buffer[..cr_pos];
 
-                        if last_emit.elapsed().as_millis() >= 100 {
+                        if last_emit.elapsed().as_millis() >= PROGRESS_EMIT_INTERVAL_MS {
                             if let Some(progress_info) = parse_aria2_progress(line) {
                                 let _ = window.emit(
                                     &event_name,
@@ -364,8 +398,8 @@ async fn download_with_aria2(
                                         total: progress_info.total,
                                         speed: progress_info.speed,
                                         message: format!(
-                                            "Downloading {} {} (aria2 x16)...",
-                                            dep_name, version
+                                            "Downloading {} {} (aria2 x{})...",
+                                            dep_name, version, connections
                                         ),
                                     },
                                 );
@@ -417,10 +451,6 @@ struct Aria2Progress {
     speed: f64,
 }
 
-/// Parse aria2 progress line
-/// Format examples:
-/// [#abc123 1.2MiB/10MiB(12%) CN:16 DL:5.2MiB ETA:2s]
-/// [DL:5.2MiB][#abc123 1.2MiB/10MiB(12%)]
 #[cfg(not(target_os = "android"))]
 fn parse_aria2_progress(line: &str) -> Option<Aria2Progress> {
     let mut percent: u8 = 0;
@@ -464,7 +494,7 @@ fn parse_aria2_progress(line: &str) -> Option<Aria2Progress> {
         }
     }
 
-    if percent > 0 || downloaded > 0 || speed > 0.0 {
+    if percent > 0 || downloaded > 0 || total > 0 || speed > 0.0 {
         Some(Aria2Progress {
             percent,
             downloaded,
@@ -476,7 +506,6 @@ fn parse_aria2_progress(line: &str) -> Option<Aria2Progress> {
     }
 }
 
-/// Parse size string like "5.2MiB", "500KiB", "1.5GiB" into bytes
 #[cfg(not(target_os = "android"))]
 fn parse_size(s: &str) -> u64 {
     let s = s.trim();
@@ -505,26 +534,239 @@ fn parse_size(s: &str) -> u64 {
     0
 }
 
-// ==================== Generic download with progress ====================
+#[cfg(not(target_os = "android"))]
+type FileMatcher = fn(&str) -> bool;
 
-/// Download file: uses aria2 if available, falls back to reqwest
+#[cfg(not(target_os = "android"))]
+struct ZipExtractConfig {
+    matcher: FileMatcher,
+    dest_name: &'static str,
+    extract_all: bool,
+}
+
+#[cfg(not(target_os = "android"))]
+async fn extract_from_zip(
+    archive_path: &Path,
+    bin_dir: &Path,
+    config: ZipExtractConfig,
+) -> Result<(), String> {
+    if !archive_path.exists() {
+        error!("Archive file does not exist: {:?}", archive_path);
+        return Err(format!("Archive file does not exist: {:?}", archive_path));
+    }
+
+    let metadata = tokio::fs::metadata(&archive_path)
+        .await
+        .map_err(|e| format!("Failed to get archive metadata: {}", e))?;
+
+    info!(
+        "Archive size: {} bytes at {:?}",
+        metadata.len(),
+        archive_path
+    );
+
+    if metadata.len() == 0 {
+        return Err("Archive file is empty".to_string());
+    }
+
+    let archive_path = archive_path.to_path_buf();
+    let bin_dir = bin_dir.to_path_buf();
+
+    tokio::task::spawn_blocking(move || {
+        let file = std::fs::File::open(&archive_path)
+            .map_err(|e| format!("Failed to open archive: {}", e))?;
+
+        let mut archive =
+            zip::ZipArchive::new(file).map_err(|e| format!("Failed to open zip: {}", e))?;
+
+        let mut found = false;
+        for i in 0..archive.len() {
+            let mut file = archive
+                .by_index(i)
+                .map_err(|e| format!("Failed to read zip entry: {}", e))?;
+
+            let name = file.name().to_string();
+
+            if (config.matcher)(&name) && !file.is_dir() {
+                let dest_path = bin_dir.join(config.dest_name);
+
+                let mut contents = Vec::new();
+                file.read_to_end(&mut contents)
+                    .map_err(|e| format!("Failed to read file from zip: {}", e))?;
+
+                std::fs::write(&dest_path, &contents)
+                    .map_err(|e| format!("Failed to write file: {}", e))?;
+
+                info!(
+                    "Extracted {} from {} to {:?}",
+                    config.dest_name, name, dest_path
+                );
+                found = true;
+
+                if !config.extract_all {
+                    break;
+                }
+            }
+        }
+
+        if !found {
+            warn!(
+                "No matching files found in archive for {}",
+                config.dest_name
+            );
+        }
+
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[allow(dead_code)]
+#[cfg(not(target_os = "android"))]
+async fn extract_multiple_from_zip(
+    archive_path: &Path,
+    bin_dir: &Path,
+    matchers: &[(FileMatcher, &'static str)],
+) -> Result<(), String> {
+    if !archive_path.exists() {
+        error!("Archive file does not exist: {:?}", archive_path);
+        return Err(format!("Archive file does not exist: {:?}", archive_path));
+    }
+
+    let metadata = tokio::fs::metadata(&archive_path)
+        .await
+        .map_err(|e| format!("Failed to get archive metadata: {}", e))?;
+
+    info!(
+        "Archive size: {} bytes at {:?}",
+        metadata.len(),
+        archive_path
+    );
+
+    if metadata.len() == 0 {
+        return Err("Archive file is empty".to_string());
+    }
+
+    let archive_path = archive_path.to_path_buf();
+    let bin_dir = bin_dir.to_path_buf();
+    let matchers: Vec<_> = matchers.to_vec();
+
+    tokio::task::spawn_blocking(move || {
+        let file = std::fs::File::open(&archive_path)
+            .map_err(|e| format!("Failed to open archive: {}", e))?;
+
+        let mut archive =
+            zip::ZipArchive::new(file).map_err(|e| format!("Failed to open zip: {}", e))?;
+
+        for i in 0..archive.len() {
+            let mut file = archive
+                .by_index(i)
+                .map_err(|e| format!("Failed to read zip entry: {}", e))?;
+
+            let name = file.name().to_string();
+
+            for (matcher, dest_name) in &matchers {
+                if matcher(&name) && !file.is_dir() {
+                    let dest_path = bin_dir.join(dest_name);
+
+                    let mut contents = Vec::new();
+                    file.read_to_end(&mut contents)
+                        .map_err(|e| format!("Failed to read file from zip: {}", e))?;
+
+                    std::fs::write(&dest_path, &contents)
+                        .map_err(|e| format!("Failed to write file: {}", e))?;
+
+                    info!("Extracted {} to {:?}", dest_name, dest_path);
+                    break; // Move to next file in archive
+                }
+            }
+        }
+
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[allow(dead_code)]
+#[cfg(all(not(target_os = "android"), target_os = "windows"))]
+fn is_ffmpeg_file(name: &str) -> bool {
+    name.ends_with("/ffmpeg.exe") || name == "ffmpeg.exe"
+}
+
+#[allow(dead_code)]
+#[cfg(all(not(target_os = "android"), target_os = "windows"))]
+fn is_ffprobe_file(name: &str) -> bool {
+    name.ends_with("/ffprobe.exe") || name == "ffprobe.exe"
+}
+
+#[allow(dead_code)]
+#[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+fn is_ffmpeg_file(name: &str) -> bool {
+    (name.ends_with("/ffmpeg") || name == "ffmpeg") && !name.ends_with(".exe")
+}
+
+#[allow(dead_code)]
+#[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+fn is_ffprobe_file(name: &str) -> bool {
+    (name.ends_with("/ffprobe") || name == "ffprobe") && !name.ends_with(".exe")
+}
+
+#[cfg(all(not(target_os = "android"), target_os = "windows"))]
+fn is_aria2_file(name: &str) -> bool {
+    name.ends_with("/aria2c.exe") || name == "aria2c.exe"
+}
+
+#[cfg(all(not(target_os = "android"), target_os = "linux"))]
+fn is_aria2_file(name: &str) -> bool {
+    (name.ends_with("/aria2c") || name == "aria2c") && !name.ends_with(".exe")
+}
+
+#[cfg(all(not(target_os = "android"), target_os = "windows"))]
+fn is_deno_file(name: &str) -> bool {
+    name == "deno.exe" || name.ends_with("/deno.exe")
+}
+
+#[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+fn is_deno_file(name: &str) -> bool {
+    name == "deno" || name.ends_with("/deno")
+}
+
+#[cfg(all(not(target_os = "android"), target_os = "windows"))]
+fn is_quickjs_file(name: &str) -> bool {
+    name == "qjs"
+        || name == "qjs.com"
+        || name == "qjs.exe"
+        || name.ends_with("/qjs")
+        || name.ends_with("/qjs.com")
+        || name.ends_with("/qjs.exe")
+}
+
+#[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+fn is_quickjs_file(name: &str) -> bool {
+    (name == "qjs" || name.ends_with("/qjs") || name == "qjs.com" || name.ends_with("/qjs.com"))
+        && !name.ends_with(".exe")
+}
+
+#[cfg(all(not(target_os = "android"), target_os = "windows"))]
+fn is_lux_file(name: &str) -> bool {
+    name == "lux.exe" || name.ends_with("/lux.exe")
+}
+
+#[allow(clippy::too_many_arguments)]
 #[cfg(not(target_os = "android"))]
 async fn download_file(
     app: &AppHandle,
     url: &str,
-    dest: &PathBuf,
+    dest: &Path,
     window: &tauri::Window,
     event_name: &str,
     dep_name: &str,
     version: &str,
     proxy_config: Option<&ProxyConfig>,
 ) -> Result<(), String> {
-    let config = proxy_config.cloned().unwrap_or_else(|| ProxyConfig {
-        mode: "system".to_string(),
-        custom_url: String::new(),
-        retry_without_proxy: true,
-    });
-
+    let config = proxy_config.cloned().unwrap_or_default();
     let strategies = proxy_strategies(&config);
 
     let aria2_path = get_aria2_path(app)?;
@@ -555,11 +797,10 @@ async fn download_file(
     download_with_progress(url, dest, window, event_name, dep_name, version, &config).await
 }
 
-/// Download file with progress reporting
 #[cfg(not(target_os = "android"))]
 async fn download_with_progress(
     url: &str,
-    dest: &PathBuf,
+    dest: &Path,
     window: &tauri::Window,
     event_name: &str,
     dep_name: &str,
@@ -568,7 +809,9 @@ async fn download_with_progress(
 ) -> Result<(), String> {
     if dest.exists() {
         info!("Removing existing file: {:?}", dest);
-        let _ = tokio::fs::remove_file(&dest).await;
+        if let Err(e) = tokio::fs::remove_file(&dest).await {
+            warn!("Failed to remove existing file: {}", e);
+        }
     }
 
     info!("Starting download: {} -> {:?}", url, dest);
@@ -604,7 +847,7 @@ async fn download_with_progress(
 
         downloaded += chunk.len() as u64;
 
-        if last_emit.elapsed().as_millis() >= 100 {
+        if last_emit.elapsed().as_millis() >= PROGRESS_EMIT_INTERVAL_MS {
             let elapsed = start_time.elapsed().as_secs_f64();
             let speed = if elapsed > 0.0 {
                 downloaded as f64 / elapsed
@@ -654,7 +897,9 @@ async fn download_with_progress(
             "Size mismatch! Expected {} bytes, got {} bytes",
             total_size, actual_size
         );
-        let _ = tokio::fs::remove_file(&dest).await;
+        if let Err(e) = tokio::fs::remove_file(&dest).await {
+            warn!("Failed to clean up incomplete download: {}", e);
+        }
         return Err(format!(
             "Download incomplete: expected {} bytes, got {}",
             total_size, actual_size
@@ -663,7 +908,9 @@ async fn download_with_progress(
 
     if actual_size == 0 {
         error!("Downloaded file is empty!");
-        let _ = tokio::fs::remove_file(&dest).await;
+        if let Err(e) = tokio::fs::remove_file(&dest).await {
+            warn!("Failed to clean up empty download: {}", e);
+        }
         return Err("Downloaded file is empty".to_string());
     }
 
@@ -671,7 +918,7 @@ async fn download_with_progress(
 }
 
 #[cfg(all(unix, not(target_os = "android")))]
-async fn make_executable(path: &PathBuf) -> Result<(), String> {
+async fn make_executable(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     info!("Setting executable permissions on: {:?}", path);
@@ -706,35 +953,24 @@ async fn make_executable(path: &PathBuf) -> Result<(), String> {
     Ok(())
 }
 
-// ==================== yt-dlp ====================
-
-/// Fetch the latest yt-dlp release info from GitHub
 #[cfg(not(target_os = "android"))]
-async fn get_latest_release() -> Result<GitHubRelease, String> {
+async fn get_latest_release(proxy_config: &ProxyConfig) -> Result<GitHubRelease, String> {
     info!("Fetching latest release info from GitHub API...");
-
-    let response = fetch_default("https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest")
-        .await
-        .map_err(|e| {
-            error!("Failed to fetch release info: {}", e);
-            format!("Failed to fetch release info: {}", e)
-        })?;
-
-    let release: GitHubRelease = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse release info: {}", e))?;
-
-    Ok(release)
+    fetch_github_release("yt-dlp/yt-dlp", proxy_config).await
 }
 
-/// Get available yt-dlp versions
 #[cfg(not(target_os = "android"))]
 #[tauri::command]
-pub async fn get_ytdlp_releases() -> Result<Vec<ReleaseInfo>, String> {
-    let response = fetch_default("https://api.github.com/repos/yt-dlp/yt-dlp/releases?per_page=10")
-        .await
-        .map_err(|e| format!("Failed to fetch releases: {}", e))?;
+pub async fn get_ytdlp_releases(
+    proxy_config: Option<ProxyConfig>,
+) -> Result<Vec<ReleaseInfo>, String> {
+    let config = proxy_config.unwrap_or_default();
+    let response = fetch(
+        "https://api.github.com/repos/yt-dlp/yt-dlp/releases?per_page=10",
+        &config,
+    )
+    .await
+    .map_err(|e| format!("Failed to fetch releases: {}", e))?;
 
     let releases: Vec<GitHubRelease> = response
         .json()
@@ -751,7 +987,6 @@ pub async fn get_ytdlp_releases() -> Result<Vec<ReleaseInfo>, String> {
         .collect())
 }
 
-/// Get available yt-dlp versions (Android stub)
 #[cfg(target_os = "android")]
 #[tauri::command]
 pub async fn get_ytdlp_releases() -> Result<Vec<ReleaseInfo>, String> {
@@ -762,7 +997,6 @@ pub async fn get_ytdlp_releases() -> Result<Vec<ReleaseInfo>, String> {
     }])
 }
 
-/// Check if yt-dlp is installed
 #[tauri::command]
 #[allow(unused_variables)]
 pub async fn check_ytdlp(
@@ -771,12 +1005,7 @@ pub async fn check_ytdlp(
 ) -> Result<DependencyStatus, String> {
     #[cfg(target_os = "android")]
     {
-        return Ok(DependencyStatus {
-            installed: true,
-            version: Some("embedded".to_string()),
-            path: Some("youtubedl-android library".to_string()),
-            update_available: None,
-        });
+        return Ok(DependencyStatus::embedded("youtubedl-android library"));
     }
 
     #[cfg(not(target_os = "android"))]
@@ -811,7 +1040,7 @@ pub async fn check_ytdlp(
                     info!("yt-dlp version: {}", version);
 
                     let update_available = if check_updates.unwrap_or(false) {
-                        match get_latest_release().await {
+                        match get_latest_release(&ProxyConfig::default()).await {
                             Ok(release) => {
                                 if release.tag_name != version {
                                     Some(release.tag_name)
@@ -825,46 +1054,32 @@ pub async fn check_ytdlp(
                         None
                     };
 
-                    Ok(DependencyStatus {
-                        installed: true,
-                        version: Some(version),
-                        path: Some(ytdlp_path.to_string_lossy().to_string()),
-                        update_available,
-                    })
+                    Ok(DependencyStatus::installed(
+                        version,
+                        ytdlp_path.to_string_lossy().to_string(),
+                    )
+                    .with_update(update_available))
                 }
                 Ok(output) => {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     warn!("yt-dlp exists but failed to run: {}", stderr);
-                    Ok(DependencyStatus {
-                        installed: false,
-                        version: None,
-                        path: None,
-                        update_available: None,
-                    })
+                    Ok(DependencyStatus::not_installed())
                 }
                 Err(e) => {
                     error!("Failed to execute yt-dlp at {:?}: {}", ytdlp_path, e);
                     Ok(DependencyStatus {
-                        installed: false,
-                        version: None,
                         path: Some(ytdlp_path.to_string_lossy().to_string()),
-                        update_available: None,
+                        ..DependencyStatus::not_installed()
                     })
                 }
             }
         } else {
             debug!("yt-dlp not found at {:?}", ytdlp_path);
-            Ok(DependencyStatus {
-                installed: false,
-                version: None,
-                path: None,
-                update_available: None,
-            })
+            Ok(DependencyStatus::not_installed())
         }
     }
 }
 
-/// Download and install yt-dlp
 #[tauri::command]
 #[allow(unused_variables)]
 pub async fn install_ytdlp(
@@ -880,7 +1095,7 @@ pub async fn install_ytdlp(
         info!("Android: yt-dlp is bundled with the app via youtubedl-android");
 
         let _ = window.emit(
-            "ytdlp-install-progress",
+            EVENT_YTDLP_PROGRESS,
             InstallProgress {
                 stage: "complete".to_string(),
                 progress: 100,
@@ -908,7 +1123,7 @@ pub async fn install_ytdlp(
         }
 
         let _ = window.emit(
-            "ytdlp-install-progress",
+            EVENT_YTDLP_PROGRESS,
             InstallProgress {
                 stage: "fetching".to_string(),
                 progress: 0,
@@ -919,11 +1134,13 @@ pub async fn install_ytdlp(
             },
         );
 
+        let config = proxy_config.clone().unwrap_or_default();
+
         let target_version = match version {
             Some(v) => v,
             None => {
                 info!("Fetching latest release info");
-                let release = get_latest_release().await?;
+                let release = get_latest_release(&config).await?;
                 release.tag_name
             }
         };
@@ -943,7 +1160,7 @@ pub async fn install_ytdlp(
         }
 
         let _ = window.emit(
-            "ytdlp-install-progress",
+            EVENT_YTDLP_PROGRESS,
             InstallProgress {
                 stage: "downloading".to_string(),
                 progress: 0,
@@ -959,7 +1176,7 @@ pub async fn install_ytdlp(
             &download_url,
             &ytdlp_path,
             &window,
-            "ytdlp-install-progress",
+            EVENT_YTDLP_PROGRESS,
             "yt-dlp",
             &target_version,
             proxy_config.as_ref(),
@@ -978,7 +1195,7 @@ pub async fn install_ytdlp(
         #[cfg(unix)]
         {
             let _ = window.emit(
-                "ytdlp-install-progress",
+                EVENT_YTDLP_PROGRESS,
                 InstallProgress {
                     stage: "permissions".to_string(),
                     progress: 95,
@@ -1004,7 +1221,7 @@ pub async fn install_ytdlp(
         }
 
         let _ = window.emit(
-            "ytdlp-install-progress",
+            EVENT_YTDLP_PROGRESS,
             InstallProgress {
                 stage: "verifying".to_string(),
                 progress: 98,
@@ -1031,61 +1248,16 @@ pub async fn install_ytdlp(
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 error!("yt-dlp test run failed: {}", stderr);
-
-                #[cfg(target_os = "android")]
-                {
-                    return Err(format!(
-                    "yt-dlp was downloaded but cannot execute. This may be due to Android security restrictions. Error: {}",
-                    stderr
-                ));
-                }
-
-                #[cfg(not(target_os = "android"))]
                 return Err(format!("yt-dlp verification failed: {}", stderr));
             }
             Err(e) => {
                 error!("Failed to execute yt-dlp for verification: {}", e);
-
-                #[cfg(target_os = "android")]
-                {
-                    if let Ok(output) = tokio::process::Command::new("yt-dlp")
-                        .arg("--version")
-                        .output()
-                        .await
-                    {
-                        if output.status.success() {
-                            let version =
-                                String::from_utf8_lossy(&output.stdout).trim().to_string();
-                            info!("Found system yt-dlp (Termux): {}", version);
-
-                            let _ = tokio::fs::remove_file(&ytdlp_path).await;
-
-                            return Err(format!(
-                                "Android security prevents running downloaded binaries. \
-                            However, yt-dlp v{} is available via Termux! \
-                            Comine will use the system yt-dlp instead.",
-                                version
-                            ));
-                        }
-                    }
-
-                    return Err(format!(
-                        "Android security prevents executing downloaded binaries. \n\n\
-                    Workaround: Install Termux from F-Droid and run:\n\
-                    pkg install python && pip install yt-dlp\n\n\
-                    Comine will automatically detect and use it.\n\
-                    Error: {}",
-                        e
-                    ));
-                }
-
-                #[cfg(not(target_os = "android"))]
                 return Err(format!("yt-dlp verification failed: {}", e));
             }
         }
 
         let _ = window.emit(
-            "ytdlp-install-progress",
+            EVENT_YTDLP_PROGRESS,
             InstallProgress {
                 stage: "complete".to_string(),
                 progress: 100,
@@ -1101,10 +1273,9 @@ pub async fn install_ytdlp(
             target_version, ytdlp_path
         );
         Ok(ytdlp_path.to_string_lossy().to_string())
-    } // End of #[cfg(not(target_os = "android"))] block
+    }
 }
 
-/// Uninstall yt-dlp
 #[tauri::command]
 pub async fn uninstall_ytdlp(app: AppHandle) -> Result<(), String> {
     let ytdlp_path = get_ytdlp_path(&app)?;
@@ -1118,20 +1289,12 @@ pub async fn uninstall_ytdlp(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// ==================== FFmpeg ====================
-
-/// Check if ffmpeg is installed
 #[tauri::command]
 #[allow(unused_variables)]
 pub async fn check_ffmpeg(app: AppHandle) -> Result<DependencyStatus, String> {
     #[cfg(target_os = "android")]
     {
-        return Ok(DependencyStatus {
-            installed: true,
-            version: Some("embedded".to_string()),
-            path: Some("youtubedl-android library".to_string()),
-            update_available: None,
-        });
+        return Ok(DependencyStatus::embedded("youtubedl-android library"));
     }
 
     #[cfg(not(target_os = "android"))]
@@ -1158,32 +1321,19 @@ pub async fn check_ffmpeg(app: AppHandle) -> Result<DependencyStatus, String> {
                         .unwrap_or("unknown")
                         .to_string();
 
-                    Ok(DependencyStatus {
-                        installed: true,
-                        version: Some(version),
-                        path: Some(ffmpeg_path.to_string_lossy().to_string()),
-                        update_available: None, // FFmpeg builds don't have easy version comparison
-                    })
+                    Ok(DependencyStatus::installed(
+                        version,
+                        ffmpeg_path.to_string_lossy().to_string(),
+                    ))
                 }
-                _ => Ok(DependencyStatus {
-                    installed: false,
-                    version: None,
-                    path: None,
-                    update_available: None,
-                }),
+                _ => Ok(DependencyStatus::not_installed()),
             }
         } else {
-            Ok(DependencyStatus {
-                installed: false,
-                version: None,
-                path: None,
-                update_available: None,
-            })
+            Ok(DependencyStatus::not_installed())
         }
     }
 }
 
-/// Download and install ffmpeg
 #[tauri::command]
 #[allow(unused_variables)]
 pub async fn install_ffmpeg(
@@ -1207,7 +1357,7 @@ pub async fn install_ffmpeg(
             .map_err(|e| format!("Failed to create bin directory: {}", e))?;
 
         let _ = window.emit(
-            "ffmpeg-install-progress",
+            EVENT_FFMPEG_PROGRESS,
             InstallProgress {
                 stage: "downloading".to_string(),
                 progress: 0,
@@ -1232,7 +1382,7 @@ pub async fn install_ffmpeg(
             download_url,
             &temp_archive,
             &window,
-            "ffmpeg-install-progress",
+            EVENT_FFMPEG_PROGRESS,
             "ffmpeg",
             "latest",
             proxy_config.as_ref(),
@@ -1240,7 +1390,7 @@ pub async fn install_ffmpeg(
         .await?;
 
         let _ = window.emit(
-            "ffmpeg-install-progress",
+            EVENT_FFMPEG_PROGRESS,
             InstallProgress {
                 stage: "extracting".to_string(),
                 progress: 90,
@@ -1278,7 +1428,7 @@ pub async fn install_ffmpeg(
         }
 
         let _ = window.emit(
-            "ffmpeg-install-progress",
+            EVENT_FFMPEG_PROGRESS,
             InstallProgress {
                 stage: "complete".to_string(),
                 progress: 100,
@@ -1294,73 +1444,21 @@ pub async fn install_ffmpeg(
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-async fn extract_zip_ffmpeg(archive_path: &PathBuf, bin_dir: &PathBuf) -> Result<(), String> {
-    if !archive_path.exists() {
-        error!("Archive file does not exist: {:?}", archive_path);
-        return Err(format!("Archive file does not exist: {:?}", archive_path));
-    }
+async fn extract_zip_ffmpeg(archive_path: &Path, bin_dir: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let matchers: &[(FileMatcher, &'static str)] = &[
+        (is_ffmpeg_file, "ffmpeg.exe"),
+        (is_ffprobe_file, "ffprobe.exe"),
+    ];
+    #[cfg(not(target_os = "windows"))]
+    let matchers: &[(FileMatcher, &'static str)] =
+        &[(is_ffmpeg_file, "ffmpeg"), (is_ffprobe_file, "ffprobe")];
 
-    let metadata = tokio::fs::metadata(&archive_path)
-        .await
-        .map_err(|e| format!("Failed to get archive metadata: {}", e))?;
-    info!("FFmpeg archive size: {} bytes", metadata.len());
-
-    if metadata.len() == 0 {
-        return Err("Archive file is empty".to_string());
-    }
-
-    let archive_path = archive_path.clone();
-    let bin_dir = bin_dir.clone();
-
-    tokio::task::spawn_blocking(move || {
-        let file = std::fs::File::open(&archive_path)
-            .map_err(|e| format!("Failed to open archive: {}", e))?;
-
-        let mut archive =
-            zip::ZipArchive::new(file).map_err(|e| format!("Failed to open zip: {}", e))?;
-
-        for i in 0..archive.len() {
-            let mut file = archive
-                .by_index(i)
-                .map_err(|e| format!("Failed to read zip entry: {}", e))?;
-
-            let name = file.name().to_string();
-
-            #[cfg(target_os = "windows")]
-            let is_target = name.ends_with("/ffmpeg.exe")
-                || name.ends_with("/ffprobe.exe")
-                || name == "ffmpeg.exe"
-                || name == "ffprobe.exe";
-            #[cfg(not(target_os = "windows"))]
-            let is_target = (name.ends_with("/ffmpeg")
-                || name.ends_with("/ffprobe")
-                || name == "ffmpeg"
-                || name == "ffprobe")
-                && !name.ends_with(".exe");
-
-            if is_target && !file.is_dir() {
-                let filename = std::path::Path::new(&name)
-                    .file_name()
-                    .ok_or_else(|| "Invalid filename".to_string())?;
-                let dest_path = bin_dir.join(filename);
-
-                let mut contents = Vec::new();
-                file.read_to_end(&mut contents)
-                    .map_err(|e| format!("Failed to read file from zip: {}", e))?;
-
-                std::fs::write(&dest_path, contents)
-                    .map_err(|e| format!("Failed to write file: {}", e))?;
-            }
-        }
-
-        Ok::<(), String>(())
-    })
-    .await
-    .map_err(|e| format!("Task failed: {}", e))?
+    extract_multiple_from_zip(archive_path, bin_dir, matchers).await
 }
 
 #[cfg(target_os = "linux")]
-async fn extract_tar_xz_ffmpeg(archive_path: &PathBuf, bin_dir: &PathBuf) -> Result<(), String> {
+async fn extract_tar_xz_ffmpeg(archive_path: &Path, bin_dir: &Path) -> Result<(), String> {
     use std::process::Stdio;
 
     let output = tokio::process::Command::new("tar")
@@ -1388,7 +1486,6 @@ async fn extract_tar_xz_ffmpeg(archive_path: &PathBuf, bin_dir: &PathBuf) -> Res
     Ok(())
 }
 
-/// Uninstall ffmpeg
 #[tauri::command]
 pub async fn uninstall_ffmpeg(app: AppHandle) -> Result<(), String> {
     let ffmpeg_path = get_ffmpeg_path(&app)?;
@@ -1413,19 +1510,9 @@ pub async fn uninstall_ffmpeg(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// ==================== aria2c ====================
-
-/// Fetch the latest aria2 release version from GitHub
 #[cfg(not(target_os = "android"))]
-async fn get_latest_aria2_version() -> Result<String, String> {
-    let response = fetch_default("https://api.github.com/repos/aria2/aria2/releases/latest")
-        .await
-        .map_err(|e| format!("Failed to fetch aria2 release info: {}", e))?;
-
-    let release: GitHubRelease = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse aria2 release info: {}", e))?;
+async fn get_latest_aria2_version(proxy_config: &ProxyConfig) -> Result<String, String> {
+    let release = fetch_github_release("aria2/aria2", proxy_config).await?;
 
     let version = release
         .tag_name
@@ -1436,18 +1523,12 @@ async fn get_latest_aria2_version() -> Result<String, String> {
     Ok(version)
 }
 
-/// Check if aria2c is installed
 #[tauri::command]
 #[allow(unused_variables)]
 pub async fn check_aria2(app: AppHandle) -> Result<DependencyStatus, String> {
     #[cfg(target_os = "android")]
     {
-        return Ok(DependencyStatus {
-            installed: true,
-            version: Some("embedded".to_string()),
-            path: Some("youtubedl-android library".to_string()),
-            update_available: None,
-        });
+        return Ok(DependencyStatus::embedded("youtubedl-android library"));
     }
 
     #[cfg(not(target_os = "android"))]
@@ -1473,32 +1554,19 @@ pub async fn check_aria2(app: AppHandle) -> Result<DependencyStatus, String> {
                         .unwrap_or("unknown")
                         .to_string();
 
-                    Ok(DependencyStatus {
-                        installed: true,
-                        version: Some(version),
-                        path: Some(aria2_path.to_string_lossy().to_string()),
-                        update_available: None,
-                    })
+                    Ok(DependencyStatus::installed(
+                        version,
+                        aria2_path.to_string_lossy().to_string(),
+                    ))
                 }
-                _ => Ok(DependencyStatus {
-                    installed: false,
-                    version: None,
-                    path: None,
-                    update_available: None,
-                }),
+                _ => Ok(DependencyStatus::not_installed()),
             }
         } else {
-            Ok(DependencyStatus {
-                installed: false,
-                version: None,
-                path: None,
-                update_available: None,
-            })
+            Ok(DependencyStatus::not_installed())
         }
     }
 }
 
-/// Download and install aria2c
 #[tauri::command]
 #[allow(unused_variables)]
 pub async fn install_aria2(
@@ -1531,8 +1599,10 @@ pub async fn install_aria2(
             .await
             .map_err(|e| format!("Failed to create bin directory: {}", e))?;
 
+        let config = proxy_config.clone().unwrap_or_default();
+
         let _ = window.emit(
-            "aria2-install-progress",
+            EVENT_ARIA2_PROGRESS,
             InstallProgress {
                 stage: "fetching".to_string(),
                 progress: 0,
@@ -1543,17 +1613,17 @@ pub async fn install_aria2(
             },
         );
 
-        let version = get_latest_aria2_version().await.unwrap_or_else(|e| {
+        let version = get_latest_aria2_version(&config).await.unwrap_or_else(|e| {
             warn!(
                 "Failed to fetch latest aria2 version, using fallback: {}",
                 e
             );
-            "1.37.0".to_string() // Fallback version
+            ARIA2_FALLBACK_VERSION.to_string()
         });
         info!("Installing aria2 version: {}", version);
 
         let _ = window.emit(
-            "aria2-install-progress",
+            EVENT_ARIA2_PROGRESS,
             InstallProgress {
                 stage: "downloading".to_string(),
                 progress: 5,
@@ -1583,16 +1653,11 @@ pub async fn install_aria2(
 
         let temp_archive = bin_dir.join("aria2_temp.zip");
 
-        let config = proxy_config.unwrap_or_else(|| ProxyConfig {
-            mode: "system".to_string(),
-            custom_url: String::new(),
-            retry_without_proxy: true,
-        });
         download_with_progress(
             &download_url,
             &temp_archive,
             &window,
-            "aria2-install-progress",
+            EVENT_ARIA2_PROGRESS,
             "aria2",
             &version,
             &config,
@@ -1600,7 +1665,7 @@ pub async fn install_aria2(
         .await?;
 
         let _ = window.emit(
-            "aria2-install-progress",
+            EVENT_ARIA2_PROGRESS,
             InstallProgress {
                 stage: "extracting".to_string(),
                 progress: 90,
@@ -1625,7 +1690,7 @@ pub async fn install_aria2(
         }
 
         let _ = window.emit(
-            "aria2-install-progress",
+            EVENT_ARIA2_PROGRESS,
             InstallProgress {
                 stage: "complete".to_string(),
                 progress: 100,
@@ -1641,70 +1706,24 @@ pub async fn install_aria2(
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
-async fn extract_zip_aria2(archive_path: &PathBuf, bin_dir: &PathBuf) -> Result<(), String> {
-    if !archive_path.exists() {
-        error!("Archive file does not exist: {:?}", archive_path);
-        return Err(format!("Archive file does not exist: {:?}", archive_path));
-    }
+async fn extract_zip_aria2(archive_path: &Path, bin_dir: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let dest_name = "aria2c.exe";
+    #[cfg(target_os = "linux")]
+    let dest_name = "aria2c";
 
-    let metadata = tokio::fs::metadata(&archive_path)
-        .await
-        .map_err(|e| format!("Failed to get archive metadata: {}", e))?;
-    info!("aria2 archive size: {} bytes", metadata.len());
-
-    if metadata.len() == 0 {
-        return Err("Archive file is empty".to_string());
-    }
-
-    let archive_path = archive_path.clone();
-    let bin_dir = bin_dir.clone();
-
-    tokio::task::spawn_blocking(move || {
-        let file = std::fs::File::open(&archive_path)
-            .map_err(|e| format!("Failed to open archive: {}", e))?;
-
-        let mut archive =
-            zip::ZipArchive::new(file).map_err(|e| format!("Failed to open zip: {}", e))?;
-
-        for i in 0..archive.len() {
-            let mut file = archive
-                .by_index(i)
-                .map_err(|e| format!("Failed to read zip entry: {}", e))?;
-
-            let name = file.name().to_string();
-
-            #[cfg(target_os = "windows")]
-            let is_aria2 =
-                (name.ends_with("/aria2c.exe") || name == "aria2c.exe") && !file.is_dir();
-            #[cfg(target_os = "linux")]
-            let is_aria2 = (name.ends_with("/aria2c") || name == "aria2c")
-                && !name.ends_with(".exe")
-                && !file.is_dir();
-
-            if is_aria2 {
-                #[cfg(target_os = "windows")]
-                let dest_path = bin_dir.join("aria2c.exe");
-                #[cfg(target_os = "linux")]
-                let dest_path = bin_dir.join("aria2c");
-
-                let mut contents = Vec::new();
-                file.read_to_end(&mut contents)
-                    .map_err(|e| format!("Failed to read file from zip: {}", e))?;
-
-                std::fs::write(&dest_path, contents)
-                    .map_err(|e| format!("Failed to write file: {}", e))?;
-
-                break;
-            }
-        }
-
-        Ok::<(), String>(())
-    })
+    extract_from_zip(
+        archive_path,
+        bin_dir,
+        ZipExtractConfig {
+            matcher: is_aria2_file,
+            dest_name,
+            extract_all: false,
+        },
+    )
     .await
-    .map_err(|e| format!("Task failed: {}", e))?
 }
 
-/// Uninstall aria2
 #[tauri::command]
 pub async fn uninstall_aria2(app: AppHandle) -> Result<(), String> {
     let aria2_path = get_aria2_path(&app)?;
@@ -1718,9 +1737,6 @@ pub async fn uninstall_aria2(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// ==================== Deno (JavaScript runtime for yt-dlp) ====================
-
-/// Check if deno is installed
 #[tauri::command]
 pub async fn check_deno(app: AppHandle) -> Result<DependencyStatus, String> {
     let deno_path = get_deno_path(&app)?;
@@ -1745,31 +1761,18 @@ pub async fn check_deno(app: AppHandle) -> Result<DependencyStatus, String> {
                     .unwrap_or("unknown")
                     .to_string();
 
-                Ok(DependencyStatus {
-                    installed: true,
-                    version: Some(version),
-                    path: Some(deno_path.to_string_lossy().to_string()),
-                    update_available: None,
-                })
+                Ok(DependencyStatus::installed(
+                    version,
+                    deno_path.to_string_lossy().to_string(),
+                ))
             }
-            _ => Ok(DependencyStatus {
-                installed: false,
-                version: None,
-                path: None,
-                update_available: None,
-            }),
+            _ => Ok(DependencyStatus::not_installed()),
         }
     } else {
-        Ok(DependencyStatus {
-            installed: false,
-            version: None,
-            path: None,
-            update_available: None,
-        })
+        Ok(DependencyStatus::not_installed())
     }
 }
 
-/// Download and install deno
 #[tauri::command]
 #[allow(unused_variables)]
 pub async fn install_deno(
@@ -1790,7 +1793,7 @@ pub async fn install_deno(
             .map_err(|e| format!("Failed to create bin directory: {}", e))?;
 
         let _ = window.emit(
-            "deno-install-progress",
+            EVENT_DENO_PROGRESS,
             InstallProgress {
                 stage: "downloading".to_string(),
                 progress: 0,
@@ -1819,7 +1822,7 @@ pub async fn install_deno(
             download_url,
             &temp_archive,
             &window,
-            "deno-install-progress",
+            EVENT_DENO_PROGRESS,
             "deno",
             "latest",
             proxy_config.as_ref(),
@@ -1827,7 +1830,7 @@ pub async fn install_deno(
         .await?;
 
         let _ = window.emit(
-            "deno-install-progress",
+            EVENT_DENO_PROGRESS,
             InstallProgress {
                 stage: "extracting".to_string(),
                 progress: 90,
@@ -1848,7 +1851,7 @@ pub async fn install_deno(
         }
 
         let _ = window.emit(
-            "deno-install-progress",
+            EVENT_DENO_PROGRESS,
             InstallProgress {
                 stage: "verifying".to_string(),
                 progress: 95,
@@ -1883,7 +1886,7 @@ pub async fn install_deno(
         }
 
         let _ = window.emit(
-            "deno-install-progress",
+            EVENT_DENO_PROGRESS,
             InstallProgress {
                 stage: "complete".to_string(),
                 progress: 100,
@@ -1899,71 +1902,24 @@ pub async fn install_deno(
 }
 
 #[cfg(not(target_os = "android"))]
-async fn extract_zip_deno(archive_path: &PathBuf, bin_dir: &PathBuf) -> Result<(), String> {
-    if !archive_path.exists() {
-        error!("Archive file does not exist: {:?}", archive_path);
-        return Err(format!("Archive file does not exist: {:?}", archive_path));
-    }
+async fn extract_zip_deno(archive_path: &Path, bin_dir: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let dest_name = "deno.exe";
+    #[cfg(not(target_os = "windows"))]
+    let dest_name = "deno";
 
-    let metadata = tokio::fs::metadata(&archive_path)
-        .await
-        .map_err(|e| format!("Failed to get archive metadata: {}", e))?;
-    info!(
-        "Archive size: {} bytes at {:?}",
-        metadata.len(),
-        archive_path
-    );
-
-    if metadata.len() == 0 {
-        return Err("Archive file is empty".to_string());
-    }
-
-    let archive_path = archive_path.clone();
-    let bin_dir = bin_dir.clone();
-
-    tokio::task::spawn_blocking(move || {
-        let file = std::fs::File::open(&archive_path)
-            .map_err(|e| format!("Failed to open archive: {}", e))?;
-
-        let mut archive =
-            zip::ZipArchive::new(file).map_err(|e| format!("Failed to open zip: {}", e))?;
-
-        for i in 0..archive.len() {
-            let mut file = archive
-                .by_index(i)
-                .map_err(|e| format!("Failed to read zip entry: {}", e))?;
-
-            let name = file.name().to_string();
-
-            #[cfg(target_os = "windows")]
-            let is_deno = name == "deno.exe" || name.ends_with("/deno.exe");
-            #[cfg(not(target_os = "windows"))]
-            let is_deno = name == "deno" || name.ends_with("/deno");
-
-            if is_deno && !file.is_dir() {
-                #[cfg(target_os = "windows")]
-                let dest_path = bin_dir.join("deno.exe");
-                #[cfg(not(target_os = "windows"))]
-                let dest_path = bin_dir.join("deno");
-
-                let mut contents = Vec::new();
-                file.read_to_end(&mut contents)
-                    .map_err(|e| format!("Failed to read file from zip: {}", e))?;
-
-                std::fs::write(&dest_path, contents)
-                    .map_err(|e| format!("Failed to write file: {}", e))?;
-
-                break;
-            }
-        }
-
-        Ok::<(), String>(())
-    })
+    extract_from_zip(
+        archive_path,
+        bin_dir,
+        ZipExtractConfig {
+            matcher: is_deno_file,
+            dest_name,
+            extract_all: false,
+        },
+    )
     .await
-    .map_err(|e| format!("Task failed: {}", e))?
 }
 
-/// Uninstall deno
 #[tauri::command]
 pub async fn uninstall_deno(app: AppHandle) -> Result<(), String> {
     let deno_path = get_deno_path(&app)?;
@@ -1977,9 +1933,6 @@ pub async fn uninstall_deno(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// ==================== QuickJS (lightweight JavaScript runtime for yt-dlp) ====================
-
-/// Check if quickjs is installed
 #[tauri::command]
 pub async fn check_quickjs(app: AppHandle) -> Result<DependencyStatus, String> {
     let quickjs_path = get_quickjs_path(&app)?;
@@ -1994,30 +1947,17 @@ pub async fn check_quickjs(app: AppHandle) -> Result<DependencyStatus, String> {
         let output = cmd.output().await;
 
         match output {
-            Ok(output) if output.status.success() => Ok(DependencyStatus {
-                installed: true,
-                version: Some("installed".to_string()),
-                path: Some(quickjs_path.to_string_lossy().to_string()),
-                update_available: None,
-            }),
-            _ => Ok(DependencyStatus {
-                installed: false,
-                version: None,
-                path: None,
-                update_available: None,
-            }),
+            Ok(output) if output.status.success() => Ok(DependencyStatus::installed(
+                "installed".to_string(),
+                quickjs_path.to_string_lossy().to_string(),
+            )),
+            _ => Ok(DependencyStatus::not_installed()),
         }
     } else {
-        Ok(DependencyStatus {
-            installed: false,
-            version: None,
-            path: None,
-            update_available: None,
-        })
+        Ok(DependencyStatus::not_installed())
     }
 }
 
-/// Download and install quickjs
 #[tauri::command]
 #[allow(unused_variables)]
 pub async fn install_quickjs(
@@ -2038,53 +1978,105 @@ pub async fn install_quickjs(
             .map_err(|e| format!("Failed to create bin directory: {}", e))?;
 
         let _ = window.emit(
-            "quickjs-install-progress",
+            EVENT_QUICKJS_PROGRESS,
             InstallProgress {
-                stage: "downloading".to_string(),
+                stage: "fetching".to_string(),
                 progress: 0,
                 downloaded: 0,
                 total: 0,
                 speed: 0.0,
-                message: "Downloading QuickJS...".to_string(),
+                message: "Fetching latest QuickJS version...".to_string(),
             },
         );
 
-        #[cfg(target_os = "windows")]
-        let download_url =
-            "https://bellard.org/quickjs/binary_releases/quickjs-cosmo-2025-09-13.zip";
+        let config = proxy_config.unwrap_or_default();
+
+        // Fetch latest version from bellard.org
+        let version = match fetch(
+            "https://bellard.org/quickjs/binary_releases/LATEST.json",
+            &config,
+        )
+        .await
+        {
+            Ok(response) => {
+                #[derive(serde::Deserialize)]
+                struct LatestVersion {
+                    version: String,
+                }
+                match response.json::<LatestVersion>().await {
+                    Ok(latest) => latest.version,
+                    Err(e) => {
+                        warn!("Failed to parse LATEST.json: {}, using fallback", e);
+                        "2025-09-13".to_string()
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to fetch LATEST.json: {}, using fallback", e);
+                "2025-09-13".to_string()
+            }
+        };
+
+        info!("QuickJS latest version: {}", version);
+
+        let _ = window.emit(
+            EVENT_QUICKJS_PROGRESS,
+            InstallProgress {
+                stage: "downloading".to_string(),
+                progress: 5,
+                downloaded: 0,
+                total: 0,
+                speed: 0.0,
+                message: format!("Downloading QuickJS {}...", version),
+            },
+        );
+
+        // Build download URL based on platform
+        #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+        let download_url = format!(
+            "https://bellard.org/quickjs/binary_releases/quickjs-win-x86_64-{}.zip",
+            version
+        );
+        #[cfg(all(target_os = "windows", target_arch = "x86"))]
+        let download_url = format!(
+            "https://bellard.org/quickjs/binary_releases/quickjs-win-i686-{}.zip",
+            version
+        );
         #[cfg(target_os = "macos")]
-        let download_url =
-            "https://bellard.org/quickjs/binary_releases/quickjs-cosmo-2025-09-13.zip";
+        let download_url = format!(
+            "https://bellard.org/quickjs/binary_releases/quickjs-cosmo-{}.zip",
+            version
+        );
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-        let download_url =
-            "https://bellard.org/quickjs/binary_releases/quickjs-linux-x86_64-2025-09-13.zip";
+        let download_url = format!(
+            "https://bellard.org/quickjs/binary_releases/quickjs-linux-x86_64-{}.zip",
+            version
+        );
         #[cfg(all(target_os = "linux", target_arch = "x86"))]
-        let download_url =
-            "https://bellard.org/quickjs/binary_releases/quickjs-linux-i686-2025-09-13.zip";
+        let download_url = format!(
+            "https://bellard.org/quickjs/binary_releases/quickjs-linux-i686-{}.zip",
+            version
+        );
         #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-        let download_url =
-            "https://bellard.org/quickjs/binary_releases/quickjs-cosmo-2025-09-13.zip";
+        let download_url = format!(
+            "https://bellard.org/quickjs/binary_releases/quickjs-cosmo-{}.zip",
+            version
+        );
 
         let temp_archive = bin_dir.join("quickjs_temp.zip");
-
-        let config = proxy_config.unwrap_or_else(|| ProxyConfig {
-            mode: "system".to_string(),
-            custom_url: String::new(),
-            retry_without_proxy: true,
-        });
         download_with_progress(
-            download_url,
+            &download_url,
             &temp_archive,
             &window,
-            "quickjs-install-progress",
+            EVENT_QUICKJS_PROGRESS,
             "QuickJS",
-            "latest",
+            &version,
             &config,
         )
         .await?;
 
         let _ = window.emit(
-            "quickjs-install-progress",
+            EVENT_QUICKJS_PROGRESS,
             InstallProgress {
                 stage: "extracting".to_string(),
                 progress: 90,
@@ -2105,7 +2097,7 @@ pub async fn install_quickjs(
         }
 
         let _ = window.emit(
-            "quickjs-install-progress",
+            EVENT_QUICKJS_PROGRESS,
             InstallProgress {
                 stage: "verifying".to_string(),
                 progress: 95,
@@ -2136,7 +2128,7 @@ pub async fn install_quickjs(
         }
 
         let _ = window.emit(
-            "quickjs-install-progress",
+            EVENT_QUICKJS_PROGRESS,
             InstallProgress {
                 stage: "complete".to_string(),
                 progress: 100,
@@ -2152,81 +2144,24 @@ pub async fn install_quickjs(
 }
 
 #[cfg(not(target_os = "android"))]
-async fn extract_zip_quickjs(archive_path: &PathBuf, bin_dir: &PathBuf) -> Result<(), String> {
-    if !archive_path.exists() {
-        error!("Archive file does not exist: {:?}", archive_path);
-        return Err(format!("Archive file does not exist: {:?}", archive_path));
-    }
+async fn extract_zip_quickjs(archive_path: &Path, bin_dir: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let dest_name = "qjs.exe";
+    #[cfg(not(target_os = "windows"))]
+    let dest_name = "qjs";
 
-    let metadata = tokio::fs::metadata(&archive_path)
-        .await
-        .map_err(|e| format!("Failed to get archive metadata: {}", e))?;
-    info!(
-        "QuickJS archive size: {} bytes at {:?}",
-        metadata.len(),
-        archive_path
-    );
-
-    if metadata.len() == 0 {
-        return Err("Archive file is empty".to_string());
-    }
-
-    let archive_path = archive_path.clone();
-    let bin_dir = bin_dir.clone();
-
-    tokio::task::spawn_blocking(move || {
-        let file = std::fs::File::open(&archive_path)
-            .map_err(|e| format!("Failed to open archive: {}", e))?;
-
-        let mut archive =
-            zip::ZipArchive::new(file).map_err(|e| format!("Failed to open zip: {}", e))?;
-
-        for i in 0..archive.len() {
-            let mut file = archive
-                .by_index(i)
-                .map_err(|e| format!("Failed to read zip entry: {}", e))?;
-
-            let name = file.name().to_string();
-
-            #[cfg(target_os = "windows")]
-            let is_qjs = name == "qjs"
-                || name == "qjs.com"
-                || name == "qjs.exe"
-                || name.ends_with("/qjs")
-                || name.ends_with("/qjs.com")
-                || name.ends_with("/qjs.exe");
-            #[cfg(not(target_os = "windows"))]
-            let is_qjs = (name == "qjs"
-                || name.ends_with("/qjs")
-                || name == "qjs.com"
-                || name.ends_with("/qjs.com"))
-                && !name.ends_with(".exe");
-
-            if is_qjs && !file.is_dir() {
-                #[cfg(target_os = "windows")]
-                let dest_path = bin_dir.join("qjs.exe"); // Rename to .exe for Windows
-                #[cfg(not(target_os = "windows"))]
-                let dest_path = bin_dir.join("qjs");
-
-                let mut contents = Vec::new();
-                file.read_to_end(&mut contents)
-                    .map_err(|e| format!("Failed to read file from zip: {}", e))?;
-
-                std::fs::write(&dest_path, contents)
-                    .map_err(|e| format!("Failed to write file: {}", e))?;
-
-                info!("Extracted qjs from {} to {:?}", name, dest_path);
-                break;
-            }
-        }
-
-        Ok::<(), String>(())
-    })
+    extract_from_zip(
+        archive_path,
+        bin_dir,
+        ZipExtractConfig {
+            matcher: is_quickjs_file,
+            dest_name,
+            extract_all: false,
+        },
+    )
     .await
-    .map_err(|e| format!("Task failed: {}", e))?
 }
 
-/// Uninstall quickjs
 #[tauri::command]
 pub async fn uninstall_quickjs(app: AppHandle) -> Result<(), String> {
     let quickjs_path = get_quickjs_path(&app)?;
@@ -2240,19 +2175,11 @@ pub async fn uninstall_quickjs(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// ==================== Lux ====================
-
-/// Check if lux is installed
 #[tauri::command]
 #[allow(unused_variables)]
 pub async fn check_lux(app: AppHandle) -> Result<DependencyStatus, String> {
     #[cfg(target_os = "android")]
-    return Ok(DependencyStatus {
-        installed: false,
-        version: None,
-        path: None,
-        update_available: None,
-    });
+    return Ok(DependencyStatus::not_installed());
 
     #[cfg(not(target_os = "android"))]
     {
@@ -2269,41 +2196,32 @@ pub async fn check_lux(app: AppHandle) -> Result<DependencyStatus, String> {
 
             match output {
                 Ok(output) if output.status.success() => {
-                    let version = String::from_utf8_lossy(&output.stdout)
+                    let output_str = String::from_utf8_lossy(&output.stdout);
+                    // Format: "lux: version X.Y.Z, A fast and simple..."
+                    let version = output_str
                         .trim()
-                        .replace("lux version ", "")
-                        .replace("lux ", "")
+                        .strip_prefix("lux: version ")
+                        .and_then(|s| s.split(',').next())
+                        .unwrap_or("installed")
+                        .trim()
                         .to_string();
-                    Ok(DependencyStatus {
-                        installed: true,
-                        version: Some(if version.is_empty() {
+                    Ok(DependencyStatus::installed(
+                        if version.is_empty() {
                             "installed".to_string()
                         } else {
                             version
-                        }),
-                        path: Some(lux_path.to_string_lossy().to_string()),
-                        update_available: None,
-                    })
+                        },
+                        lux_path.to_string_lossy().to_string(),
+                    ))
                 }
-                _ => Ok(DependencyStatus {
-                    installed: false,
-                    version: None,
-                    path: None,
-                    update_available: None,
-                }),
+                _ => Ok(DependencyStatus::not_installed()),
             }
         } else {
-            Ok(DependencyStatus {
-                installed: false,
-                version: None,
-                path: None,
-                update_available: None,
-            })
+            Ok(DependencyStatus::not_installed())
         }
     }
 }
 
-/// Download and install lux
 #[tauri::command]
 #[allow(unused_variables)]
 pub async fn install_lux(
@@ -2324,7 +2242,7 @@ pub async fn install_lux(
             .map_err(|e| format!("Failed to create bin directory: {}", e))?;
 
         let _ = window.emit(
-            "lux-install-progress",
+            EVENT_LUX_PROGRESS,
             InstallProgress {
                 stage: "fetching".to_string(),
                 progress: 0,
@@ -2335,68 +2253,15 @@ pub async fn install_lux(
             },
         );
 
-        let config = proxy_config.clone().unwrap_or_else(|| ProxyConfig {
-            mode: "system".to_string(),
-            custom_url: String::new(),
-            retry_without_proxy: true,
-        });
+        let config = proxy_config.clone().unwrap_or_default();
 
-        let strategies = proxy_strategies(&config);
-        let mut last_error = String::new();
-        let mut release_info: Option<GitHubRelease> = None;
-
-        for (strategy_name, proxy_url) in &strategies {
-            debug!(
-                "Trying to fetch lux release info with strategy: {} (proxy: {:?})",
-                strategy_name, proxy_url
-            );
-            let client = match http_client(proxy_url.as_deref()) {
-                Ok(c) => c,
-                Err(e) => {
-                    last_error = e;
-                    continue;
-                }
-            };
-
-            match client
-                .get("https://api.github.com/repos/iawia002/lux/releases/latest")
-                .header("Accept", "application/vnd.github.v3+json")
-                .send()
-                .await
-            {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        match response.json::<GitHubRelease>().await {
-                            Ok(r) => {
-                                release_info = Some(r);
-                                break;
-                            }
-                            Err(e) => {
-                                last_error = format!("Failed to parse release info: {}", e);
-                            }
-                        }
-                    } else {
-                        last_error = format!("GitHub API returned status: {}", response.status());
-                    }
-                }
-                Err(e) => {
-                    last_error = format!("Request failed: {}", e);
-                }
-            }
-        }
-
-        let release = release_info.ok_or_else(|| {
-            format!(
-                "Failed to fetch lux release info after trying all strategies: {}",
-                last_error
-            )
-        })?;
+        let release = fetch_github_release("iawia002/lux", &config).await?;
 
         let version = release.tag_name.trim_start_matches('v');
         info!("Latest lux version: {}", version);
 
         let _ = window.emit(
-            "lux-install-progress",
+            EVENT_LUX_PROGRESS,
             InstallProgress {
                 stage: "downloading".to_string(),
                 progress: 5,
@@ -2436,7 +2301,7 @@ pub async fn install_lux(
             &download_url,
             &temp_archive,
             &window,
-            "lux-install-progress",
+            EVENT_LUX_PROGRESS,
             "Lux",
             version,
             &config,
@@ -2444,7 +2309,7 @@ pub async fn install_lux(
         .await?;
 
         let _ = window.emit(
-            "lux-install-progress",
+            EVENT_LUX_PROGRESS,
             InstallProgress {
                 stage: "extracting".to_string(),
                 progress: 90,
@@ -2468,7 +2333,7 @@ pub async fn install_lux(
         }
 
         let _ = window.emit(
-            "lux-install-progress",
+            EVENT_LUX_PROGRESS,
             InstallProgress {
                 stage: "verifying".to_string(),
                 progress: 95,
@@ -2499,7 +2364,7 @@ pub async fn install_lux(
         }
 
         let _ = window.emit(
-            "lux-install-progress",
+            EVENT_LUX_PROGRESS,
             InstallProgress {
                 stage: "complete".to_string(),
                 progress: 100,
@@ -2515,52 +2380,21 @@ pub async fn install_lux(
 }
 
 #[cfg(all(not(target_os = "android"), target_os = "windows"))]
-async fn extract_zip_lux(archive_path: &PathBuf, bin_dir: &PathBuf) -> Result<(), String> {
-    if !archive_path.exists() {
-        error!("Archive file does not exist: {:?}", archive_path);
-        return Err(format!("Archive file does not exist: {:?}", archive_path));
-    }
-
-    let archive_path = archive_path.clone();
-    let bin_dir = bin_dir.clone();
-
-    tokio::task::spawn_blocking(move || {
-        let file = std::fs::File::open(&archive_path)
-            .map_err(|e| format!("Failed to open archive: {}", e))?;
-
-        let mut archive =
-            zip::ZipArchive::new(file).map_err(|e| format!("Failed to open zip: {}", e))?;
-
-        for i in 0..archive.len() {
-            let mut file = archive
-                .by_index(i)
-                .map_err(|e| format!("Failed to read zip entry: {}", e))?;
-
-            let name = file.name().to_string();
-
-            if (name == "lux.exe" || name.ends_with("/lux.exe")) && !file.is_dir() {
-                let dest_path = bin_dir.join("lux.exe");
-
-                let mut contents = Vec::new();
-                file.read_to_end(&mut contents)
-                    .map_err(|e| format!("Failed to read file from zip: {}", e))?;
-
-                std::fs::write(&dest_path, contents)
-                    .map_err(|e| format!("Failed to write file: {}", e))?;
-
-                info!("Extracted lux.exe from {} to {:?}", name, dest_path);
-                break;
-            }
-        }
-
-        Ok::<(), String>(())
-    })
+async fn extract_zip_lux(archive_path: &Path, bin_dir: &Path) -> Result<(), String> {
+    extract_from_zip(
+        archive_path,
+        bin_dir,
+        ZipExtractConfig {
+            matcher: is_lux_file,
+            dest_name: "lux.exe",
+            extract_all: false,
+        },
+    )
     .await
-    .map_err(|e| format!("Task failed: {}", e))?
 }
 
 #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
-async fn extract_tar_gz_lux(archive_path: &PathBuf, bin_dir: &PathBuf) -> Result<(), String> {
+async fn extract_tar_gz_lux(archive_path: &Path, bin_dir: &Path) -> Result<(), String> {
     use flate2::read::GzDecoder;
     use tar::Archive;
 
@@ -2569,8 +2403,8 @@ async fn extract_tar_gz_lux(archive_path: &PathBuf, bin_dir: &PathBuf) -> Result
         return Err(format!("Archive file does not exist: {:?}", archive_path));
     }
 
-    let archive_path = archive_path.clone();
-    let bin_dir = bin_dir.clone();
+    let archive_path = archive_path.to_path_buf();
+    let bin_dir = bin_dir.to_path_buf();
 
     tokio::task::spawn_blocking(move || {
         let file = std::fs::File::open(&archive_path)
@@ -2606,7 +2440,6 @@ async fn extract_tar_gz_lux(archive_path: &PathBuf, bin_dir: &PathBuf) -> Result
     .map_err(|e| format!("Task failed: {}", e))?
 }
 
-/// Uninstall lux
 #[tauri::command]
 pub async fn uninstall_lux(app: AppHandle) -> Result<(), String> {
     let lux_path = get_lux_path(&app)?;
@@ -2620,36 +2453,9 @@ pub async fn uninstall_lux(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// ==================== Types ====================
-
 #[derive(serde::Deserialize)]
 struct GitHubRelease {
     tag_name: String,
     name: String,
     published_at: String,
-}
-
-#[derive(serde::Serialize, Clone)]
-pub struct ReleaseInfo {
-    pub tag: String,
-    pub name: String,
-    pub published_at: String,
-}
-
-#[derive(serde::Serialize, Clone)]
-pub struct DependencyStatus {
-    pub installed: bool,
-    pub version: Option<String>,
-    pub path: Option<String>,
-    pub update_available: Option<String>,
-}
-
-#[derive(serde::Serialize, Clone)]
-pub struct InstallProgress {
-    pub stage: String,
-    pub progress: u8,
-    pub downloaded: u64,
-    pub total: u64,
-    pub speed: f64, // bytes per second
-    pub message: String,
 }
