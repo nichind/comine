@@ -1724,11 +1724,14 @@
               defaultValue={defaultSettings.aria2CustomArgs}
               onReset={() => updateSetting('aria2CustomArgs', defaultSettings.aria2CustomArgs)}
             >
-              <Input
-                value={$settings.aria2CustomArgs}
-                placeholder={$t('settings.downloads.aria2CustomArgsPlaceholder')}
-                onchange={(value) => updateSetting('aria2CustomArgs', value)}
-              />
+              <div style="width: 220px;">
+                <Input
+                  value={$settings.aria2CustomArgs}
+                  placeholder={$t('settings.downloads.aria2CustomArgsPlaceholder')}
+                  oninput={(e) =>
+                    updateSetting('aria2CustomArgs', (e.target as HTMLInputElement).value)}
+                />
+              </div>
             </SettingItem>
           {/if}
 
