@@ -21,6 +21,7 @@
   class:disabled
   class:checked
   onclick={toggle}
+  data-setting-activator="true"
   {disabled}
 >
   <span class="checkbox">

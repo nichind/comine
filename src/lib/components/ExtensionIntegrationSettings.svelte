@@ -30,6 +30,17 @@
 
   let localEndpoint = $derived(normalizeLocalEndpoint(serverPort));
 
+  let cookieReceipts = $derived($settings.extensionCookiesReceived || []);
+
+  function formatWhen(ts: number): string {
+    if (!ts) return '';
+    try {
+      return new Date(ts).toLocaleString();
+    } catch {
+      return '';
+    }
+  }
+
   $effect(() => {
     if (
       !isEditingLocalEndpoint &&
@@ -146,6 +157,7 @@
       title={$t('settings.integration.localServer')}
       description={$t('settings.integration.localServerDescription', { port: serverPort })}
       icon="server"
+      highlight={searchQuery}
     >
       <Toggle checked={serverRunning} onchange={(checked) => toggleServer(checked)} />
     </SettingItem>
@@ -220,6 +232,36 @@
     <div class="hint">
       {$t('settings.integration.hint')}
     </div>
+
+    <SettingItem
+      title="Cookies received"
+      description={
+        cookieReceipts.length
+          ? `${cookieReceipts[0].count} cookie(s) from ${cookieReceipts[0].domain} · ${formatWhen(cookieReceipts[0].receivedAt)}`
+          : 'No cookies received from extension yet'
+      }
+      icon="lock"
+      highlight={searchQuery}
+    >
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={!cookieReceipts.length}
+        onclick={() => {
+          const text = cookieReceipts
+            .map((e) => `${e.domain} (${e.count})${e.sourceUrl ? `\n${e.sourceUrl}` : ''} · ${formatWhen(e.receivedAt)}`)
+            .join('\n\n');
+          if (text) {
+            navigator.clipboard.writeText(text).then(
+              () => toast.success($t('common.copied')),
+              () => toast.error('Copy failed')
+            );
+          }
+        }}
+      >
+        <Icon name="copy" size={14} />
+      </Button>
+    </SettingItem>
   {/if}
 </SettingsBlock>
 

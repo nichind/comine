@@ -940,7 +940,7 @@ async fn make_executable(path: &Path) -> Result<(), String> {
         .map_err(|e| format!("Failed to verify permissions: {}", e))?;
     let new_mode = new_metadata.permissions().mode();
 
-    info!("Permissions changed from {:o} to {:o}", old_mode, new_mode);
+    info!("Permissions updated ({:o} -> {:o})", old_mode, new_mode);
 
     if new_mode & 0o111 == 0 {
         warn!("Execute permission not set! Mode is {:o}", new_mode);

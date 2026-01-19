@@ -12,8 +12,9 @@
   import Select from './Select.svelte';
   import Checkbox from './Checkbox.svelte';
   import Chip from './Chip.svelte';
+  import CollapsibleBlock from './CollapsibleBlock.svelte';
+  import ClipRangeSelector from './ClipRangeSelector.svelte';
   import { formatSize, formatDuration } from '$lib/utils/format';
-  import { detectBackendForUrl } from '$lib/utils/backend-detection';
   import { isAndroid, getVideoInfoOnAndroid, waitForAndroidYtDlp } from '$lib/utils/android';
   import {
     viewStateCache,
@@ -46,6 +47,29 @@
     has_audio: boolean;
   }
 
+  interface Storyboard {
+    url: string;
+    width: number;
+    height: number;
+    cols: number;
+    rows: number;
+    fragment_count: number;
+    fragment_duration: number;
+  }
+
+  interface Chapter {
+    title: string;
+    start_time: number;
+    end_time: number;
+  }
+
+  interface SponsorBlockSegment {
+    category: string;
+    segment: [number, number];
+    UUID?: string;
+    actionType?: string;
+  }
+
   interface VideoInfo {
     title: string;
     author: string | null;
@@ -58,6 +82,89 @@
     upload_date?: string | null;
     channel_url?: string | null;
     channel_id?: string | null;
+    storyboards?: Storyboard[] | null;
+    chapters?: Chapter[] | null;
+    sponsorSegments?: SponsorBlockSegment[] | null;
+  }
+
+  function normalizeExternalUrl(url: string): string {
+    // Protocol-relative URLs (//host/path) can resolve to the app scheme (tauri://...)
+    // and cleartext http:// is often blocked. Prefer https.
+    if (url.startsWith('//')) return `https:${url}`;
+    if (url.startsWith('http://')) return url.replace(/^http:\/\//, 'https://');
+    return url;
+  }
+
+  function normalizeStoryboardUrl(url: string): string {
+    return normalizeExternalUrl(url);
+  }
+
+  function parseStoryboardsFromYtdlpFormats(
+    rawFormats: Array<Record<string, unknown>>
+  ): Storyboard[] | null {
+    const storyboards: Storyboard[] = [];
+
+    for (const f of rawFormats) {
+      const formatId = typeof f.format_id === 'string' ? f.format_id : '';
+      const formatNote = typeof f.format_note === 'string' ? f.format_note : '';
+      const ext = typeof f.ext === 'string' ? f.ext : '';
+
+      const fragments = Array.isArray(f.fragments)
+        ? (f.fragments as Array<Record<string, unknown>>)
+        : null;
+
+      const isStoryboard =
+        formatId.startsWith('sb') ||
+        formatNote.toLowerCase().includes('storyboard') ||
+        (ext === 'mhtml' && !!fragments);
+
+      if (!isStoryboard) continue;
+      if (!fragments || fragments.length === 0) continue;
+
+      const firstFrag = fragments[0];
+
+      const width = typeof f.width === 'number' && Number.isFinite(f.width) ? Math.floor(f.width) : 160;
+      const height = typeof f.height === 'number' && Number.isFinite(f.height) ? Math.floor(f.height) : 90;
+      const cols =
+        typeof f.columns === 'number' && Number.isFinite(f.columns)
+          ? Math.floor(f.columns)
+          : typeof (f as any).cols === 'number' && Number.isFinite((f as any).cols)
+            ? Math.floor((f as any).cols)
+            : 10;
+      const rows =
+        typeof f.rows === 'number' && Number.isFinite(f.rows)
+          ? Math.floor(f.rows)
+          : typeof (f as any).rows === 'number' && Number.isFinite((f as any).rows)
+            ? Math.floor((f as any).rows)
+            : 10;
+
+      const fragment_duration =
+        typeof firstFrag?.duration === 'number' && Number.isFinite(firstFrag.duration)
+          ? firstFrag.duration
+          : 2.0;
+
+      const urlRaw =
+        typeof (f as any).url === 'string'
+          ? ((f as any).url as string)
+          : typeof firstFrag?.url === 'string'
+            ? (firstFrag.url as string)
+            : '';
+      if (!urlRaw) continue;
+
+      storyboards.push({
+        url: normalizeStoryboardUrl(urlRaw),
+        width: Math.max(1, width),
+        height: Math.max(1, height),
+        cols: Math.max(1, cols),
+        rows: Math.max(1, rows),
+        fragment_count: fragments.length,
+        fragment_duration,
+      });
+    }
+
+    if (storyboards.length === 0) return null;
+    storyboards.sort((a, b) => b.width * b.height - a.width * a.height);
+    return storyboards;
   }
 
   export interface TrackSelection {
@@ -73,6 +180,8 @@
     sponsorblock?: string[];
     embedThumbnail?: boolean;
     embedMetadata?: boolean;
+    outputTemplate?: string;
+    clipRanges?: { start: number; end: number }[];
   }
 
   export interface PrefetchedInfo {
@@ -84,6 +193,10 @@
 
   export interface DefaultSettings {
     sponsorBlock?: boolean;
+    sponsorBlockSkipSponsors?: boolean;
+    sponsorBlockSkipIntros?: boolean;
+    sponsorBlockSkipSelfPromo?: boolean;
+    sponsorBlockSkipInteraction?: boolean;
     chapters?: boolean;
     embedSubtitles?: boolean;
     subtitleLanguages?: string;
@@ -144,6 +257,9 @@
         upload_date: cachedVideoInfo.uploadDate,
         channel_url: cachedVideoInfo.channelUrl,
         channel_id: cachedVideoInfo.channelId,
+        chapters: cachedVideoInfo.chapters ?? null,
+        storyboards: cachedVideoInfo.storyboards ?? null,
+        sponsorSegments: cachedVideoInfo.sponsorSegments ?? null,
         formats: cachedFormats.map((f) => ({
           format_id: f.formatId,
           ext: f.ext,
@@ -267,11 +383,16 @@
   let loading = $state(initialState.loading);
   let error = $state<string | null>(null);
   let info = $state<VideoInfo | null>(initialState.info);
-  let processedThumbnail = $state<string | null>(initialState.info?.thumbnail ?? null);
+  let processedThumbnail = $state<string | null>(
+    initialState.info?.thumbnail ? normalizeExternalUrl(initialState.info.thumbnail) : null
+  );
   let lastLoadedUrl = $state(initialState.lastLoadedUrl);
 
   let destroyed = false;
   let thumbnailError = $state(false);
+
+  // One-time silent refresh for cached entries missing fields (e.g., channel_url for non-YouTube).
+  let refreshedMissingChannelForUrl = $state<string | null>(null);
 
   let selectedVideo = $state<string>(initialState.selectedVideo);
   let selectedAudio = $state<string>(initialState.selectedAudio);
@@ -282,6 +403,10 @@
     embedSubtitles: defaults?.embedSubtitles ?? false,
     subtitleLanguages: defaults?.subtitleLanguages ?? 'en,ru',
     sponsorBlock: defaults?.sponsorBlock ?? false,
+    sponsorBlockSkipSponsors: defaults?.sponsorBlockSkipSponsors ?? true,
+    sponsorBlockSkipIntros: defaults?.sponsorBlockSkipIntros ?? false,
+    sponsorBlockSkipSelfPromo: defaults?.sponsorBlockSkipSelfPromo ?? false,
+    sponsorBlockSkipInteraction: defaults?.sponsorBlockSkipInteraction ?? false,
     chapters: defaults?.chapters ?? true,
     embedThumbnail: defaults?.embedThumbnail ?? true,
     clearMetadata: defaults?.clearMetadata ?? false,
@@ -290,14 +415,39 @@
   let embedSubs = $state(initialDefaults.embedSubtitles);
   let subLangs = $state(initialDefaults.subtitleLanguages);
 
-  let skipSponsors = $state(initialDefaults.sponsorBlock);
-  let skipIntros = $state(false);
-  let skipSelfPromo = $state(false);
-  let skipInteraction = $state(false);
+  let skipSponsors = $state(
+    initialDefaults.sponsorBlock ? initialDefaults.sponsorBlockSkipSponsors : false
+  );
+  let skipIntros = $state(
+    initialDefaults.sponsorBlock ? initialDefaults.sponsorBlockSkipIntros : false
+  );
+  let skipSelfPromo = $state(
+    initialDefaults.sponsorBlock ? initialDefaults.sponsorBlockSkipSelfPromo : false
+  );
+  let skipInteraction = $state(
+    initialDefaults.sponsorBlock ? initialDefaults.sponsorBlockSkipInteraction : false
+  );
 
   let embedChapters = $state(initialDefaults.chapters);
   let embedThumbnail = $state(initialDefaults.embedThumbnail);
   let embedMetadata = $state(!initialDefaults.clearMetadata);
+
+  // Output filename state - initialize from global settings
+  const initialOutputTemplate = $settings.ytdlpAdvanced?.outputTemplate || '%(title)s.%(ext)s';
+  let outputTemplate = $state(initialOutputTemplate);
+  let isEditingFilename = $state(false);
+
+  // Clip range state
+  interface ClipRange {
+    id: string;
+    start: number;
+    end: number;
+  }
+  let clipRanges = $state<ClipRange[]>([]);
+
+  // SponsorBlock segments for timeline visualization
+  let sponsorSegments = $state<SponsorBlockSegment[] | null>(initialState.info?.sponsorSegments ?? null);
+  let sponsorSegmentsLoading = $state(false);
 
   let showMoreOptions = $state(false);
 
@@ -306,7 +456,7 @@
   let isYouTubeMusic = $derived(url.includes('music.youtube.com'));
   let didInitialPreset = $state(false);
 
-  let backend = $derived(detectBackendForUrl(url));
+  let hasYtdlp = $derived($deps.ytdlp?.installed ?? false);
   let platformName = $derived.by(() => {
     if (url.includes('bilibili.com') || url.includes('b23.tv')) return 'Bilibili';
     if (url.includes('douyin.com')) return 'Douyin';
@@ -316,10 +466,9 @@
     if (url.includes('mgtv.com')) return 'MGTV';
     if (url.includes('weibo.com')) return 'Weibo';
     if (url.includes('kuaishou.com')) return 'Kuaishou';
-    if (backend === 'lux') return 'Video';
-    return 'YouTube';
+    return 'Video';
   });
-  let isYtdlp = $derived(backend === 'ytdlp');
+  let isYtdlp = $derived(hasYtdlp);
 
   const presets = $derived.by(() => {
     const available: { id: PresetId; label: string; icon: IconName }[] = [];
@@ -552,6 +701,16 @@
     processedThumbnail || info?.thumbnail || prefetchedInfo?.thumbnail
   );
 
+  // If thumbnail src changes (e.g. http -> https normalization), don't keep a stale error state.
+  let lastThumbnailSrc = $state<string | null>(null);
+  $effect(() => {
+    const next = displayThumbnail ?? null;
+    if (next !== lastThumbnailSrc) {
+      lastThumbnailSrc = next;
+      thumbnailError = false;
+    }
+  });
+
   let estimatedSize = $derived(() => {
     let total = 0;
     let hasEstimate = false;
@@ -598,6 +757,118 @@
     return hasEstimate ? formatSize(total) : null;
   });
 
+  // Predict the output file extension based on selected formats
+  let predictedExtension = $derived.by(() => {
+    // Audio-only download
+    if (selectedVideo === 'none') {
+      if (selectedAudio === 'best') {
+        const best = getBestAudioFormat({ preferM4a: true });
+        return best?.ext ?? 'm4a';
+      }
+      const fmt = audioFormats.find((f) => f.format_id === selectedAudio);
+      return fmt?.ext ?? 'm4a';
+    }
+
+    // Get video format info
+    let videoFmt: VideoFormat | undefined;
+    if (selectedVideo === 'best') {
+      videoFmt = videoFormats[0];
+    } else {
+      videoFmt = videoFormats.find((f) => f.format_id === selectedVideo);
+    }
+
+    // Muxed format (has both video and audio)
+    if (videoFmt?.has_audio) {
+      return videoFmt.ext ?? 'mp4';
+    }
+
+    // Video-only (no audio selected)
+    if (selectedAudio === 'none') {
+      return videoFmt?.ext ?? 'mp4';
+    }
+
+    // Video + Audio merge - determine container
+    let audioFmt: VideoFormat | undefined;
+    if (selectedAudio === 'best') {
+      audioFmt = getBestAudioFormat({ preferM4a: false }) ?? undefined;
+    } else {
+      audioFmt = audioFormats.find((f) => f.format_id === selectedAudio);
+    }
+
+    const videoExt = videoFmt?.ext ?? 'mp4';
+    const audioExt = audioFmt?.ext ?? 'm4a';
+
+    // MP4-compatible containers merge to mp4
+    const mp4Compatible = ['mp4', 'm4a', 'm4v', 'mov'];
+    if (mp4Compatible.includes(videoExt) && mp4Compatible.includes(audioExt)) {
+      return 'mp4';
+    }
+
+    // WebM containers merge to webm
+    if (videoExt === 'webm' && audioExt === 'webm') {
+      return 'webm';
+    }
+
+    // Mixed containers default to mkv
+    return 'mkv';
+  });
+
+  // Sanitize filename for display (remove unsafe characters)
+  function sanitizeFilename(name: string): string {
+    return name.replace(/[<>:"/\\|?*]/g, '_').trim();
+  }
+
+  // Get currently selected video format details
+  let selectedVideoFormat = $derived.by(() => {
+    if (selectedVideo === 'none') return null;
+    if (selectedVideo === 'best') return videoFormats[0] ?? null;
+    return videoFormats.find((f) => f.format_id === selectedVideo) ?? null;
+  });
+
+  // Get currently selected audio format details
+  let selectedAudioFormat = $derived.by(() => {
+    if (selectedAudio === 'none') return null;
+    if (selectedAudio === 'best') return getBestAudioFormat({ preferM4a: selectedVideo === 'none' }) ?? null;
+    return audioFormats.find((f) => f.format_id === selectedAudio) ?? null;
+  });
+
+  // Derived preview filename - fully reactive
+  let filenamePreview = $derived.by(() => {
+    // Resolve template with current values
+    const template = outputTemplate || '%(title)s.%(ext)s';
+    const ext = predictedExtension;
+    const title = sanitizeFilename(displayTitle || 'video');
+    const uploader = sanitizeFilename(displayAuthor || 'Unknown');
+    const id = url.match(/(?:v=|\/)([\w-]{11})(?:\?|&|$)/)?.[1] ?? 'unknown';
+    const uploadDate = info?.upload_date ?? '';
+    const duration = displayDuration ?? 0;
+    const viewCount = info?.view_count ?? 0;
+    const likeCount = info?.like_count ?? 0;
+
+    // Get resolution from selected video format, not first format
+    const resolution = selectedVideoFormat?.resolution ?? 'unknown';
+    const fps = selectedVideoFormat?.fps ?? 0;
+    const vcodec = selectedVideoFormat?.vcodec ?? 'unknown';
+    const acodec = selectedAudioFormat?.acodec ?? 'unknown';
+
+    return template
+      .replace(/%\(ext\)s/g, ext)
+      .replace(/%\(title\)s/g, title)
+      .replace(/%\(uploader\)s/g, uploader)
+      .replace(/%\(channel\)s/g, uploader)
+      .replace(/%\(id\)s/g, id)
+      .replace(/%\(upload_date\)s/g, uploadDate)
+      .replace(/%\(duration\)s/g, String(duration))
+      .replace(/%\(duration_string\)s/g, formatDuration(duration))
+      .replace(/%\(view_count\)s/g, String(viewCount))
+      .replace(/%\(like_count\)s/g, String(likeCount))
+      .replace(/%\(resolution\)s/g, resolution)
+      .replace(/%\(fps\)s/g, String(fps))
+      .replace(/%\(vcodec\)s/g, vcodec)
+      .replace(/%\(acodec\)s/g, acodec)
+      .replace(/%\([^)]+\)s/g, '_');
+  });
+
   function buildSelection(): TrackSelection {
     let formatString: string;
     let downloadMode: 'auto' | 'audio' | 'mute' = 'auto';
@@ -610,7 +881,7 @@
           downloadMode = 'audio';
           formatString = selectedAudio === 'best' ? '' : selectedAudio;
         } else if (selectedVideo === 'best') {
-          formatString = ''; // Let lux pick best
+          formatString = ''; // Let backend pick best
         } else {
           formatString = selectedVideo; // Use specific stream ID
         }
@@ -671,6 +942,12 @@
       sponsorblock: sponsorblockCategories.length > 0 ? sponsorblockCategories : undefined,
       embedThumbnail,
       embedMetadata,
+      outputTemplate: outputTemplate !== initialOutputTemplate ? outputTemplate : undefined,
+      // Only include clip ranges if not full video
+      clipRanges: clipRanges.length > 0 && 
+        !(clipRanges.length === 1 && clipRanges[0].start <= 0.5 && clipRanges[0].end >= (displayDuration ?? 0) - 0.5)
+        ? clipRanges.map(r => ({ start: r.start, end: r.end }))
+        : undefined,
     };
   }
 
@@ -679,8 +956,14 @@
     ondownload?.(buildSelection());
   }
 
+  function getNormalizedChannelUrl(): string | null {
+    const raw = info?.channel_url;
+    if (!raw) return null;
+    return normalizeExternalUrl(raw);
+  }
+
   function handleOpenChannel() {
-    const channelUrl = info?.channel_url;
+    const channelUrl = getNormalizedChannelUrl();
     if (!channelUrl || !onopenchannel) return;
 
     onopenchannel(channelUrl, {
@@ -689,7 +972,20 @@
     });
   }
 
-  let canOpenChannel = $derived(!!info?.channel_url && !!onopenchannel);
+  let canOpenChannel = $derived(!!getNormalizedChannelUrl() && !!onopenchannel);
+
+  // If we loaded from cache and the backend now exposes channel URLs for more sites,
+  // do a one-time silent refresh so the channel link becomes clickable.
+  $effect(() => {
+    if (!onopenchannel) return;
+    if (loading) return;
+    if (!info) return;
+    if (getNormalizedChannelUrl()) return;
+    if (refreshedMissingChannelForUrl === url) return;
+
+    refreshedMissingChannelForUrl = url;
+    loadInfo({ silent: true });
+  });
 
   $effect(() => {
     if (url && url !== lastLoadedUrl && !info) {
@@ -717,6 +1013,9 @@
           description: info.description ?? null,
           channelUrl: info.channel_url ?? null,
           channelId: info.channel_id ?? null,
+          chapters: info.chapters ?? null,
+          storyboards: info.storyboards ?? null,
+          sponsorSegments: null, // Will be updated after async fetch
         });
 
         mediaCache.setFormats(
@@ -782,9 +1081,6 @@
     return () => {
       destroyed = true;
       saveToCache();
-      console.log(
-        `[TrackBuilder] Destroying: ${url}, formats count: ${info?.formats?.length ?? 0}`
-      );
       info = null;
       processedThumbnail = null;
     };
@@ -792,14 +1088,104 @@
 
   async function processThumbnail(thumbUrl: string) {
     if (!thumbUrl || destroyed) return;
-    processedThumbnail = thumbUrl;
+    processedThumbnail = normalizeExternalUrl(thumbUrl);
   }
 
-  async function loadInfo() {
+  // Extract YouTube video ID from various URL formats
+  function extractYouTubeVideoId(videoUrl: string): string | null {
+    try {
+      const urlObj = new URL(videoUrl);
+      
+      // youtube.com/watch?v=ID
+      if (urlObj.hostname.includes('youtube.com') && urlObj.searchParams.has('v')) {
+        return urlObj.searchParams.get('v');
+      }
+      
+      // youtu.be/ID
+      if (urlObj.hostname === 'youtu.be') {
+        return urlObj.pathname.slice(1).split('?')[0];
+      }
+      
+      // youtube.com/embed/ID or youtube.com/v/ID
+      if (urlObj.hostname.includes('youtube.com')) {
+        const match = urlObj.pathname.match(/\/(embed|v|shorts)\/([^/?]+)/);
+        if (match) return match[2];
+      }
+      
+      // music.youtube.com
+      if (urlObj.hostname === 'music.youtube.com' && urlObj.searchParams.has('v')) {
+        return urlObj.searchParams.get('v');
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  // Update cached sponsor segments
+  function updateCachedSponsorSegments(segments: SponsorBlockSegment[]) {
+    const cachedInfo = mediaCache.getVideoInfo(url);
+    if (cachedInfo) {
+      mediaCache.setVideoInfo(url, {
+        ...cachedInfo,
+        sponsorSegments: segments,
+      });
+    }
+  }
+
+  // Fetch SponsorBlock segments for the video
+  async function fetchSponsorBlockSegments(videoUrl: string) {
+    const videoId = extractYouTubeVideoId(videoUrl);
+    if (!videoId) {
+      logs.debug('tracks', 'Not a YouTube video, skipping SponsorBlock fetch');
+      return;
+    }
+
+    sponsorSegmentsLoading = true;
+    try {
+      // Fetch all segment categories
+      const categories = JSON.stringify(['sponsor', 'selfpromo', 'interaction', 'intro', 'outro', 'preview', 'music_offtopic', 'filler', 'poi_highlight']);
+      const response = await fetch(
+        `https://sponsor.ajay.app/api/skipSegments?videoID=${videoId}&categories=${encodeURIComponent(categories)}`
+      );
+      
+      if (response.status === 404) {
+        // No segments for this video
+        sponsorSegments = [];
+        updateCachedSponsorSegments([]);
+        logs.debug('tracks', `No SponsorBlock segments for video: ${videoId}`);
+        return;
+      }
+      
+      if (!response.ok) {
+        throw new Error(`SponsorBlock API error: ${response.status}`);
+      }
+      
+      const data = await response.json() as SponsorBlockSegment[];
+      sponsorSegments = data;
+      updateCachedSponsorSegments(data);
+      logs.info('tracks', `Loaded ${data.length} SponsorBlock segments for video: ${videoId}`);
+    } catch (err) {
+      logs.warn('tracks', `Failed to fetch SponsorBlock segments: ${err}`);
+      sponsorSegments = null;
+    } finally {
+      sponsorSegmentsLoading = false;
+    }
+  }
+
+  async function loadInfo(options?: { silent?: boolean }) {
     if (destroyed) return;
-    loading = true;
+    const silent = options?.silent ?? false;
+    const hadInfo = !!info;
+    if (!silent || !hadInfo) {
+      loading = true;
+    }
     error = null;
-    processedThumbnail = null;
+    // Reset sticky error state so a previously-failed thumbnail can render after normalization/retry.
+    thumbnailError = false;
+    if (!silent || !hadInfo) {
+      processedThumbnail = null;
+    }
     lastLoadedUrl = url;
 
     try {
@@ -819,17 +1205,33 @@
         if (!raw) throw new Error('Failed to get video info');
 
         const rawFormats = (raw.formats as Array<Record<string, unknown>>) || [];
+        const storyboards = parseStoryboardsFromYtdlpFormats(rawFormats);
+        logs.debug('tracks', `Android storyboard formats: ${storyboards?.length ?? 0}`);
+
+        const rawChannelUrl = (raw.channel_url as string) || (raw.uploader_url as string) || null;
+        const rawChannelId =
+          (raw.channel_id as string) || (raw.uploader_id as string) || null;
+
+        let normalizedChannelUrl = rawChannelUrl ? normalizeExternalUrl(rawChannelUrl) : null;
+        const rawThumb = (raw.thumbnail as string) || null;
+        const normalizedThumb = rawThumb ? normalizeExternalUrl(rawThumb) : null;
+
+        // Some extractors (notably bilibili) may omit uploader_url but provide uploader_id.
+        if (!normalizedChannelUrl && rawChannelId && (url.includes('bilibili.com') || url.includes('b23.tv'))) {
+          normalizedChannelUrl = `https://space.bilibili.com/${rawChannelId}`;
+        }
         loadedInfo = {
           title: (raw.title as string) || url,
           author: (raw.uploader as string) || (raw.channel as string) || null,
-          thumbnail: (raw.thumbnail as string) || null,
+          thumbnail: normalizedThumb,
           duration: (raw.duration as number) || null,
           view_count: (raw.view_count as number) || null,
           like_count: (raw.like_count as number) || null,
           description: (raw.description as string) || null,
           upload_date: (raw.upload_date as string) || null,
-          channel_url: (raw.channel_url as string) || null,
-          channel_id: (raw.channel_id as string) || null,
+          channel_url: normalizedChannelUrl,
+          channel_id: rawChannelId,
+          storyboards,
           formats: rawFormats.map((f) => ({
             format_id: (f.format_id as string) || '',
             ext: (f.ext as string) || '',
@@ -849,12 +1251,9 @@
           })),
         };
       } else {
-        const backend = detectBackendForUrl(url);
-        const luxInstalled = backend === 'lux' && $deps.lux?.installed;
-        const command = luxInstalled ? 'lux_get_video_formats' : 'get_video_formats';
         const currentSettings = getSettings();
 
-        loadedInfo = await invoke<VideoInfo>(command, {
+        loadedInfo = await invoke<VideoInfo>('get_video_formats', {
           url,
           cookiesFromBrowser: cookiesFromBrowser || null,
           customCookies: customCookies || null,
@@ -864,13 +1263,31 @@
             : currentSettings.extractionPlayerClient || null,
         });
         if (destroyed) return;
+
+        if (loadedInfo.thumbnail) {
+          loadedInfo.thumbnail = normalizeExternalUrl(loadedInfo.thumbnail);
+        }
+        if (loadedInfo.channel_url) {
+          loadedInfo.channel_url = normalizeExternalUrl(loadedInfo.channel_url);
+        }
+
+        if (
+          !loadedInfo.channel_url &&
+          loadedInfo.channel_id &&
+          (url.includes('bilibili.com') || url.includes('b23.tv'))
+        ) {
+          loadedInfo.channel_url = `https://space.bilibili.com/${loadedInfo.channel_id}`;
+        }
       }
 
       info = loadedInfo;
       saveToCache();
 
-      if (info.thumbnail) {
-        processThumbnail(info.thumbnail);
+      if (info.thumbnail) processThumbnail(info.thumbnail);
+
+      // Fetch SponsorBlock segments in the background (don't await) if not already cached
+      if (!sponsorSegments || sponsorSegments.length === 0) {
+        fetchSponsorBlockSegments(url);
       }
 
       logs.info(
@@ -925,7 +1342,7 @@
       <div class="error-state">
         <Icon name="warning" size={18} />
         <span>{$t('download.tracks.error')}</span>
-        <button class="retry-btn" onclick={loadInfo}>
+        <button class="retry-btn" onclick={() => loadInfo()}>
           <Icon name="restart" size={14} />
         </button>
       </div>
@@ -933,18 +1350,26 @@
       <div class="content-scroll">
         <div class="video-header">
           <div class="video-thumb-container">
-            {#if loading}
-              <div class="video-thumb skeleton"></div>
-            {:else if displayThumbnail && !thumbnailError}
+            {#if displayThumbnail && !thumbnailError}
               <img
                 src={displayThumbnail}
                 alt=""
                 class="video-thumb"
-                onerror={() => (thumbnailError = true)}
+                decoding="async"
+                onload={(e) => {
+                  const src = (e.currentTarget as HTMLImageElement).getAttribute('src');
+                  if (src && src === displayThumbnail) thumbnailError = false;
+                }}
+                onerror={(e) => {
+                  const src = (e.currentTarget as HTMLImageElement).getAttribute('src');
+                  if (src && src === displayThumbnail) thumbnailError = true;
+                }}
               />
               {#if info?.duration}
                 <span class="thumb-duration">{formatDuration(info.duration)}</span>
               {/if}
+            {:else if loading}
+              <div class="video-thumb skeleton"></div>
             {:else}
               <div class="video-thumb empty"><Icon name="video" size={32} /></div>
             {/if}
@@ -960,6 +1385,7 @@
               </div>
             {:else if displayTitle || info}
               <h1 class="video-title">{displayTitle}</h1>
+
               <div class="video-meta">
                 {#if displayAuthor}
                   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -1001,6 +1427,24 @@
                 {/if}
               </div>
 
+              <!-- Output Filename - shown as secondary metadata (not between title and author) -->
+              {#if loading && !filenamePreview}
+                <div class="filename-skel skeleton"></div>
+              {:else}
+                <div class="filename-row">
+                  <Icon name="file_text" size={12} />
+                  <div class="filename-toggle">
+                    <span class="filename-preview-text">{filenamePreview}</span>
+                    <input
+                      type="text"
+                      class="filename-template-input"
+                      bind:value={outputTemplate}
+                      placeholder="%(title)s.%(ext)s"
+                    />
+                  </div>
+                </div>
+              {/if}
+
               {#if loading && !info?.description}
                 <div class="desc-skel skeleton"></div>
               {:else if cleanDescription(info?.description)}
@@ -1014,11 +1458,14 @@
             {:else}
               <div class="title-skel skeleton"></div>
               <div class="meta-skel skeleton"></div>
+              <div class="desc-skel skeleton"></div>
+              <div class="filename-skel skeleton"></div>
             {/if}
           </div>
         </div>
+
         <div class="quality-section">
-          <span class="section-label">{$t('download.tracks.quality')}</span>
+          <span class="section-label-sm">{$t('download.tracks.quality')}</span>
           <div class="presets-row">
             {#if loading && presets.length <= 1}
               <!-- Show skeleton chips while loading -->
@@ -1038,7 +1485,19 @@
               {/each}
             {/if}
           </div>
-          {#if useDualSelectors}
+          {#if loading && !info}
+            <!-- Skeleton for quality selects while loading -->
+            <div class="quality-row">
+              <div class="quality-select">
+                <span class="select-label-skel skeleton"></span>
+                <div class="select-skel skeleton"></div>
+              </div>
+              <div class="quality-select">
+                <span class="select-label-skel skeleton"></span>
+                <div class="select-skel skeleton"></div>
+              </div>
+            </div>
+          {:else if useDualSelectors}
             <div class="quality-row">
               <div class="quality-select">
                 <span class="select-label">{$t('download.tracks.video')}</span>
@@ -1075,61 +1534,71 @@
               </div>
             </div>
           {/if}
+
+          <!-- Clip Range Selector -->
+          {#if loading && !displayDuration}
+            <div class="timeline-skel skeleton"></div>
+          {:else if displayDuration && displayDuration > 0}
+            <ClipRangeSelector 
+              duration={displayDuration}
+              bind:ranges={clipRanges}
+              disabled={loading}
+              storyboard={info?.storyboards?.[0]}
+              chapters={info?.chapters}
+              {sponsorSegments}
+            />
+          {/if}
         </div>
-        <div class="options-row">
+        <div class="options-sections">
           {#if isYtdlp}
-            <div class="option-group">
-              <span class="group-header">SponsorBlock <span class="tag">yt-dlp</span></span>
-              <div class="checks">
+            <CollapsibleBlock title="SponsorBlock" badge="yt-dlp" expanded={true}>
+              <div class="option-grid">
                 <Checkbox bind:checked={skipSponsors} label={$t('download.tracks.skipSponsors')} />
                 <Checkbox bind:checked={skipIntros} label={$t('download.tracks.skipIntros')} />
-                <Checkbox
-                  bind:checked={skipSelfPromo}
-                  label={$t('download.tracks.skipSelfPromo')}
-                />
-                <Checkbox
-                  bind:checked={skipInteraction}
-                  label={$t('download.tracks.skipInteraction')}
-                />
+                <Checkbox bind:checked={skipSelfPromo} label={$t('download.tracks.skipSelfPromo')} />
+                <Checkbox bind:checked={skipInteraction} label={$t('download.tracks.skipInteraction')} />
               </div>
-            </div>
+            </CollapsibleBlock>
           {/if}
 
-          <div class="option-group">
-            <span class="group-header">{$t('download.tracks.embedOptions')}</span>
-            <div class="checks">
+          <CollapsibleBlock title={$t('download.tracks.embedOptions')} expanded={true}>
+            <div class="option-grid">
               <Checkbox bind:checked={embedChapters} label={$t('download.tracks.embedChapters')} />
-              <Checkbox
-                bind:checked={embedThumbnail}
-                label={$t('download.tracks.embedThumbnail')}
-              />
+              <Checkbox bind:checked={embedThumbnail} label={$t('download.tracks.embedThumbnail')} />
               <Checkbox bind:checked={embedMetadata} label={$t('download.tracks.embedMetadata')} />
             </div>
-          </div>
+          </CollapsibleBlock>
 
-          <div class="option-group">
-            <span class="group-header">{$t('download.tracks.subtitles')}</span>
-            <div class="checks">
+          <CollapsibleBlock title={$t('download.tracks.subtitles')} expanded={true}>
+            <div class="subs-row">
               <Checkbox bind:checked={embedSubs} label={$t('download.tracks.embedSubs')} />
               {#if embedSubs}
                 <input type="text" class="lang-input" bind:value={subLangs} placeholder="en" />
               {/if}
             </div>
-          </div>
+          </CollapsibleBlock>
         </div>
       </div>
     {:else}
       <div class="main-row">
         <div class="left">
-          {#if loading}
-            <div class="thumb skeleton"></div>
-          {:else if displayThumbnail && !thumbnailError}
+          {#if displayThumbnail && !thumbnailError}
             <img
               src={displayThumbnail}
               alt=""
               class="thumb"
-              onerror={() => (thumbnailError = true)}
+                decoding="async"
+                onload={(e) => {
+                  const src = (e.currentTarget as HTMLImageElement).getAttribute('src');
+                  if (src && src === displayThumbnail) thumbnailError = false;
+                }}
+                onerror={(e) => {
+                  const src = (e.currentTarget as HTMLImageElement).getAttribute('src');
+                  if (src && src === displayThumbnail) thumbnailError = true;
+                }}
             />
+          {:else if loading}
+            <div class="thumb skeleton"></div>
           {:else}
             <div class="thumb empty"><Icon name="video" size={20} /></div>
           {/if}
@@ -1222,30 +1691,34 @@
       </div>
 
       {#if showMoreOptions}
-        <div class="more-options">
-          {#if isYtdlp}
-            <div class="option-group">
-              <span class="group-label">
-                <span>SponsorBlock</span>
-                <span class="sponsor-tag">yt-dlp</span>
-              </span>
-              <div class="option-grid">
-                <Checkbox bind:checked={skipSponsors} label={$t('download.tracks.skipSponsors')} />
-                <Checkbox bind:checked={skipIntros} label={$t('download.tracks.skipIntros')} />
-                <Checkbox
-                  bind:checked={skipSelfPromo}
-                  label={$t('download.tracks.skipSelfPromo')}
-                />
-                <Checkbox
-                  bind:checked={skipInteraction}
-                  label={$t('download.tracks.skipInteraction')}
+        <div class="options-sections">
+          <!-- Output Filename Section -->
+          <CollapsibleBlock title={$t('download.tracks.outputFilename')} expanded={true}>
+            <div class="filename-row in-block">
+              <div class="filename-toggle">
+                <span class="filename-preview-text">{filenamePreview}</span>
+                <input
+                  type="text"
+                  class="filename-template-input"
+                  bind:value={outputTemplate}
+                  placeholder="%(title)s.%(ext)s"
                 />
               </div>
             </div>
+          </CollapsibleBlock>
+
+          {#if isYtdlp}
+            <CollapsibleBlock title="SponsorBlock" badge="yt-dlp" expanded={true}>
+              <div class="option-grid">
+                <Checkbox bind:checked={skipSponsors} label={$t('download.tracks.skipSponsors')} />
+                <Checkbox bind:checked={skipIntros} label={$t('download.tracks.skipIntros')} />
+                <Checkbox bind:checked={skipSelfPromo} label={$t('download.tracks.skipSelfPromo')} />
+                <Checkbox bind:checked={skipInteraction} label={$t('download.tracks.skipInteraction')} />
+              </div>
+            </CollapsibleBlock>
           {/if}
 
-          <div class="option-group">
-            <span class="group-label">{$t('download.tracks.subtitles')}</span>
+          <CollapsibleBlock title={$t('download.tracks.subtitles')} expanded={true}>
             <div class="subs-row">
               <Checkbox bind:checked={embedSubs} label={$t('download.tracks.embedSubs')} />
               {#if embedSubs}
@@ -1258,19 +1731,15 @@
                 />
               {/if}
             </div>
-          </div>
+          </CollapsibleBlock>
 
-          <div class="option-group">
-            <span class="group-label">{$t('download.tracks.embedOptions')}</span>
+          <CollapsibleBlock title={$t('download.tracks.embedOptions')} expanded={true}>
             <div class="option-grid">
               <Checkbox bind:checked={embedChapters} label={$t('download.tracks.embedChapters')} />
-              <Checkbox
-                bind:checked={embedThumbnail}
-                label={$t('download.tracks.embedThumbnail')}
-              />
+              <Checkbox bind:checked={embedThumbnail} label={$t('download.tracks.embedThumbnail')} />
               <Checkbox bind:checked={embedMetadata} label={$t('download.tracks.embedMetadata')} />
             </div>
-          </div>
+          </CollapsibleBlock>
         </div>
       {/if}
 
@@ -1616,9 +2085,9 @@
 
   /* Description Preview (YouTube style clickable box) */
   .desc-preview {
-    padding: 12px;
+    padding: 8px 10px;
     background: rgba(255, 255, 255, 0.04);
-    border-radius: 12px;
+    border-radius: 8px;
     cursor: pointer;
     transition: background 0.15s;
   }
@@ -1629,9 +2098,9 @@
 
   .desc-text {
     margin: 0;
-    font-size: 13px;
-    line-height: 1.5;
-    color: rgba(255, 255, 255, 0.7);
+    font-size: 11px;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.6);
     display: -webkit-box;
     -webkit-line-clamp: 2;
     line-clamp: 2;
@@ -1643,10 +2112,10 @@
 
   .desc-more {
     display: inline-block;
-    margin-top: 4px;
-    font-size: 13px;
+    margin-top: 2px;
+    font-size: 11px;
     font-weight: 500;
-    color: rgba(255, 255, 255, 0.9);
+    color: rgba(255, 255, 255, 0.8);
   }
 
   .presets-row {
@@ -1655,17 +2124,120 @@
     gap: 8px;
   }
 
+  /* Filename Row - Hover to Reveal */
+  .filename-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 4px 0;
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.4);
+    transition: color 0.15s ease;
+  }
+
+  .filename-row:hover,
+  .filename-row:focus-within {
+    color: var(--accent, #6366f1);
+  }
+
+  .filename-row.in-block {
+    padding: 8px 10px;
+  }
+
+  .filename-toggle {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    min-height: 18px;
+    overflow: hidden;
+  }
+
+  .filename-preview-text {
+    display: block;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 11px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    white-space: normal;
+    word-break: break-all;
+    line-height: 1.4;
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    pointer-events: none;
+  }
+
+  .filename-template-input {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: white;
+    font-size: 11px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+  }
+
+  .filename-template-input:focus {
+    outline: none;
+  }
+
+  .filename-template-input::placeholder {
+    color: rgba(255, 255, 255, 0.3);
+  }
+
+  /* On hover or focus: crossfade with slide animation */
+  .filename-toggle:hover .filename-preview-text,
+  .filename-toggle:focus-within .filename-preview-text {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  .filename-toggle:hover .filename-template-input,
+  .filename-toggle:focus-within .filename-template-input {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* Subtle label on hover */
+  .filename-row::after {
+    content: 'template';
+    position: absolute;
+    right: 10px;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: rgba(255, 255, 255, 0.2);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    pointer-events: none;
+  }
+
+  .filename-row:hover::after,
+  .filename-row:focus-within::after {
+    opacity: 1;
+  }
+
   /* Quality Section */
   .quality-section {
     display: flex;
     flex-direction: column;
     gap: 10px;
+    overflow: hidden;
   }
 
-  .section-label {
-    font-size: 14px;
-    font-weight: 600;
-    color: white;
+  .section-label-sm {
+    font-size: 11px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
   .quality-row {
@@ -1702,48 +2274,6 @@
     opacity: 0.6;
     font-weight: 400;
     text-transform: none;
-  }
-
-  /* Options Row */
-  .options-row {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-    padding: 14px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
-  }
-
-  .option-group {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .group-header {
-    font-size: 11px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.7);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .group-header .tag {
-    padding: 2px 5px;
-    background: rgba(255, 165, 0, 0.15);
-    border-radius: 3px;
-    font-size: 9px;
-    color: #fbbf24;
-  }
-
-  .checks {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
   }
 
   /* Description Modal */
@@ -2119,54 +2649,12 @@
     background: rgba(255, 255, 255, 0.06);
   }
 
-  .sponsor-tag {
-    padding: 2px 6px;
-    background: rgba(0, 212, 170, 0.12);
-    border-radius: 4px;
-    font-size: 9px;
-    font-weight: 600;
-    color: rgba(0, 212, 170, 0.8);
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-  }
-
-  /* More options panel */
-  .more-options {
+  /* Options sections with CollapsibleBlock */
+  .options-sections {
     display: flex;
     flex-direction: column;
     gap: 12px;
-    margin-top: 10px;
-    padding-top: 10px;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-    animation: slideDown 0.15s ease-out;
-  }
-
-  @keyframes slideDown {
-    from {
-      opacity: 0;
-      transform: translateY(-8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  .option-group {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .group-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 10px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.4);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    margin-top: 12px;
   }
 
   .option-grid {
@@ -2247,6 +2735,35 @@
     border-radius: 16px;
   }
 
+  .filename-skel {
+    height: 18px;
+    width: 100%;
+    max-width: 280px;
+    border-radius: 4px;
+    margin-top: 4px;
+  }
+
+  .select-label-skel {
+    display: block;
+    height: 12px;
+    width: 60px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+  }
+
+  .select-skel {
+    height: 36px;
+    width: 100%;
+    border-radius: 8px;
+  }
+
+  .timeline-skel {
+    height: 48px;
+    width: 100%;
+    border-radius: 8px;
+    margin-top: 12px;
+  }
+
   /* Mobile / Android layout */
   @media (max-width: 560px) {
     /* Compact layout mobile styles */
@@ -2319,10 +2836,6 @@
     .quality-row {
       flex-direction: column;
       gap: 8px;
-    }
-
-    .options-row {
-      grid-template-columns: 1fr;
     }
   }
 

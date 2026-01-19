@@ -1,6 +1,7 @@
 mod backends;
 mod cache;
 mod deps;
+mod job_engine;
 mod logs;
 mod notifications;
 mod proxy;
@@ -18,7 +19,7 @@ use types::{PlaylistInfo, VideoFormats, VideoInfo};
 use utils::lock_or_recover;
 
 #[cfg(not(target_os = "android"))]
-use backends::{Backend, InfoRequest, PlaylistRequest};
+use backends::{InfoRequest, PlaylistRequest};
 
 #[cfg(not(target_os = "android"))]
 use image::{DynamicImage, GenericImageView};
@@ -34,9 +35,234 @@ use tauri::Emitter;
 use tauri::Manager;
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 
-#[cfg(not(target_os = "android"))]
-static ACTIVE_DOWNLOADS: std::sync::LazyLock<Mutex<HashMap<String, u32>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AndroidBuildYtDlpOptionsRequest {
+    url: String,
+    settings_json: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AndroidYtDlpJobSettingsPayload {
+    format: Option<String>,
+    is_audio_only: Option<bool>,
+
+    aria2_connections: Option<u32>,
+    aria2_splits: Option<u32>,
+    aria2_min_split_size: Option<String>,
+
+    speed_limit: Option<u32>,
+    youtube_player_client: Option<String>,
+    output_template: Option<String>,
+
+    embed_thumbnail: Option<bool>,
+    embed_chapters: Option<bool>,
+    embed_subtitles: Option<bool>,
+    subtitle_languages: Option<String>,
+    sponsor_block: Option<bool>,
+    sponsor_block_categories: Option<Vec<String>>,
+    remux: Option<bool>,
+    convert_to_mp4: Option<bool>,
+    clip_ranges: Option<Vec<types::ClipRange>>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AndroidYtDlpOption {
+    key: String,
+    value: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AndroidBuildYtDlpOptionsResponse {
+    options: Vec<AndroidYtDlpOption>,
+    // Kotlin replaces this token inside values like -o.
+    output_dir_token: String,
+}
+
+#[tauri::command]
+async fn build_android_ytdlp_options(
+    req: AndroidBuildYtDlpOptionsRequest,
+) -> Result<AndroidBuildYtDlpOptionsResponse, String> {
+    let settings: AndroidYtDlpJobSettingsPayload = serde_json::from_str(&req.settings_json)
+        .map_err(|e| format!("Invalid settings JSON: {}", e))?;
+
+    let output_dir_token = "__COMINE_OUTPUT_DIR__".to_string();
+    let template = settings
+        .output_template
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("%(title)s.%(ext)s");
+
+    let mut options: Vec<AndroidYtDlpOption> = Vec::new();
+    fn push_flag(options: &mut Vec<AndroidYtDlpOption>, key: &str) {
+        options.push(AndroidYtDlpOption {
+            key: key.to_string(),
+            value: None,
+        });
+    }
+    fn push_kv(options: &mut Vec<AndroidYtDlpOption>, key: &str, value: String) {
+        options.push(AndroidYtDlpOption {
+            key: key.to_string(),
+            value: Some(value),
+        });
+    }
+
+    // Output & encoding
+    push_kv(
+        &mut options,
+        "-o",
+        format!("{}/{}", output_dir_token, template),
+    );
+    push_kv(&mut options, "--encoding", "utf-8".to_string());
+
+    // Emit a deterministic file path marker (Kotlin can parse it without guessing)
+    push_kv(
+        &mut options,
+        "--print",
+        "after_move:>>>FILEPATH:%(filepath)s".to_string(),
+    );
+
+    // Format
+    if let Some(fmt) = settings.format.as_deref().filter(|s| !s.trim().is_empty()) {
+        push_kv(&mut options, "-f", fmt.trim().to_string());
+    }
+
+    // YouTube player client
+    if let Some(client) = settings
+        .youtube_player_client
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        push_kv(
+            &mut options,
+            "--extractor-args",
+            format!(
+                "youtube:player_client={};player_skip=webpage,configs",
+                client.trim()
+            ),
+        );
+    }
+
+    // Clip ranges -> download sections
+    let has_clip_ranges = settings
+        .clip_ranges
+        .as_ref()
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    if let Some(ranges) = settings.clip_ranges.as_ref() {
+        for range in ranges.iter() {
+            if range.end <= range.start {
+                continue;
+            }
+            // Android youtubedl-android expects the same --download-sections syntax.
+            push_kv(
+                &mut options,
+                "--download-sections",
+                format!("*{}-{}", range.start, range.end),
+            );
+        }
+    }
+
+    if has_clip_ranges {
+        // Reduces brief A/V desync at cut boundaries for some sites (e.g. Vimeo).
+        push_flag(&mut options, "--force-keyframes-at-cuts");
+    }
+
+    let is_audio_only = settings.is_audio_only.unwrap_or(false);
+    if is_audio_only {
+        push_flag(&mut options, "-x");
+        push_kv(&mut options, "--audio-format", "m4a".to_string());
+
+        if settings.embed_thumbnail.unwrap_or(true) {
+            push_flag(&mut options, "--embed-thumbnail");
+            push_kv(&mut options, "--convert-thumbnails", "jpg".to_string());
+        }
+    } else {
+        // Video post-processing
+        if settings.remux.unwrap_or(true) {
+            if settings.convert_to_mp4.unwrap_or(false) {
+                push_kv(&mut options, "--recode-video", "mp4".to_string());
+            } else {
+                push_kv(&mut options, "--remux-video", "mp4".to_string());
+            }
+        }
+    }
+
+    if settings.embed_chapters.unwrap_or(true) {
+        push_flag(&mut options, "--embed-chapters");
+    }
+
+    if settings.embed_subtitles.unwrap_or(false) {
+        push_flag(&mut options, "--write-subs");
+        push_flag(&mut options, "--write-auto-subs");
+        if let Some(langs) = settings
+            .subtitle_languages
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
+            push_kv(&mut options, "--sub-langs", langs.trim().to_string());
+        }
+        push_flag(&mut options, "--embed-subs");
+    }
+
+    if settings.sponsor_block.unwrap_or(false) {
+        let cats = settings
+            .sponsor_block_categories
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| !s.trim().is_empty())
+            .collect::<Vec<_>>();
+        if cats.is_empty() {
+            push_kv(&mut options, "--sponsorblock-remove", "sponsor".to_string());
+        } else {
+            push_kv(&mut options, "--sponsorblock-remove", cats.join(","));
+        }
+    }
+
+    // Aria2 integration: executor decides if aria2 is actually available.
+    if !has_clip_ranges {
+        let aria2_connections = settings.aria2_connections.unwrap_or(8).clamp(1, 16);
+        let aria2_splits = settings.aria2_splits.unwrap_or(8).clamp(1, 16);
+        let aria2_min_split_size = settings
+            .aria2_min_split_size
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("1M")
+            .to_string();
+        // Match existing working Android behavior.
+        push_kv(&mut options, "--downloader", "libaria2c.so".to_string());
+        push_kv(
+            &mut options,
+            "--external-downloader-args",
+            format!(
+                "aria2c:'-x {} -s {} -k {}'",
+                aria2_connections, aria2_splits, aria2_min_split_size
+            ),
+        );
+    }
+
+    if let Some(limit_mbps) = settings.speed_limit {
+        if limit_mbps > 0 {
+            push_kv(&mut options, "--limit-rate", format!("{}M", limit_mbps));
+        }
+    }
+
+    // URL always last.
+    options.push(AndroidYtDlpOption {
+        key: "__URL__".to_string(),
+        value: Some(req.url),
+    });
+
+    Ok(AndroidBuildYtDlpOptionsResponse {
+        options,
+        output_dir_token,
+    })
+}
 
 const THUMBNAIL_COLOR_CACHE_SIZE: std::num::NonZeroUsize =
     unsafe { std::num::NonZeroUsize::new_unchecked(500) };
@@ -114,7 +340,7 @@ fn schedule_thumbnail_color_disk_flush(app: AppHandle) {
         tokio::time::sleep(std::time::Duration::from_millis(750)).await;
 
         let write_result: Result<(), String> = async {
-            // Ensure loaded so we don't overwrite with empty map.
+            // Ensure loaded to avoid overwriting the disk cache with an empty map.
             ensure_thumbnail_color_disk_cache_loaded(&app).await?;
 
             let (path, snapshot) = {
@@ -156,8 +382,6 @@ fn schedule_thumbnail_color_disk_flush(app: AppHandle) {
 use log::{debug, error, info, warn};
 #[cfg(target_os = "android")]
 use log::{debug, info, warn};
-#[cfg(not(target_os = "android"))]
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 #[cfg(target_os = "windows")]
 use utils::CommandHideConsole;
@@ -188,11 +412,26 @@ async fn download_video(
     playlist_title: Option<String>,
     proxy_config: Option<proxy::ProxyConfig>,
     sponsor_block: Option<bool>,
+    sponsor_block_skip_sponsors: Option<bool>,
+    sponsor_block_skip_intros: Option<bool>,
+    sponsor_block_skip_self_promo: Option<bool>,
+    sponsor_block_skip_interaction: Option<bool>,
     chapters: Option<bool>,
     embed_subtitles: Option<bool>,
     subtitle_languages: Option<String>,
     download_speed_limit: Option<u64>,
     youtube_player_client: Option<String>,
+    concurrent_fragments: Option<u32>,
+    retries: Option<u32>,
+    fragment_retries: Option<u32>,
+    download_custom_args: Option<String>,
+    post_process_custom_args: Option<String>,
+    keep_original: Option<bool>,
+    output_template: Option<String>,
+    restrict_filenames: Option<bool>,
+    windows_filenames: Option<bool>,
+    clip_ranges: Option<Vec<types::ClipRange>>,
+    registry: tauri::State<'_, job_engine::JobRegistry>,
     window: tauri::Window,
 ) -> Result<String, String> {
     info!("Starting download for URL: {}", url);
@@ -206,786 +445,66 @@ async fn download_video(
 
     #[cfg(target_os = "android")]
     {
-        return Err("On Android, use window.AndroidYtDlp.download() from JavaScript".to_string());
+        return Err(
+            "On Android, downloads run via the job-based bridge (window.AndroidYtDlp.startDownloadJob + job-event)"
+                .to_string(),
+        );
     }
 
     #[cfg(not(target_os = "android"))]
     {
-        let resolved_proxy = proxy_config.as_ref().map(proxy::resolve_proxy);
-        let proxy_url = resolved_proxy.as_ref().and_then(|r| {
-            if r.url.is_empty() {
-                None
-            } else {
-                Some(r.url.as_str())
-            }
-        });
-
-        if let Some(ref proxy) = resolved_proxy {
-            if !proxy.url.is_empty() {
-                info!("Using proxy for download: {} ({})", proxy.url, proxy.source);
-            }
-        }
-
-        let config = backends::get_command(&app, proxy_url)?;
-
-        debug!(
-            "Using command: {} with prefix args: {:?}",
-            config.ytdlp_path, config.prefix_args
-        );
-
-        let mut downloads_dir = if let Some(ref custom_path) = download_path {
-            if !custom_path.is_empty() {
-                std::path::PathBuf::from(custom_path)
-            } else {
-                dirs::download_dir().ok_or("Could not find Downloads folder")?
-            }
-        } else {
-            dirs::download_dir().ok_or("Could not find Downloads folder")?
-        };
-
-        if let Some(ref title) = playlist_title {
-            if !title.is_empty() {
-                let safe_folder_name: String = title
-                    .chars()
-                    .map(|c| if "<>:\"/\\|?*".contains(c) { '_' } else { c })
-                    .collect::<String>()
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" ")
-                    .chars()
-                    .take(100)
-                    .collect();
-                if !safe_folder_name.is_empty() {
-                    downloads_dir = downloads_dir.join(&safe_folder_name);
-                    info!("Using playlist subfolder: {:?}", downloads_dir);
-                }
-            }
-        }
-
-        if !downloads_dir.exists() {
-            std::fs::create_dir_all(&downloads_dir)
-                .map_err(|e| format!("Failed to create download directory: {}", e))?;
-            info!("Created download directory: {:?}", downloads_dir);
-        }
-
-        let download_mode = download_mode.unwrap_or_else(|| "auto".to_string());
-        let ext = "%(ext)s";
-
-        let output_template = downloads_dir
-            .join(format!("%(title)s.{}", ext))
-            .to_str()
-            .ok_or("Invalid path")?
-            .to_string();
-
-        info!("Output template: {}", output_template);
-        info!(
-            "Download mode: {}, Video quality: {:?}, Audio quality: {:?}",
-            download_mode, video_quality, audio_quality
-        );
-
-        let download_start_time = std::time::SystemTime::now();
-
-        let mut args: Vec<String> = config.prefix_args;
-        args.extend([
-            "--encoding".to_string(),
-            "utf-8".to_string(),
-            "-o".to_string(),
-            output_template.clone(),
-            "--newline".to_string(),
-            "--progress".to_string(),
-            "--progress-template".to_string(),
-            "%(progress._percent_str)s %(progress._speed_str)s %(progress._eta_str)s".to_string(),
-            "--print".to_string(),
-            "after_move:>>>FILEPATH:%(filepath)s".to_string(),
-            "--verbose".to_string(),
-        ]);
-
-        if let Some(proxy) = proxy_url {
-            args.extend(["--proxy".to_string(), proxy.to_string()]);
-            info!("Using --proxy argument: {}", proxy);
-        }
-
-        if let Some(ref qjs_path) = config.quickjs_path {
-            args.extend(["--js-runtimes".to_string(), format!("quickjs:{}", qjs_path)]);
-            info!("Using QuickJS runtime: {}", qjs_path);
-        }
-
-        let video_quality = video_quality.unwrap_or_else(|| "max".to_string());
-        let audio_quality = audio_quality.unwrap_or_else(|| "best".to_string());
-
-        // Check if video_quality is a raw format ID (e.g., "251", "140+251", "bestvideo+bestaudio")
-        // Raw format IDs contain digits, plus signs, or start with "best"
-        let is_raw_format = video_quality
-            .chars()
-            .next()
-            .map(|c| c.is_ascii_digit())
-            .unwrap_or(false)
-            || video_quality.contains('+')
-            || video_quality.starts_with("best");
-
-        let format_string =
-            if is_raw_format {
-                info!("Using raw format ID: {}", video_quality);
-                video_quality.clone()
-            } else {
-                match download_mode.as_str() {
-                    "audio" => {
-                        match audio_quality.as_str() {
-                            "320" => "bestaudio[abr<=320]/bestaudio/best".to_string(),
-                            "256" => "bestaudio[abr<=256]/bestaudio/best".to_string(),
-                            "192" => "bestaudio[abr<=192]/bestaudio/best".to_string(),
-                            "128" => "bestaudio[abr<=128]/bestaudio/best".to_string(),
-                            "96" => "bestaudio[abr<=96]/bestaudio/best".to_string(),
-                            _ => "bestaudio/best".to_string(), // "best"
-                        }
-                    }
-                    "mute" => {
-                        match video_quality.as_str() {
-                            "4k" => "bestvideo[height<=2160]/bestvideo/best".to_string(),
-                            "1440p" => "bestvideo[height<=1440]/bestvideo/best".to_string(),
-                            "1080p" => "bestvideo[height<=1080]/bestvideo/best".to_string(),
-                            "720p" => "bestvideo[height<=720]/bestvideo/best".to_string(),
-                            "480p" => "bestvideo[height<=480]/bestvideo/best".to_string(),
-                            "360p" => "bestvideo[height<=360]/bestvideo/best".to_string(),
-                            "240p" => "bestvideo[height<=240]/bestvideo/best".to_string(),
-                            _ => "bestvideo/best".to_string(), // "max"
-                        }
-                    }
-                    _ => {
-                        match video_quality.as_str() {
-                            "4k" => "bestvideo[height<=2160]+bestaudio/best[height<=2160]/best"
-                                .to_string(),
-                            "1440p" => "bestvideo[height<=1440]+bestaudio/best[height<=1440]/best"
-                                .to_string(),
-                            "1080p" => "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
-                                .to_string(),
-                            "720p" => "bestvideo[height<=720]+bestaudio/best[height<=720]/best"
-                                .to_string(),
-                            "480p" => "bestvideo[height<=480]+bestaudio/best[height<=480]/best"
-                                .to_string(),
-                            "360p" => "bestvideo[height<=360]+bestaudio/best[height<=360]/best"
-                                .to_string(),
-                            "240p" => "bestvideo[height<=240]+bestaudio/best[height<=240]/best"
-                                .to_string(),
-                            _ => "bestvideo+bestaudio/best".to_string(), // "max"
-                        }
-                    }
-                }
-            };
-
-        args.extend(["-f".to_string(), format_string.clone()]);
-        info!("Using format: {}", format_string);
-
-        if download_mode == "audio" {
-            args.extend([
-                "-x".to_string(),
-                "--audio-format".to_string(),
-                "m4a".to_string(),
-            ]);
-
-            let has_thumb_url_for_embed = thumbnail_url_for_embed
-                .as_ref()
-                .map(|s| !s.is_empty())
-                .unwrap_or(false);
-
-            // For YouTube Music, we want a square cover (cropped if letterboxed).
-            // We embed manually from URL after download to ensure proper cropping.
-            let should_manual_embed_ytm = embed_thumbnail.unwrap_or(false)
-                && url.to_lowercase().contains("music.youtube.com")
-                && has_thumb_url_for_embed;
-
-            if embed_thumbnail.unwrap_or(false) && !should_manual_embed_ytm {
-                args.push("--embed-thumbnail".to_string());
-                info!("Embedding thumbnail as cover art (via yt-dlp)");
-            } else if should_manual_embed_ytm {
-                info!("Will embed YTM thumbnail manually after download");
-            }
-
-            info!("Audio-only download with extraction (ffprobe available)");
-        }
-
-        if download_mode != "audio" {
-            if convert_to_mp4.unwrap_or(false) {
-                args.extend([
-                    "--format-sort".to_string(),
-                    "vcodec:h264,acodec:aac".to_string(),
-                ]);
-                args.extend(["--recode-video".to_string(), "mp4".to_string()]);
-                info!("Converting to MP4 (with h264/aac preference to minimize re-encoding)");
-            } else if remux.unwrap_or(true) {
-                args.extend(["--remux-video".to_string(), "mp4".to_string()]);
-                info!("Remuxing to MP4 (copy, no re-encode)");
-            }
-        }
-
-        if clear_metadata.unwrap_or(false) {
-            args.push("--no-embed-metadata".to_string());
-            info!("Clearing metadata");
-        }
-
-        if no_playlist.unwrap_or(true) {
-            args.push("--no-playlist".to_string());
-            info!("Using --no-playlist (single video only)");
-        }
-
-        // Only use custom cookies if cookiesFromBrowser is explicitly set to "custom"
-        let use_custom_cookies = cookies_from_browser
-            .as_ref()
-            .map(|s| s == "custom")
-            .unwrap_or(false)
-            && custom_cookies
-                .as_ref()
-                .map(|s| !s.is_empty())
-                .unwrap_or(false);
-
-        if use_custom_cookies {
-            if let Some(cookies_text) = custom_cookies.as_deref() {
-                let cache_dir = app
-                    .path()
-                    .app_cache_dir()
-                    .map_err(|e| format!("Failed to get cache dir: {}", e))?;
-                let cookies_file = cache_dir.join("custom_cookies.txt");
-
-                tokio::fs::create_dir_all(&cache_dir)
-                    .await
-                    .map_err(|e| format!("Failed to create cache dir: {}", e))?;
-
-                tokio::fs::write(&cookies_file, cookies_text)
-                    .await
-                    .map_err(|e| format!("Failed to write cookies file: {}", e))?;
-
-                args.push("--cookies".to_string());
-                args.push(cookies_file.to_string_lossy().to_string());
-                info!("Using custom cookies file: {:?}", cookies_file);
-            }
-        } else if let Some(ref browser) = cookies_from_browser {
-            if !browser.is_empty() && browser != "custom" {
-                args.push("--cookies-from-browser".to_string());
-                args.push(browser.clone());
-                info!("Using cookies from browser: {}", browser);
-            }
-        }
-
-        let is_youtube = url.contains("youtube.com") || url.contains("youtu.be");
-        if is_youtube {
-            // When using cookies, avoid android_sdkless as it doesn't support cookies
-            let has_cookies = use_custom_cookies
-                || cookies_from_browser
-                    .as_ref()
-                    .map(|s| !s.is_empty() && s != "custom")
-                    .unwrap_or(false);
-
-            let default_client = if has_cookies {
-                "tv,web"
-            } else {
-                "tv,android_sdkless"
-            };
-            let player_client = youtube_player_client
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .unwrap_or(default_client);
-
-            let final_client = if has_cookies && player_client.contains("android_sdkless") {
-                player_client.replace("android_sdkless", "tv")
-            } else {
-                player_client.to_string()
-            };
-
-            args.extend([
-                "--extractor-args".to_string(),
-                format!("youtube:player_client={}", final_client),
-            ]);
-            info!("Using player client chain for YouTube: {}", final_client);
-        }
-
-        if sponsor_block.unwrap_or(false) {
-            args.extend(["--sponsorblock-remove".to_string(), "default".to_string()]);
-            info!("SponsorBlock enabled - removing sponsored segments");
-        }
-
-        if chapters.unwrap_or(true) {
-            args.push("--embed-chapters".to_string());
-            info!("Embedding chapters");
-        }
-
-        if embed_subtitles.unwrap_or(false) {
-            let langs = subtitle_languages.as_deref().unwrap_or("en.*,ru.*");
-            args.extend([
-                "--embed-subs".to_string(),
-                "--sub-langs".to_string(),
-                langs.to_string(),
-            ]);
-            info!("Embedding subtitles ({})", langs);
-        }
-
-        if let Some(limit) = download_speed_limit {
-            if limit > 0 {
-                args.extend(["--limit-rate".to_string(), format!("{}M", limit)]);
-                info!("Download speed limit: {} MB/s", limit);
-            }
-        }
-
-        let should_use_aria2 = use_aria2.unwrap_or(true);
-        if should_use_aria2 {
-            let aria2_path = deps::get_aria2_path(&app)?;
-            if aria2_path.exists() {
-                let connections = aria2_connections.unwrap_or(8).min(16).max(1);
-                let splits = aria2_splits.unwrap_or(8).min(16).max(1);
-                let min_split = aria2_min_split_size.as_deref().unwrap_or("1M");
-                let disable_ipv6 = aria2_disable_ipv6.unwrap_or(true);
-                let custom_args = aria2_custom_args.as_deref().unwrap_or("");
-                
-                info!("Using aria2 as external downloader: {:?} (connections: {}, splits: {}, min-split: {}, disable-ipv6: {})", aria2_path, connections, splits, min_split, disable_ipv6);
-                
-                let mut aria2_args = format!(
-                    "aria2c:-x {} -s {} -k {} --file-allocation=none --retry-wait=2 --min-tls-version=TLSv1.2 --enable-color=false",
-                    connections, splits, min_split
-                );
-                
-                if disable_ipv6 {
-                    aria2_args.push_str(" --disable-ipv6=true");
-                }
-                
-                if !custom_args.is_empty() {
-                    aria2_args.push(' ');
-                    aria2_args.push_str(custom_args);
-                    info!("Using custom aria2 args: {}", custom_args);
-                }
-                
-                args.extend([
-                    "--downloader".to_string(),
-                    aria2_path.to_string_lossy().to_string(),
-                    "--downloader-args".to_string(),
-                    aria2_args,
-                ]);
-            } else {
-                info!("aria2 requested but not installed, using default downloader");
-            }
-        } else {
-            info!("aria2 disabled by user, using yt-dlp's native downloader");
-        }
-
-        args.push(url.clone());
-
-        let mut cmd = tokio::process::Command::new(&config.ytdlp_path);
-        cmd.args(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        #[cfg(target_os = "windows")]
-        cmd.hide_console();
-
-        for (key, value) in &config.env_vars {
-            cmd.env(key, value);
-        }
-
-        let mut child = cmd.spawn().map_err(|e| {
-            error!("Failed to start yt-dlp: {}", e);
-            format!("Failed to start yt-dlp: {}", e)
-        })?;
-
-        let pid = child.id().unwrap_or(0);
-        {
-            let mut downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
-            downloads.insert(url.clone(), pid);
-            info!("Registered download process {} for URL: {}", pid, url);
-        }
-
-        let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-        let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
-
-        let mut stdout_reader = BufReader::new(stdout);
-        let mut stdout_buffer = Vec::new();
-        let mut stderr_reader = BufReader::new(stderr).lines();
-
-        let mut final_file_path: Option<String> = None;
-        let mut stdout_done = false;
-        let mut stderr_done = false;
-        let mut error_messages: Vec<String> = Vec::new();
-
-        let mut last_progress_emit =
-            std::time::Instant::now() - std::time::Duration::from_millis(200);
-        const PROGRESS_THROTTLE_MS: u64 = 100;
-
-        while !stdout_done || !stderr_done {
-            tokio::select! {
-                result = stdout_reader.read_u8(), if !stdout_done => {
-                    match result {
-                        Ok(byte) => {
-                            if byte == b'\n' || byte == b'\r' {
-                                if !stdout_buffer.is_empty() {
-                                    if let Ok(line) = String::from_utf8(stdout_buffer.clone()) {
-                                        let line = line.trim().to_string();
-                                        stdout_buffer.clear();
-
-                                        if line.is_empty() {
-                                            continue;
-                                        }
-
-                                        debug!("yt-dlp stdout: {}", line);
-
-                                        if line.starts_with(">>>FILEPATH:") {
-                                            let path = line.trim_start_matches(">>>FILEPATH:");
-                                            let path_lower = path.to_lowercase();
-                                            let is_image = path_lower.ends_with(".png") ||
-                                                           path_lower.ends_with(".jpg") ||
-                                                           path_lower.ends_with(".jpeg") ||
-                                                           path_lower.ends_with(".webp");
-                                            if !is_image {
-                                                final_file_path = Some(path.to_string());
-                                                info!("Captured file path from --print: {:?}", final_file_path);
-                                            } else {
-                                                debug!("Skipping image file path from --print: {}", path);
-                                            }
-                                            continue;
-                                        }
-
-                                        let now = std::time::Instant::now();
-                                        if now.duration_since(last_progress_emit).as_millis() >= PROGRESS_THROTTLE_MS as u128 {
-                                            last_progress_emit = now;
-                                            let _ = window.emit("download-progress", DownloadProgress {
-                                                url: url.clone(),
-                                                message: line,
-                                            });
-                                        }
-                                    } else {
-                                        stdout_buffer.clear();
-                                    }
-                                }
-                            } else {
-                                stdout_buffer.push(byte);
-                            }
-                        }
-                        Err(_) => stdout_done = true,
-                    }
-                }
-                result = stderr_reader.next_line(), if !stderr_done => {
-                    match result {
-                        Ok(Some(line)) => {
-                            if line.contains("ERROR:") || line.contains("error:") {
-                                warn!("yt-dlp stderr: {}", line);
-                            } else if line.starts_with("[debug]") || line.starts_with("  File \"") || line.starts_with("Traceback") {
-                                debug!("yt-dlp output: {}", line);
-                            } else {
-                                debug!("yt-dlp output: {}", line);
-                            }
-
-                            if line.contains("[Merger] Merging formats into") {
-                                if let Some(start) = line.find('"') {
-                                    if let Some(end) = line.rfind('"') {
-                                        if end > start {
-                                            let path = &line[start+1..end];
-                                            final_file_path = Some(path.to_string());
-                                            info!("Captured file path from Merger: {:?}", final_file_path);
-                                        }
-                                    }
-                                }
-                            }
-
-                            if line.contains("[download] Destination:") {
-                                if let Some(path) = line.split("Destination:").nth(1) {
-                                    let path = path.trim();
-                                    let path_lower = path.to_lowercase();
-                                    let is_image = path_lower.ends_with(".png") ||
-                                                   path_lower.ends_with(".jpg") ||
-                                                   path_lower.ends_with(".jpeg") ||
-                                                   path_lower.ends_with(".webp");
-                                    if final_file_path.is_none() && !path.is_empty() && !is_image {
-                                        final_file_path = Some(path.to_string());
-                                        info!("Captured file path from Destination: {:?}", final_file_path);
-                                    }
-                                }
-                            }
-
-                            if line.contains("ERROR:") || line.contains("Sign in to confirm") ||
-                               line.contains("LOGIN_REQUIRED") || line.contains("age-restricted") ||
-                               line.contains("Private video") || line.contains("Video unavailable") ||
-                               line.contains("members-only") || line.contains("requires payment") ||
-                               line.contains("is not a valid URL") || line.contains("Unsupported URL") {
-                                error_messages.push(line.clone());
-                            }
-
-                            let is_important = line.contains("[Merger]") ||
-                                               line.contains("[ExtractAudio]") ||
-                                               line.contains("[EmbedThumbnail]") ||
-                                               line.contains("[Metadata]") ||
-                                               line.contains("[ffmpeg]") ||
-                                               line.contains("[download] Destination:");
-                            let now = std::time::Instant::now();
-                            if is_important || now.duration_since(last_progress_emit).as_millis() >= PROGRESS_THROTTLE_MS as u128 {
-                                last_progress_emit = now;
-                                let _ = window.emit("download-progress", DownloadProgress {
-                                    url: url.clone(),
-                                    message: line,
-                                });
-                            }
-                        }
-                        Ok(None) => stderr_done = true,
-                        Err(_) => stderr_done = true,
-                    }
-                }
-            }
-        }
-
-        info!("Waiting for yt-dlp process to exit...");
-        let status = child.wait().await.map_err(|e| {
-            error!("Process error: {}", e);
-            format!("Process error: {}", e)
-        })?;
-
-        info!("yt-dlp process exited with status: {:?}", status);
-
-        if status.success() {
-            info!("Download completed successfully for: {}", url);
-            info!("Captured file path: {:?}", final_file_path);
-
-            let needs_scan = final_file_path
-                .as_ref()
-                .map(|p| !std::path::Path::new(p).exists())
-                .unwrap_or(true);
-
-            if needs_scan {
-                info!("Scanning downloads folder for newly created file...");
-                if let Ok(entries) = std::fs::read_dir(&downloads_dir) {
-                    let mut newest: Option<(std::path::PathBuf, std::time::SystemTime)> = None;
-
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if !path.is_file() {
-                            continue;
-                        }
-
-                        if let Some(ext) = path.extension() {
-                            let ext_str = ext.to_string_lossy().to_lowercase();
-                            if ext_str == "part"
-                                || ext_str == "ytdl"
-                                || ext_str == "png"
-                                || ext_str == "jpg"
-                                || ext_str == "jpeg"
-                                || ext_str == "webp"
-                            {
-                                continue;
-                            }
-                        }
-
-                        if let Ok(metadata) = entry.metadata() {
-                            if let Ok(created) = metadata.created() {
-                                if created >= download_start_time {
-                                    let is_newer =
-                                        newest.as_ref().map(|(_, t)| created > *t).unwrap_or(true);
-                                    if is_newer {
-                                        newest = Some((path, created));
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some((path, _)) = newest {
-                        info!("Found newly created file: {:?}", path);
-                        final_file_path = Some(path.to_string_lossy().to_string());
-                    }
-                }
-            }
-
-            info!("Removing from active downloads map...");
-            {
-                let mut downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
-                downloads.remove(&url);
-            }
-
-            if use_custom_cookies {
-                if let Ok(cache_dir) = app.path().app_cache_dir() {
-                    let _ = tokio::fs::remove_file(cache_dir.join("custom_cookies.txt")).await;
-                }
-            }
-
-            // Embed thumbnail from URL for YTM audio downloads (with auto-cropping)
-            if let Some(ref path) = final_file_path {
-                let has_thumb_url = thumbnail_url_for_embed
-                    .as_ref()
-                    .map(|s| !s.is_empty())
-                    .unwrap_or(false);
-
-                if embed_thumbnail.unwrap_or(false)
-                    && has_thumb_url
-                    && url.to_lowercase().contains("music.youtube.com")
-                    && download_mode == "audio"
-                {
-                    if let Some(thumb_url) = thumbnail_url_for_embed.as_ref() {
-                        info!("Embedding YTM thumbnail from URL into: {}", path);
-                        if let Err(e) = embed_thumbnail_from_url(&app, path, thumb_url).await {
-                            warn!("Failed to embed thumbnail from URL: {}", e);
-                        } else {
-                            info!("Successfully embedded thumbnail from URL");
-                        }
-                    }
-                }
-            }
-
-            if let Some(ref path) = final_file_path {
-                info!("Emitting download-file-path event: {}", path);
-                let _ = window.emit(
-                    "download-file-path",
-                    DownloadFilePath {
-                        url: url.clone(),
-                        file_path: path.clone(),
-                    },
-                );
-            } else {
-                warn!("No file path captured - download-file-path event not emitted");
-            }
-
-            let result =
-                final_file_path.unwrap_or_else(|| "Download completed successfully!".to_string());
-            info!("Returning download result: {}", result);
-            Ok(result)
-        } else {
-            warn!("yt-dlp exited with non-zero status: {:?}", status);
-            warn!("Captured file path before failure: {:?}", final_file_path);
-
-            if let Some(ref path) = final_file_path {
-                let file_exists = std::path::Path::new(path).exists();
-                info!("Checking if file exists at {:?}: {}", path, file_exists);
-                if file_exists {
-                    info!(
-                        "Download completed (with warnings) for: {} - file exists at {:?}",
-                        url, path
-                    );
-
-                    {
-                        let mut downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
-                        downloads.remove(&url);
-                    }
-
-                    if use_custom_cookies {
-                        if let Ok(cache_dir) = app.path().app_cache_dir() {
-                            let _ =
-                                tokio::fs::remove_file(cache_dir.join("custom_cookies.txt")).await;
-                        }
-                    }
-
-                    let _ = window.emit(
-                        "download-file-path",
-                        DownloadFilePath {
-                            url: url.clone(),
-                            file_path: path.clone(),
-                        },
-                    );
-
-                    return Ok(path.clone());
-                }
-            }
-
-            {
-                let mut downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
-                downloads.remove(&url);
-            }
-
-            if use_custom_cookies {
-                if let Ok(cache_dir) = app.path().app_cache_dir() {
-                    let _ = tokio::fs::remove_file(cache_dir.join("custom_cookies.txt")).await;
-                }
-            }
-
-            error!("Download failed for: {}", url);
-
-            let error_msg = if !error_messages.is_empty() {
-                let combined = error_messages.join(" ");
-
-                if combined.contains("LOGIN_REQUIRED") || combined.contains("Sign in to confirm") {
-                    "LOGIN_REQUIRED: This video requires authentication. Please go to Settings and select a browser in the Cookies option to use your logged-in session.".to_string()
-                } else if combined.contains("age-restricted") {
-                    "AGE_RESTRICTED: This video is age-restricted. Please go to Settings and select a browser in the Cookies option to use your logged-in session.".to_string()
-                } else if combined.contains("Private video") {
-                    "PRIVATE_VIDEO: This video is private. Make sure you have access and select a browser in the Cookies option in Settings.".to_string()
-                } else if combined.contains("members-only") {
-                    "MEMBERS_ONLY: This video is for channel members only. Make sure you're a member and select a browser in the Cookies option in Settings.".to_string()
-                } else if combined.contains("requires payment") {
-                    "PAYMENT_REQUIRED: This video requires payment to watch.".to_string()
-                } else if combined.contains("Video unavailable") {
-                    "VIDEO_UNAVAILABLE: This video is not available. It may have been removed or restricted in your region.".to_string()
-                } else if combined.contains("is not a valid URL")
-                    || combined.contains("Unsupported URL")
-                {
-                    "INVALID_URL: The URL is not valid or not supported.".to_string()
-                } else {
-                    format!(
-                        "Download failed: {}",
-                        error_messages
-                            .first()
-                            .unwrap_or(&"Unknown error".to_string())
-                    )
-                }
-            } else {
-                "Download failed".to_string()
-            };
-
-            Err(error_msg)
-        }
-    }
-}
-
-#[cfg(not(target_os = "android"))]
-#[derive(serde::Serialize, Clone)]
-struct DownloadProgress {
-    url: String,
-    message: String,
-}
-
-#[cfg(not(target_os = "android"))]
-#[derive(serde::Serialize, Clone)]
-struct DownloadFilePath {
-    url: String,
-    file_path: String,
-}
-
-/// Cancel an active download by URL
-#[tauri::command]
-#[allow(unused_variables)]
-async fn cancel_download(url: String) -> Result<(), String> {
-    info!("Cancelling download for URL: {}", url);
-
-    #[cfg(target_os = "android")]
-    {
-        return Err("Cancel not supported on Android".to_string());
-    }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        let pid = {
-            let downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
-            downloads.get(&url).copied()
-        };
-
-        if let Some(pid) = pid {
-            info!("Killing process {} for URL: {}", pid, url);
-
-            #[cfg(target_os = "windows")]
-            {
-                use crate::utils::StdCommandHideConsole;
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/F", "/T", "/PID", &pid.to_string()])
-                    .hide_console()
-                    .output();
-            }
-
-            #[cfg(not(target_os = "windows"))]
-            {
-                unsafe {
-                    libc::kill(pid as i32, libc::SIGTERM);
-                }
-            }
-
-            {
-                let mut downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
-                downloads.remove(&url);
-            }
-
-            Ok(())
-        } else {
-            Err("Download not found or already completed".to_string())
-        }
+        backends::download_video_auto(
+            &app,
+            None,
+            window,
+            registry.inner().clone(),
+            backends::DownloadRequest {
+                url,
+                video_quality,
+                download_mode,
+                audio_quality,
+                convert_to_mp4,
+                remux,
+                clear_metadata,
+                use_aria2,
+                aria2_connections,
+                aria2_splits,
+                aria2_min_split_size,
+                aria2_disable_ipv6,
+                aria2_custom_args,
+                no_playlist,
+                cookies_from_browser,
+                custom_cookies,
+                download_path,
+                embed_thumbnail,
+                thumbnail_url_for_embed,
+                playlist_title,
+                proxy_config,
+                sponsor_block,
+                sponsor_block_skip_sponsors,
+                sponsor_block_skip_intros,
+                sponsor_block_skip_self_promo,
+                sponsor_block_skip_interaction,
+                chapters,
+                embed_subtitles,
+                subtitle_languages,
+                download_speed_limit,
+                youtube_player_client,
+                concurrent_fragments,
+                retries,
+                fragment_retries,
+                download_custom_args,
+                post_process_custom_args,
+                keep_original,
+                output_template,
+                restrict_filenames,
+                windows_filenames,
+                clip_ranges,
+                multi_thread: None,
+                thread_count: None,
+            },
+        )
+        .await
     }
 }
 
@@ -1018,21 +537,20 @@ async fn get_playlist_info(
 
     #[cfg(not(target_os = "android"))]
     {
-        let backend = backends::YtDlpBackend;
-        backend
-            .get_playlist_info(
-                &app,
-                PlaylistRequest {
-                    url,
-                    offset,
-                    limit,
-                    cookies_from_browser,
-                    custom_cookies,
-                    proxy_config,
-                    youtube_player_client,
-                },
-            )
-            .await
+        backends::get_playlist_info_auto(
+            &app,
+            None,
+            PlaylistRequest {
+                url,
+                offset,
+                limit,
+                cookies_from_browser,
+                custom_cookies,
+                proxy_config,
+                youtube_player_client,
+            },
+        )
+        .await
     }
 }
 
@@ -1057,19 +575,18 @@ async fn get_video_info(
 
     #[cfg(not(target_os = "android"))]
     {
-        let backend = backends::YtDlpBackend;
-        backend
-            .get_video_info(
-                &app,
-                InfoRequest {
-                    url,
-                    cookies_from_browser,
-                    custom_cookies,
-                    proxy_config,
-                    youtube_player_client,
-                },
-            )
-            .await
+        backends::get_video_info_auto(
+            &app,
+            None,
+            InfoRequest {
+                url,
+                cookies_from_browser,
+                custom_cookies,
+                proxy_config,
+                youtube_player_client,
+            },
+        )
+        .await
     }
 }
 
@@ -1092,201 +609,18 @@ async fn get_video_formats(
 
     #[cfg(not(target_os = "android"))]
     {
-        let backend = backends::YtDlpBackend;
-        backend
-            .get_video_formats(
-                &app,
-                InfoRequest {
-                    url,
-                    cookies_from_browser,
-                    custom_cookies,
-                    proxy_config,
-                    youtube_player_client,
-                },
-            )
-            .await
-    }
-}
-
-// ==================== Lux Backend Commands ====================
-
-/// Get video info using Lux backend
-#[tauri::command]
-#[allow(unused_variables)]
-async fn lux_get_video_info(
-    app: AppHandle,
-    url: String,
-    custom_cookies: Option<String>,
-    proxy_config: Option<proxy::ProxyConfig>,
-) -> Result<VideoInfo, String> {
-    info!("Getting video info via Lux for URL: {}", url);
-
-    #[cfg(target_os = "android")]
-    {
-        return Err("Lux is not supported on Android".to_string());
-    }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        let backend = backends::LuxBackend;
-        backend
-            .get_video_info(
-                &app,
-                InfoRequest {
-                    url,
-                    cookies_from_browser: None,
-                    custom_cookies,
-                    proxy_config,
-                    youtube_player_client: None,
-                },
-            )
-            .await
-    }
-}
-
-/// Get video formats using Lux backend
-#[tauri::command]
-#[allow(unused_variables)]
-async fn lux_get_video_formats(
-    app: AppHandle,
-    url: String,
-    custom_cookies: Option<String>,
-    proxy_config: Option<proxy::ProxyConfig>,
-) -> Result<VideoFormats, String> {
-    info!("Getting video formats via Lux for URL: {}", url);
-
-    #[cfg(target_os = "android")]
-    {
-        return Err("Lux is not supported on Android".to_string());
-    }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        let backend = backends::LuxBackend;
-        backend
-            .get_video_formats(
-                &app,
-                InfoRequest {
-                    url,
-                    cookies_from_browser: None,
-                    custom_cookies,
-                    proxy_config,
-                    youtube_player_client: None,
-                },
-            )
-            .await
-    }
-}
-
-/// Get playlist info using Lux backend
-#[tauri::command]
-#[allow(unused_variables)]
-async fn lux_get_playlist_info(
-    app: AppHandle,
-    url: String,
-    offset: Option<usize>,
-    limit: Option<usize>,
-    custom_cookies: Option<String>,
-    proxy_config: Option<proxy::ProxyConfig>,
-) -> Result<PlaylistInfo, String> {
-    let offset = offset.unwrap_or(0);
-    let limit = limit.unwrap_or(50);
-
-    info!(
-        "Getting playlist info via Lux for URL: {} (offset={}, limit={})",
-        url, offset, limit
-    );
-
-    #[cfg(target_os = "android")]
-    {
-        return Err("Lux is not supported on Android".to_string());
-    }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        let backend = backends::LuxBackend;
-        backend
-            .get_playlist_info(
-                &app,
-                PlaylistRequest {
-                    url,
-                    offset,
-                    limit,
-                    cookies_from_browser: None,
-                    custom_cookies,
-                    proxy_config,
-                    youtube_player_client: None,
-                },
-            )
-            .await
-    }
-}
-
-/// Download video using Lux backend
-#[tauri::command]
-#[allow(unused_variables)]
-async fn lux_download_video(
-    app: AppHandle,
-    window: tauri::Window,
-    url: String,
-    format_id: Option<String>,
-    download_path: Option<String>,
-    custom_cookies: Option<String>,
-    proxy_config: Option<proxy::ProxyConfig>,
-    multi_thread: Option<bool>,
-    thread_count: Option<u32>,
-) -> Result<String, String> {
-    info!("Starting Lux download for URL: {}", url);
-
-    #[cfg(target_os = "android")]
-    {
-        return Err("Lux is not supported on Android".to_string());
-    }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        let downloads_dir = if let Some(ref custom_path) = download_path {
-            if !custom_path.is_empty() {
-                std::path::PathBuf::from(custom_path)
-            } else {
-                dirs::download_dir().ok_or("Could not find Downloads folder")?
-            }
-        } else {
-            dirs::download_dir().ok_or("Could not find Downloads folder")?
-        };
-
-        if !downloads_dir.exists() {
-            std::fs::create_dir_all(&downloads_dir)
-                .map_err(|e| format!("Failed to create download directory: {}", e))?;
-        }
-
-        let window_clone = window.clone();
-        let url_clone = url.clone();
-
-        let backend = backends::LuxBackend;
-        backend
-            .download(
-                &app,
-                backends::LuxDownloadRequest {
-                    url,
-                    format_id,
-                    output_dir: downloads_dir,
-                    custom_cookies,
-                    proxy_config,
-                    multi_thread: multi_thread.unwrap_or(false),
-                    thread_count,
-                },
-                move |progress| {
-                    let _ = window_clone.emit(
-                        "download-progress",
-                        types::DownloadProgress {
-                            url: url_clone.clone(),
-                            message: progress,
-                        },
-                    );
-                },
-            )
-            .await
+        backends::get_video_formats_auto(
+            &app,
+            None,
+            InfoRequest {
+                url,
+                cookies_from_browser,
+                custom_cookies,
+                proxy_config,
+                youtube_player_client,
+            },
+        )
+        .await
     }
 }
 
@@ -2187,6 +1521,9 @@ async fn download_file(
     let aria2_path = deps::get_aria2_path(&app)?;
     let use_aria2 = aria2_path.exists();
 
+    let browser_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+    let mut force_reqwest_fallback = false;
+
     if use_aria2 {
         let connections = connections.unwrap_or(4).clamp(1, 16);
         let splits = splits.unwrap_or(connections).clamp(1, 16);
@@ -2208,11 +1545,21 @@ async fn download_file(
             .arg(splits.to_string()) // splits
             .arg("-k")
             .arg(&min_split_size) // min split size
+            .arg("--file-allocation=none")
+            .arg("--max-tries=10")
+            .arg("--retry-wait=3")
+            .arg("--max-file-not-found=5")
+            .arg("--connect-timeout=30")
+            .arg("--timeout=600")
             .arg("--continue=true") // resume support
             .arg("--auto-file-renaming=false")
             .arg("--allow-overwrite=true")
-            .arg("--summary-interval=1") // Output progress every second
-            .arg("--console-log-level=notice");
+            .arg("--summary-interval=0") // avoid noisy summary blocks
+            .arg("--download-result=hide")
+            .arg("--console-log-level=warn")
+            .arg("--enable-color=false")
+            .arg("--user-agent")
+            .arg(browser_ua);
 
         if let Some(limit) = speed_limit {
             if limit > 0 {
@@ -2239,87 +1586,307 @@ async fn download_file(
             .spawn()
             .map_err(|e| format!("Failed to spawn aria2c: {}", e))?;
 
-        // Register the process for cancellation support
-        if let Some(pid) = child.id() {
-            let mut downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
-            downloads.insert(url.clone(), pid);
-            info!("Registered aria2c process {} for URL: {}", pid, url);
-        }
+        info!("aria2c process spawned, reading progress...");
 
-        info!("aria2c process spawned, reading stdout...");
+        #[cfg(not(target_os = "android"))]
+        {
+            use tokio::io::AsyncReadExt;
 
-        let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-        let mut stdout_reader = BufReader::new(stdout).lines();
-
-        // Ensure stderr is also consumed to prevent blocking, though we primarily watch stdout
-        let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr).lines();
-            while let Ok(Some(_)) = reader.next_line().await {
-                // Consume stderr
+            #[derive(Default)]
+            struct Aria2Progress {
+                percent: u8,
+                downloaded: u64,
+                total: u64,
+                speed_bps: u64,
             }
-        });
 
-        let mut last_progress_emit =
-            std::time::Instant::now() - std::time::Duration::from_millis(200);
-        const PROGRESS_THROTTLE_MS: u64 = 250;
-        let mut line_count = 0;
+            fn parse_size_to_bytes(input: &str) -> u64 {
+                let s = input.trim();
+                if s.is_empty() {
+                    return 0;
+                }
 
-        // Read stdout for progress
-        loop {
-            tokio::select! {
-                line = stdout_reader.next_line() => {
-                    match line {
-                        Ok(Some(line)) => {
-                            line_count += 1;
-                            if !line.is_empty() {
-                                debug!("aria2c: {}", line);
+                // Common aria2 units: B, KiB, MiB, GiB (and iB/s variants)
+                let unit_start = s
+                    .find(|c: char| c.is_ascii_alphabetic())
+                    .unwrap_or(s.len());
+                let (num_part, unit_part) = s.split_at(unit_start);
 
-                                let now = std::time::Instant::now();
-                                if now.duration_since(last_progress_emit).as_millis() >= PROGRESS_THROTTLE_MS as u128 {
-                                    last_progress_emit = now;
+                let num: f64 = num_part.trim().parse::<f64>().unwrap_or(0.0);
+                let unit = unit_part.trim().trim_end_matches("/s").trim();
 
-                                    let _ = window.emit("download-progress", serde_json::json!({
-                                        "url": url,
-                                        "message": line,
-                                    }));
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            info!("aria2c stdout closed after {} lines", line_count);
-                            break;
-                        }
-                        Err(e) => {
-                            warn!("aria2c stdout read error: {}", e);
-                            break;
+                let mult: f64 = match unit {
+                    "B" | "" => 1.0,
+                    "KiB" | "K" | "KB" => 1024.0,
+                    "MiB" | "M" | "MB" => 1024.0 * 1024.0,
+                    "GiB" | "G" | "GB" => 1024.0 * 1024.0 * 1024.0,
+                    _ => 1.0,
+                };
+
+                (num * mult).max(0.0) as u64
+            }
+
+            fn parse_aria2_progress_line(line: &str) -> Option<Aria2Progress> {
+                // Example CR line:
+                // [#gid 12MiB/50MiB(24%) CN:4 DL:3.1MiB ETA:12s]
+                let mut out = Aria2Progress::default();
+
+                if let Some(pct_start) = line.find('(') {
+                    if let Some(pct_end) = line[pct_start..].find('%') {
+                        if let Ok(p) = line[pct_start + 1..pct_start + pct_end].parse::<u8>() {
+                            out.percent = p;
                         }
                     }
+                }
+
+                if let Some(slash_idx) = line.find("iB/") {
+                    let before_slash = &line[..slash_idx + 2];
+                    let size_start = before_slash
+                        .rfind([' ', '[', '#'])
+                        .map(|i| i + 1)
+                        .unwrap_or(0);
+                    let dl_part = &before_slash[size_start..];
+                    out.downloaded = parse_size_to_bytes(dl_part);
+
+                    let after_slash = &line[slash_idx + 3..];
+                    if let Some(end) = after_slash.find(['(', ' ', ']', '[']) {
+                        let total_part = &after_slash[..end];
+                        out.total = parse_size_to_bytes(total_part);
+                    }
+                }
+
+                if let Some(dl_idx) = line.find("DL:") {
+                    let speed_part = &line[dl_idx + 3..];
+                    if let Some(end) = speed_part.find([' ', ']', '[']) {
+                        out.speed_bps = parse_size_to_bytes(&speed_part[..end]);
+                    } else {
+                        out.speed_bps = parse_size_to_bytes(speed_part);
+                    }
+                }
+
+                if out.percent > 0 || out.downloaded > 0 || out.total > 0 || out.speed_bps > 0 {
+                    Some(out)
+                } else {
+                    None
+                }
+            }
+
+            async fn read_lines_crlf<R: tokio::io::AsyncRead + Unpin>(
+                mut reader: R,
+                mut on_line: impl FnMut(String),
+            ) {
+                let mut buf = [0u8; 4096];
+                let mut acc: Vec<u8> = Vec::new();
+
+                loop {
+                    let n = match reader.read(&mut buf).await {
+                        Ok(n) => n,
+                        Err(_) => break,
+                    };
+                    if n == 0 {
+                        break;
+                    }
+
+                    acc.extend_from_slice(&buf[..n]);
+
+                    while let Some(pos) = acc.iter().position(|&b| b == b'\n' || b == b'\r') {
+                        let mut line_bytes: Vec<u8> = acc.drain(..pos).collect();
+
+                        // Drain delimiter
+                        let delim = acc.drain(..1).next().unwrap_or(b'\n');
+                        if delim == b'\r' {
+                            if acc.first() == Some(&b'\n') {
+                                let _ = acc.drain(..1).next();
+                            }
+                        }
+
+                        while matches!(line_bytes.last(), Some(b'\r' | b'\n')) {
+                            line_bytes.pop();
+                        }
+
+                        let line = String::from_utf8_lossy(&line_bytes).to_string();
+                        on_line(line);
+                    }
+
+                    if acc.len() > 1024 * 1024 {
+                        let line = String::from_utf8_lossy(&acc).to_string();
+                        acc.clear();
+                        on_line(line);
+                    }
+                }
+
+                if !acc.is_empty() {
+                    let line = String::from_utf8_lossy(&acc).to_string();
+                    on_line(line);
+                }
+            }
+
+            let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+            let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+
+            let window_task = window.clone();
+            let url_task = url.clone();
+            let last_error: std::sync::Arc<std::sync::Mutex<Option<String>>> =
+                std::sync::Arc::new(std::sync::Mutex::new(None));
+            let last_error_stdout = last_error.clone();
+            let last_error_stderr = last_error.clone();
+
+            let progress_state: std::sync::Arc<std::sync::Mutex<(u8, std::time::Instant)>> =
+                std::sync::Arc::new(std::sync::Mutex::new((0, std::time::Instant::now())));
+
+            const PROGRESS_THROTTLE_MS: u64 = 250;
+
+            let progress_state_stdout = progress_state.clone();
+            let window_stdout = window_task.clone();
+            let url_stdout = url_task.clone();
+            let stdout_task = tokio::spawn(async move {
+                read_lines_crlf(stdout, |line| {
+                    let trimmed = line.trim().to_string();
+                    if trimmed.is_empty() {
+                        return;
+                    }
+
+                    let is_errorish = trimmed.contains("[ERROR]") || trimmed.contains("Exception") || trimmed.contains("errorCode=");
+                    if is_errorish {
+                        if let Ok(mut last) = last_error_stdout.lock() {
+                            *last = Some(trimmed.clone());
+                        }
+                        debug!("aria2c: {}", trimmed);
+                    }
+
+                    if let Some(p) = parse_aria2_progress_line(&trimmed) {
+                        let should_emit = if let Ok(mut s) = progress_state_stdout.lock() {
+                            let now = std::time::Instant::now();
+                            let percent_changed = p.percent != 0 && p.percent != s.0;
+                            let time_ok = now.duration_since(s.1).as_millis() >= PROGRESS_THROTTLE_MS as u128;
+                            if percent_changed || time_ok {
+                                if p.percent != 0 {
+                                    s.0 = p.percent;
+                                }
+                                s.1 = now;
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            true
+                        };
+
+                        if should_emit {
+                            let _ = window_stdout.emit(
+                                "download-progress",
+                                serde_json::json!({
+                                    "url": url_stdout,
+                                    "progress": p.percent,
+                                    "downloadedBytes": p.downloaded,
+                                    "totalBytes": p.total,
+                                    "speedBps": p.speed_bps,
+                                    "message": trimmed,
+                                }),
+                            );
+                        }
+                    }
+                })
+                .await;
+            });
+
+            let progress_state_stderr = progress_state.clone();
+            let window_stderr = window_task.clone();
+            let url_stderr = url_task.clone();
+            let stderr_task = tokio::spawn(async move {
+                read_lines_crlf(stderr, |line| {
+                    let trimmed = line.trim().to_string();
+                    if trimmed.is_empty() {
+                        return;
+                    }
+
+                    let is_errorish = trimmed.contains("[ERROR]") || trimmed.contains("Exception") || trimmed.contains("errorCode=");
+                    if is_errorish {
+                        if let Ok(mut last) = last_error_stderr.lock() {
+                            *last = Some(trimmed.clone());
+                        }
+                        debug!("aria2c: {}", trimmed);
+                    }
+
+                    if let Some(p) = parse_aria2_progress_line(&trimmed) {
+                        let should_emit = if let Ok(mut s) = progress_state_stderr.lock() {
+                            let now = std::time::Instant::now();
+                            let percent_changed = p.percent != 0 && p.percent != s.0;
+                            let time_ok = now.duration_since(s.1).as_millis() >= PROGRESS_THROTTLE_MS as u128;
+                            if percent_changed || time_ok {
+                                if p.percent != 0 {
+                                    s.0 = p.percent;
+                                }
+                                s.1 = now;
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            true
+                        };
+
+                        if should_emit {
+                            let _ = window_stderr.emit(
+                                "download-progress",
+                                serde_json::json!({
+                                    "url": url_stderr,
+                                    "progress": p.percent,
+                                    "downloadedBytes": p.downloaded,
+                                    "totalBytes": p.total,
+                                    "speedBps": p.speed_bps,
+                                    "message": trimmed,
+                                }),
+                            );
+                        }
+                    }
+                })
+                .await;
+            });
+
+            // Wait for aria2c
+            info!("Waiting for aria2c to exit...");
+            let status = child
+                .wait()
+                .await
+                .map_err(|e| format!("aria2c failed: {}", e))?;
+            info!("aria2c exited with status: {:?}", status);
+
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
+
+            if !status.success() {
+                let details = last_error
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone())
+                    .unwrap_or_else(|| "aria2c exited with non-zero status".to_string());
+
+                let lower = details.to_lowercase();
+                let is_tlsish = lower.contains("ssl/tls")
+                    || lower.contains("tls handshake")
+                    || lower.contains("handshake failure")
+                    || lower.contains("connection was forcibly closed")
+                    || lower.contains("schannel")
+                    || lower.contains("openssl");
+
+                if is_tlsish {
+                    warn!("aria2c failed with TLS/handshake error, falling back to reqwest: {}", details);
+                    force_reqwest_fallback = true;
+                } else {
+                    error!("aria2c failed: {}", details);
+                    return Err(details);
                 }
             }
         }
 
-        info!("Waiting for aria2c to exit...");
-        let status = child
-            .wait()
-            .await
-            .map_err(|e| format!("aria2c failed: {}", e))?;
-        info!("aria2c exited with status: {:?}", status);
-
-        // Remove from active downloads after completion
-        {
-            let mut downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
-            downloads.remove(&url);
+        if !force_reqwest_fallback {
+            info!("aria2c download complete: {:?}", dest_path);
         }
+    }
 
-        if !status.success() {
-            error!("aria2c exited with non-zero status");
-            return Err("Download failed".to_string());
-        }
-
-        info!("aria2c download complete: {:?}", dest_path);
-    } else {
-        info!("aria2c not available, using reqwest fallback");
+    if !use_aria2 || force_reqwest_fallback {
+        info!("Using reqwest fallback for file download");
 
         let config = proxy_config.unwrap_or_default();
         let resolved = proxy::resolve_proxy(&config);
@@ -2338,6 +1905,7 @@ async fn download_file(
 
         let response = client
             .get(&url)
+            .header(reqwest::header::USER_AGENT, browser_ua)
             .send()
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
@@ -2370,26 +1938,28 @@ async fn download_file(
 
             if last_emit.elapsed().as_millis() >= 100 {
                 let elapsed = start_time.elapsed().as_secs_f64();
-                let speed = if elapsed > 0.0 {
-                    downloaded as f64 / elapsed
+                let speed_bps: u64 = if elapsed > 0.0 {
+                    (downloaded as f64 / elapsed).max(0.0) as u64
                 } else {
-                    0.0
+                    0
                 };
 
-                let progress = if total_size > 0 {
-                    (downloaded as f64 / total_size as f64) * 100.0
+                let percent: u8 = if total_size > 0 {
+                    (((downloaded as f64 / total_size as f64) * 100.0).round() as i64)
+                        .clamp(0, 100) as u8
                 } else {
-                    0.0
+                    0
                 };
 
                 let _ = window.emit(
-                    "file-download-progress",
+                    "download-progress",
                     serde_json::json!({
                         "url": url,
-                        "progress": progress,
-                        "downloaded": downloaded,
-                        "total": total_size,
-                        "speed": speed,
+                        "progress": percent,
+                        "downloadedBytes": downloaded,
+                        "totalBytes": total_size,
+                        "speedBps": speed_bps,
+                        "message": "reqwest",
                     }),
                 );
 
@@ -2987,6 +2557,7 @@ fn push_history_status(items: Vec<server::HistoryItem>) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
+        .manage(job_engine::JobRegistry::default())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .targets([
@@ -3014,7 +2585,8 @@ pub fn run() {
 
     let builder = builder.invoke_handler(tauri::generate_handler![
         download_video,
-        cancel_download,
+        job_engine::jobs_start,
+        job_engine::jobs_cancel,
         get_video_info,
         get_video_formats,
         get_playlist_info,
@@ -3022,10 +2594,6 @@ pub fn run() {
         extract_video_thumbnail,
         extract_thumbnail_color,
         get_cached_thumbnail_color,
-        lux_get_video_info,
-        lux_get_video_formats,
-        lux_get_playlist_info,
-        lux_download_video,
         set_window_effect,
         set_acrylic,
         notifications::show_notification_window,
@@ -3047,6 +2615,7 @@ pub fn run() {
         check_ip,
         download_file,
         check_file_url,
+        build_android_ytdlp_options,
         check_for_update,
         download_and_install_update,
         deps::check_ytdlp,
@@ -3080,7 +2649,8 @@ pub fn run() {
     #[cfg(not(target_os = "android"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         download_video,
-        cancel_download,
+        job_engine::jobs_start,
+        job_engine::jobs_cancel,
         get_video_info,
         get_video_formats,
         get_playlist_info,
@@ -3088,10 +2658,6 @@ pub fn run() {
         extract_video_thumbnail,
         extract_thumbnail_color,
         get_cached_thumbnail_color,
-        lux_get_video_info,
-        lux_get_video_formats,
-        lux_get_playlist_info,
-        lux_download_video,
         set_window_effect,
         set_acrylic,
         notifications::show_notification_window,

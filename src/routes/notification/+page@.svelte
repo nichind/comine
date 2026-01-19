@@ -35,12 +35,10 @@
   const viewPlaylistLabel = 'View Playlist';
   const viewChannelLabel = 'View Channel';
 
-  import { detectBackendForUrl } from '$lib/utils/backend-detection';
-  import { isValidMediaUrl } from '$lib/utils/format';
+  import { isHttpUrl } from '$lib/utils/format';
 
   const isYouTube = /youtube\.com|youtu\.be/i.test(mediaUrl);
-  const isLux = detectBackendForUrl(mediaUrl) === 'lux';
-  const isVideoUrl = isValidMediaUrl(mediaUrl, []); // Any supported video URL (pass empty patterns to check against lux sites)
+  const isVideoUrl = isHttpUrl(mediaUrl);
 
   let isReady = $state(false);
   let isHovered = $state(false);

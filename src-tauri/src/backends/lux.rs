@@ -1,4 +1,4 @@
-use crate::backends::{Backend, InfoRequest, PlaylistRequest};
+use crate::backends::{Backend, DownloadBackend, DownloadRequest, InfoRequest, PlaylistRequest};
 use crate::proxy;
 use crate::types::{PlaylistEntry, PlaylistInfo, VideoFormat, VideoFormats, VideoInfo};
 use async_trait::async_trait;
@@ -7,7 +7,9 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Window};
+
+use crate::job_engine::{self, JobRegistry};
 
 #[cfg(target_os = "windows")]
 use crate::utils::CommandHideConsole;
@@ -571,6 +573,8 @@ impl Backend for LuxBackend {
             upload_date: None,
             channel_url: None,
             channel_id: None,
+            storyboards: None,
+            chapters: None,
         })
     }
 }
@@ -587,6 +591,88 @@ pub struct LuxDownloadRequest {
 }
 
 impl LuxBackend {
+    pub async fn download_job(
+        &self,
+        app: &AppHandle,
+        window: tauri::Window,
+        registry: JobRegistry,
+        request: LuxDownloadRequest,
+    ) -> Result<String, String> {
+        let resolved_proxy = request
+            .proxy_config
+            .as_ref()
+            .map(|c| proxy::resolve_proxy(c));
+
+        let proxy_url = resolved_proxy.as_ref().and_then(|r| {
+            if r.url.is_empty() {
+                None
+            } else {
+                Some(r.url.as_str())
+            }
+        });
+
+        let config = get_command(app, proxy_url)?;
+
+        let mut args = vec![
+            "-o".to_string(),
+            request.output_dir.to_string_lossy().to_string(),
+        ];
+
+        if let Some(ref format_id) = request.format_id {
+            let is_generic = format_id.is_empty()
+                || format_id == "default"
+                || format_id == "max"
+                || format_id == "best"
+                || format_id == "bestvideo+bestaudio"
+                || format_id == "bestvideo"
+                || format_id == "bestaudio";
+
+            if !is_generic {
+                args.push("-f".to_string());
+                args.push(format_id.clone());
+            }
+        }
+
+        if request.multi_thread {
+            args.push("-m".to_string());
+            if let Some(threads) = request.thread_count {
+                args.push("-n".to_string());
+                args.push(threads.to_string());
+            }
+        }
+
+        let used_cookies = setup_cookies(app, &mut args, &request.custom_cookies).await?;
+        args.push(request.url.clone());
+
+        let env: HashMap<String, String> = config.env_vars.into_iter().collect();
+        let env_opt = if env.is_empty() { None } else { Some(env) };
+
+        let mut cleanup_files: Vec<String> = vec![];
+        if used_cookies {
+            if let Ok(cache_dir) = app.path().app_cache_dir() {
+                cleanup_files.push(
+                    cache_dir
+                        .join("lux_cookies.txt")
+                        .to_string_lossy()
+                        .to_string(),
+                );
+            }
+        }
+
+        job_engine::spawn_process_job(
+            window,
+            registry,
+            format!("lux_download_video: {}", request.url),
+            config.lux_path,
+            args,
+            None,
+            env_opt,
+            cleanup_files,
+            Some(request.output_dir.to_string_lossy().to_string()),
+        )
+        .await
+    }
+
     pub async fn download(
         &self,
         app: &AppHandle,
@@ -999,6 +1085,49 @@ impl LuxBackend {
             }
             None => Err("Download completed but could not find output file".to_string()),
         }
+    }
+}
+
+#[async_trait]
+impl DownloadBackend for LuxBackend {
+    async fn download_job(
+        &self,
+        app: &AppHandle,
+        window: Window,
+        registry: JobRegistry,
+        request: DownloadRequest,
+    ) -> Result<String, String> {
+        let downloads_dir = if let Some(ref custom_path) = request.download_path {
+            if !custom_path.is_empty() {
+                std::path::PathBuf::from(custom_path)
+            } else {
+                dirs::download_dir().ok_or("Could not find Downloads folder")?
+            }
+        } else {
+            dirs::download_dir().ok_or("Could not find Downloads folder")?
+        };
+
+        if !downloads_dir.exists() {
+            std::fs::create_dir_all(&downloads_dir)
+                .map_err(|e| format!("Failed to create download directory: {}", e))?;
+        }
+
+        // Lux expects a format id; `video_quality` is reused.
+        self.download_job(
+            app,
+            window,
+            registry,
+            LuxDownloadRequest {
+                url: request.url,
+                format_id: request.video_quality.filter(|s| !s.is_empty()),
+                output_dir: downloads_dir,
+                custom_cookies: request.custom_cookies,
+                proxy_config: request.proxy_config,
+                multi_thread: request.multi_thread.unwrap_or(false),
+                thread_count: request.thread_count,
+            },
+        )
+        .await
     }
 }
 

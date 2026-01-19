@@ -8,6 +8,10 @@
   let rgbHue = $state(0);
   let rgbAnimationFrame: number | null = null;
   let lastRgbUpdate = 0;
+  let fetchingSystemAccent = $state(false);
+  let triedSystemAccentFetch = $state(false);
+  let systemAccentRetryTimer: number | null = null;
+  let systemAccentRetryAttempts = 0;
 
   let isRgbMode = $derived($settings.accentColor === 'rgb');
 
@@ -119,6 +123,24 @@
   });
 
   $effect(() => {
+    if (!isAndroid()) return;
+    if (!$settings.useSystemAccent) {
+      triedSystemAccentFetch = false;
+      systemAccentRetryAttempts = 0;
+      if (systemAccentRetryTimer !== null) {
+        clearTimeout(systemAccentRetryTimer);
+        systemAccentRetryTimer = null;
+      }
+      return;
+    }
+    if (systemAccentColor) return;
+    if (triedSystemAccentFetch) return;
+
+    triedSystemAccentFetch = true;
+    fetchSystemAccent();
+  });
+
+  $effect(() => {
     if (isRgbMode) {
       lastRgbUpdate = 0;
       rgbAnimationFrame = requestAnimationFrame(rgbLoop);
@@ -134,19 +156,46 @@
     if (rgbAnimationFrame) {
       cancelAnimationFrame(rgbAnimationFrame);
     }
+
+    if (systemAccentRetryTimer !== null) {
+      clearTimeout(systemAccentRetryTimer);
+      systemAccentRetryTimer = null;
+    }
   });
 
   async function fetchSystemAccent() {
-    if (isAndroid()) {
-      try {
-        const androidColors = await getAndroidMaterialColors();
-        if (androidColors?.primary) {
-          systemAccentColor = androidColors.primary;
-          console.log('[AccentProvider] Got Android Material color:', systemAccentColor);
+    if (!isAndroid()) return;
+    if (fetchingSystemAccent) return;
+
+    fetchingSystemAccent = true;
+    try {
+      const androidColors = await getAndroidMaterialColors();
+      if (androidColors?.primary) {
+        systemAccentColor = androidColors.primary;
+        console.log('[AccentProvider] Got Android Material color:', systemAccentColor);
+        systemAccentRetryAttempts = 0;
+        if (systemAccentRetryTimer !== null) {
+          clearTimeout(systemAccentRetryTimer);
+          systemAccentRetryTimer = null;
         }
-      } catch (e) {
-        console.log('[AccentProvider] Could not get Android colors:', e);
+        return;
       }
+
+      // Bridge can come up a moment after mount; retry briefly while enabled.
+      if ($settings.useSystemAccent && !systemAccentColor && systemAccentRetryAttempts < 10) {
+        systemAccentRetryAttempts += 1;
+        if (systemAccentRetryTimer !== null) {
+          clearTimeout(systemAccentRetryTimer);
+        }
+        systemAccentRetryTimer = window.setTimeout(() => {
+          systemAccentRetryTimer = null;
+          fetchSystemAccent();
+        }, 500);
+      }
+    } catch (e) {
+      console.log('[AccentProvider] Could not get Android colors:', e);
+    } finally {
+      fetchingSystemAccent = false;
     }
   }
 
@@ -157,11 +206,28 @@
     return new Promise((resolve) => {
       if (typeof window !== 'undefined' && window.AndroidColors) {
         try {
-          const colors = window.AndroidColors.getMaterialColors();
-          if (colors) {
-            const parsed = JSON.parse(colors);
-            resolve(parsed);
+          const tryParse = (raw: string | null | undefined) => {
+            if (!raw) return null;
+            try {
+              return JSON.parse(raw);
+            } catch {
+              return null;
+            }
+          };
+
+          const parsedMaterial = tryParse(window.AndroidColors.getMaterialColors());
+          if (parsedMaterial?.primary) {
+            resolve(parsedMaterial);
             return;
+          }
+
+          const wallpaperFn = window.AndroidColors.getWallpaperColors;
+          if (typeof wallpaperFn === 'function') {
+            const parsedWallpaper = tryParse(wallpaperFn());
+            if (parsedWallpaper?.primary) {
+              resolve(parsedWallpaper);
+              return;
+            }
           }
         } catch (e) {
           console.error('Failed to parse Android colors:', e);

@@ -8,10 +8,10 @@
   import { deps } from '$lib/stores/deps';
   import { isAndroid, getPlaylistInfoOnAndroid } from '$lib/utils/android';
   import { formatDuration, getDisplayThumbnailUrl } from '$lib/utils/format';
-  import { detectBackendForUrl } from '$lib/utils/backend-detection';
   import Icon from './Icon.svelte';
   import Checkbox from './Checkbox.svelte';
   import Select from './Select.svelte';
+  import CollapsibleBlock from './CollapsibleBlock.svelte';
   import MediaGrid, {
     type ViewMode,
     type MediaItemData,
@@ -49,6 +49,8 @@
     downloadMode: DownloadMode;
     skipSponsors?: boolean;
     skipIntros?: boolean;
+    skipSelfPromo?: boolean;
+    skipInteraction?: boolean;
     embedChapters?: boolean;
     embedThumbnail?: boolean;
     embedMetadata?: boolean;
@@ -66,6 +68,10 @@
   export interface DefaultSettings {
     downloadMode?: 'auto' | 'audio' | 'mute';
     sponsorBlock?: boolean;
+    sponsorBlockSkipSponsors?: boolean;
+    sponsorBlockSkipIntros?: boolean;
+    sponsorBlockSkipSelfPromo?: boolean;
+    sponsorBlockSkipInteraction?: boolean;
     chapters?: boolean;
     embedSubtitles?: boolean;
     subtitleLanguages?: string;
@@ -165,6 +171,16 @@
   let destroyed = false;
   let thumbnailError = $state(false);
 
+  // If thumbnail src changes (e.g. normalization), don't keep a stale error state.
+  let lastThumbnailSrc = $state<string | null>(null);
+  $effect(() => {
+    const next = displayThumbnail ?? null;
+    if (next !== lastThumbnailSrc) {
+      lastThumbnailSrc = next;
+      thumbnailError = false;
+    }
+  });
+
   let selectedMode = $state<'all' | 'some'>(initialState.selectedMode);
   let selectedSomeIds = $state<Set<string>>(new Set(initialState.selectedIds));
   let deselectedIds = $state<Set<string>>(new Set(initialState.deselectedIds ?? []));
@@ -245,15 +261,30 @@
 
   const initialDefaults = untrack(() => ({
     sponsorBlock: defaults?.sponsorBlock ?? false,
+    sponsorBlockSkipSponsors: defaults?.sponsorBlockSkipSponsors ?? true,
+    sponsorBlockSkipIntros: defaults?.sponsorBlockSkipIntros ?? false,
+    sponsorBlockSkipSelfPromo: defaults?.sponsorBlockSkipSelfPromo ?? false,
+    sponsorBlockSkipInteraction: defaults?.sponsorBlockSkipInteraction ?? false,
     chapters: defaults?.chapters ?? true,
     embedThumbnail: defaults?.embedThumbnail ?? true,
     clearMetadata: defaults?.clearMetadata ?? false,
     downloadMode: defaults?.downloadMode ?? null,
     embedSubtitles: defaults?.embedSubtitles ?? false,
-    subtitleLanguages: defaults?.subtitleLanguages ?? 'en',
+    subtitleLanguages: defaults?.subtitleLanguages ?? 'en,ru',
   }));
 
-  let globalSkipSponsors = $state(initialDefaults.sponsorBlock);
+  let globalSkipSponsors = $state(
+    initialDefaults.sponsorBlock ? initialDefaults.sponsorBlockSkipSponsors : false
+  );
+  let globalSkipIntros = $state(
+    initialDefaults.sponsorBlock ? initialDefaults.sponsorBlockSkipIntros : false
+  );
+  let globalSkipSelfPromo = $state(
+    initialDefaults.sponsorBlock ? initialDefaults.sponsorBlockSkipSelfPromo : false
+  );
+  let globalSkipInteraction = $state(
+    initialDefaults.sponsorBlock ? initialDefaults.sponsorBlockSkipInteraction : false
+  );
   let globalEmbedChapters = $state(initialDefaults.chapters);
   let globalEmbedThumbnail = $state(initialDefaults.embedThumbnail);
   let globalEmbedMetadata = $state(!initialDefaults.clearMetadata);
@@ -338,6 +369,9 @@
     return {
       downloadMode: mode,
       skipSponsors: globalSkipSponsors,
+      skipIntros: globalSkipIntros,
+      skipSelfPromo: globalSkipSelfPromo,
+      skipInteraction: globalSkipInteraction,
       embedChapters: globalEmbedChapters,
       embedThumbnail: globalEmbedThumbnail,
       embedMetadata: globalEmbedMetadata,
@@ -384,9 +418,6 @@
     return () => {
       destroyed = true;
       saveToCache();
-      console.log(
-        `[ChannelBuilder] Destroying: ${url}, entries: ${channelInfo?.entries?.length ?? 0}`
-      );
       channelInfo = null;
       perItemSettingsObj = {};
       selectedSomeIds = new Set();
@@ -417,11 +448,8 @@
         rawInfo = await getPlaylistInfoOnAndroid(url, playerClient);
         if (destroyed) return;
       } else {
-        const backend = detectBackendForUrl(url);
-        const luxInstalled = backend === 'lux' && $deps.lux?.installed;
-        const command = luxInstalled ? 'lux_get_playlist_info' : 'get_playlist_info';
         const currentSettings = getSettings();
-        rawInfo = await invoke<any>(command, {
+        rawInfo = await invoke<any>('get_playlist_info', {
           url,
           offset: 0,
           limit: 200,
@@ -438,10 +466,7 @@
         rawInfo.entries = allEntries;
         while (rawInfo.has_more && rawInfo.total_count > 0 && !destroyed) {
           const currentOffset = allEntries.length;
-          const backend = detectBackendForUrl(url);
-          const luxInstalled = backend === 'lux' && $deps.lux?.installed;
-          const command = luxInstalled ? 'lux_get_playlist_info' : 'get_playlist_info';
-          const moreInfo = await invoke<any>(command, {
+          const moreInfo = await invoke<any>('get_playlist_info', {
             url,
             offset: currentOffset,
             limit: 200,
@@ -659,7 +684,15 @@
               src={displayThumbnail}
               alt=""
               class="thumb"
-              onerror={() => (thumbnailError = true)}
+              decoding="async"
+              onload={(e) => {
+                const src = (e.currentTarget as HTMLImageElement).getAttribute('src');
+                if (src && src === displayThumbnail) thumbnailError = false;
+              }}
+              onerror={(e) => {
+                const src = (e.currentTarget as HTMLImageElement).getAttribute('src');
+                if (src && src === displayThumbnail) thumbnailError = true;
+              }}
             />
           {:else if loading && !hasPrefetchedInfo}
             <div class="thumb skeleton"></div>
@@ -799,37 +832,25 @@
             </div>
           </div>
 
-          <div class="options-row">
-            <div class="option-group">
-              <span class="group-label">SponsorBlock</span>
+          <div class="options-sections">
+            <CollapsibleBlock title="SponsorBlock" expanded={true}>
               <div class="option-grid">
-                <Checkbox
-                  bind:checked={globalSkipSponsors}
-                  label={$t('download.tracks.skipSponsors')}
-                />
+                <Checkbox bind:checked={globalSkipSponsors} label={$t('download.tracks.skipSponsors')} />
+                <Checkbox bind:checked={globalSkipIntros} label={$t('download.tracks.skipIntros')} />
+                <Checkbox bind:checked={globalSkipSelfPromo} label={$t('download.tracks.skipSelfPromo')} />
+                <Checkbox bind:checked={globalSkipInteraction} label={$t('download.tracks.skipInteraction')} />
               </div>
-            </div>
+            </CollapsibleBlock>
 
-            <div class="option-group">
-              <span class="group-label">{$t('download.tracks.embedOptions')}</span>
+            <CollapsibleBlock title={$t('download.tracks.embedOptions')} expanded={true}>
               <div class="option-grid">
-                <Checkbox
-                  bind:checked={globalEmbedChapters}
-                  label={$t('download.tracks.embedChapters')}
-                />
-                <Checkbox
-                  bind:checked={globalEmbedThumbnail}
-                  label={$t('download.tracks.embedThumbnail')}
-                />
-                <Checkbox
-                  bind:checked={globalEmbedMetadata}
-                  label={$t('download.tracks.embedMetadata')}
-                />
+                <Checkbox bind:checked={globalEmbedChapters} label={$t('download.tracks.embedChapters')} />
+                <Checkbox bind:checked={globalEmbedThumbnail} label={$t('download.tracks.embedThumbnail')} />
+                <Checkbox bind:checked={globalEmbedMetadata} label={$t('download.tracks.embedMetadata')} />
               </div>
-            </div>
+            </CollapsibleBlock>
 
-            <div class="option-group">
-              <span class="group-label">{$t('download.tracks.subtitles')}</span>
+            <CollapsibleBlock title={$t('download.tracks.subtitles')} expanded={true}>
               <div class="subs-row">
                 <Checkbox bind:checked={globalEmbedSubs} label={$t('download.tracks.embedSubs')} />
                 {#if globalEmbedSubs}
@@ -837,11 +858,10 @@
                     type="text"
                     class="lang-input"
                     bind:value={globalSubLangs}
-                    placeholder="en"
                   />
                 {/if}
               </div>
-            </div>
+            </CollapsibleBlock>
           </div>
         </div>
       {/if}
@@ -1477,6 +1497,12 @@
     flex-direction: column;
     gap: 12px;
     animation: fadeIn 0.15s ease-out;
+  }
+
+  .options-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
 
   .options-row {

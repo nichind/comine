@@ -71,12 +71,38 @@ pub struct VideoFormats {
     pub upload_date: Option<String>,
     pub channel_url: Option<String>,
     pub channel_id: Option<String>,
+    pub storyboards: Option<Vec<Storyboard>>,
+    pub chapters: Option<Vec<Chapter>>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Storyboard {
+    pub url: String,
+    pub width: u32,
+    pub height: u32,
+    pub cols: u32,
+    pub rows: u32,
+    pub fragment_count: u32,
+    pub fragment_duration: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Chapter {
+    pub title: String,
+    pub start_time: f64,
+    pub end_time: f64,
 }
 
 #[derive(Serialize, Clone)]
 pub struct DownloadProgress {
     pub url: String,
     pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ClipRange {
+    pub start: f64,
+    pub end: f64,
 }
 
 #[derive(Serialize, Clone)]

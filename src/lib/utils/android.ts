@@ -18,58 +18,16 @@ interface AndroidYtDlp {
     youtubePlayerClient: string | null,
     callbackName: string
   ): void;
-  download(
-    url: string,
-    format: string | null,
-    playlistFolder: string | null,
-    isAudioOnly: boolean,
-    callbackName: string
-  ): void;
-  downloadWithPath(
-    url: string,
-    format: string | null,
-    playlistFolder: string | null,
-    isAudioOnly: boolean,
-    downloadPath: string | null,
-    callbackName: string
-  ): void;
-  downloadWithSettings(
-    url: string,
-    format: string | null,
-    playlistFolder: string | null,
-    isAudioOnly: boolean,
-    aria2Connections: number,
-    aria2Splits: number,
-    aria2MinSplitSize: string | null,
-    speedLimit: number,
-    downloadPath: string | null,
-    callbackName: string
-  ): void;
-  downloadWithSettingsV2(
-    url: string,
-    format: string | null,
-    playlistFolder: string | null,
-    isAudioOnly: boolean,
-    aria2Connections: number,
-    aria2Splits: number,
-    aria2MinSplitSize: string | null,
-    speedLimit: number,
-    downloadPath: string | null,
-    youtubePlayerClient: string | null,
-    callbackName: string
-  ): void;
+  // Unified job-based API (emits DOM 'job-event' CustomEvents)
+  startDownloadJob?(jobId: string, url: string, settingsJson: string): void;
+  // V2: Rust builds options; Android executes them
+  startDownloadJobWithOptions?(jobId: string, optionsJson: string, outputConfigJson: string): void;
+  cancelJob?(jobId: string): boolean;
   openFile(filePath: string): boolean;
   openFolder(filePath: string): boolean;
   pickFile(mimeTypes: string, callbackName: string): void;
   pickFolder(callbackName: string): void;
   processYtmThumbnail(thumbnailUrl: string, callbackName: string): void;
-}
-
-type AndroidCallback = (json: string) => void;
-type AndroidProgressCallback = (json: string) => void;
-
-interface AndroidCallbacks {
-  [key: string]: AndroidCallback | AndroidProgressCallback | undefined;
 }
 
 interface AndroidWindow extends Window {
@@ -138,39 +96,21 @@ export function getAndroidYtDlpVersion(): string | null {
   }
 }
 
-/**
- * Progress callback type
- */
-export interface DownloadProgress {
-  progress: number;
-  etaSeconds: number;
-  line: string;
-}
-
-/**
- * Download result type
- */
-export interface DownloadResult {
-  success: boolean;
-  output?: string;
-  exitCode?: number;
-  error?: string;
-  filePath?: string;
-  fileSize?: number;
-}
-
 let callbackCounter = 0;
+
+type AndroidCallback = (json: string) => void;
+
+interface AndroidCallbacks {
+  [key: string]: AndroidCallback | undefined;
+}
 
 const activeCallbacks = new Set<string>();
 
-/**
- * Clean up any orphaned callbacks - call on page unload
- */
 export function cleanupAndroidCallbacks(): void {
   activeCallbacks.forEach((name) => {
     const callbacks = window as unknown as AndroidCallbacks;
     delete callbacks[name];
-    delete callbacks[`${name}_progress`];
+    delete callbacks[`${name}_progress` as any];
   });
   activeCallbacks.clear();
 }
@@ -185,161 +125,111 @@ export interface AndroidDownloadSettings {
   speedLimit?: number;
   downloadPath?: string | null;
   youtubePlayerClient?: string | null;
+  // Extended settings (V3)
+  outputTemplate?: string | null;
+  embedThumbnail?: boolean;
+  embedChapters?: boolean;
+  embedSubtitles?: boolean;
+  subtitleLanguages?: string | null;
+  sponsorBlock?: boolean;
+  sponsorBlockCategories?: string[]; // e.g. ['sponsor', 'intro', 'outro', 'selfpromo', 'interaction']
+  clearMetadata?: boolean;
+  remux?: boolean;
+  convertToMp4?: boolean;
+  clipRanges?: { start: number; end: number }[] | null;
 }
 
-/**
- * Download a video using the Android bridge
- * @returns Promise that resolves when download completes
- */
-export function downloadOnAndroid(
-  url: string,
-  format: string = 'best',
-  onProgress?: (progress: DownloadProgress) => void,
-  playlistFolder?: string | null,
-  isAudioOnly: boolean = false,
-  settings?: AndroidDownloadSettings
-): Promise<DownloadResult> {
-  return new Promise((resolve, reject) => {
-    if (!isAndroid() || !window.AndroidYtDlp) {
-      reject(new Error('Android yt-dlp bridge not available'));
-      return;
-    }
+export type AndroidYtDlpJobSettings = AndroidDownloadSettings & {
+  format?: string;
+  playlistFolder?: string | null;
+  isAudioOnly?: boolean;
+};
 
-    if (!isAndroidYtDlpReady()) {
-      reject(new Error('Android yt-dlp is initializing, please wait...'));
-      return;
-    }
+export function startAndroidDownloadJob(url: string, settings: AndroidYtDlpJobSettings): string {
+  if (!isAndroid() || !window.AndroidYtDlp?.startDownloadJob) {
+    throw new Error('Android job bridge not available');
+  }
+  if (!isAndroidYtDlpReady()) {
+    throw new Error('Android yt-dlp is initializing, please wait...');
+  }
 
-    const callbackName = `ytdlp_cb_${++callbackCounter}`;
-    activeCallbacks.add(callbackName);
-    let hasCompleted = false;
+  const jobId = `android-${Date.now()}-${++callbackCounter}`;
+  const settingsPayload = {
+    format: settings.format ?? 'best',
+    playlistFolder: settings.playlistFolder ?? null,
+    isAudioOnly: settings.isAudioOnly ?? false,
+    aria2Connections: settings.aria2Connections ?? 8,
+    aria2Splits: settings.aria2Splits ?? 8,
+    aria2MinSplitSize: settings.aria2MinSplitSize ?? '1M',
+    speedLimit: settings.speedLimit ?? 0,
+    youtubePlayerClient: settings.youtubePlayerClient ?? null,
+    outputTemplate: settings.outputTemplate ?? null,
+    embedThumbnail: settings.embedThumbnail ?? true,
+    embedChapters: settings.embedChapters ?? true,
+    embedSubtitles: settings.embedSubtitles ?? false,
+    subtitleLanguages: settings.subtitleLanguages ?? null,
+    sponsorBlock: settings.sponsorBlock ?? false,
+    sponsorBlockCategories: settings.sponsorBlockCategories ?? [],
+    remux: settings.remux ?? true,
+    convertToMp4: settings.convertToMp4 ?? false,
+    clipRanges: settings.clipRanges ?? null,
+  };
 
-    const timeout = setTimeout(() => {
-      if (!hasCompleted) {
-        hasCompleted = true;
-        cleanup();
-        logHandler?.('error', 'Android', 'Download timeout - no response from Android bridge');
-        reject(new Error('Download timeout - no response from Android bridge'));
-      }
-    }, 300000);
-
-    const cleanup = () => {
-      clearTimeout(timeout);
-      activeCallbacks.delete(callbackName);
-      const callbacks = window as unknown as AndroidCallbacks;
-      delete callbacks[`${callbackName}_progress`];
-      delete callbacks[callbackName];
-    };
-
-    let maxProgress = 0;
-
-    const callbacks = window as unknown as AndroidCallbacks;
-    callbacks[`${callbackName}_progress`] = (json: string) => {
-      try {
-        const data = JSON.parse(json);
-        let progressValue = typeof data.progress === 'number' ? data.progress : 0;
-
-        if (progressValue >= 0 && progressValue > maxProgress) {
-          maxProgress = progressValue;
-        }
-        const effectiveProgress =
-          progressValue < 0 ? progressValue : Math.max(progressValue, maxProgress);
-
-        onProgress?.({
-          progress: effectiveProgress,
-          etaSeconds: data.eta || 0,
-          line: data.line || '',
-        });
-      } catch (e) {
-        logHandler?.('warn', 'Android', `Failed to parse progress: ${e}`);
-      }
-    };
-
-    callbacks[callbackName] = (json: string) => {
-      if (hasCompleted) return;
-      hasCompleted = true;
-
-      logHandler?.('debug', 'Android', `Download callback received: ${json.substring(0, 200)}...`);
-      cleanup();
-
-      try {
-        const data = JSON.parse(json);
-        if (data.error) {
-          logHandler?.('error', 'Android', `Download error: ${data.error}`);
-          reject(new Error(data.error));
-        } else {
-          logHandler?.(
-            'info',
-            'Android',
-            `Download completed: success=${data.success}, filePath=${data.filePath}, fileSize=${data.fileSize}`
-          );
-          resolve({
-            success: data.success || false,
-            output: data.output,
-            exitCode: data.exitCode,
-            filePath: data.filePath || undefined,
-            fileSize: data.fileSize || undefined,
-          });
-        }
-      } catch (e) {
-        logHandler?.(
-          'error',
-          'Android',
-          `Failed to parse download result: ${e}, raw: ${json.substring(0, 100)}`
-        );
-        reject(new Error(`Failed to parse result: ${e}`));
-      }
-    };
-
-    try {
-      const aria2Connections = settings?.aria2Connections ?? 16;
-      const aria2Splits = settings?.aria2Splits ?? 16;
-      const speedLimit = settings?.speedLimit ?? 0;
-      const aria2MinSplitSize = settings?.aria2MinSplitSize ?? '1M';
-      const downloadPath = settings?.downloadPath ?? null;
-      const youtubePlayerClient = settings?.youtubePlayerClient ?? null;
-
-      logHandler?.(
-        'info',
-        'Android',
-        `Starting download via bridge: ${url}${playlistFolder ? ` (folder: ${playlistFolder})` : ''}, isAudioOnly: ${isAudioOnly}, aria2: ${aria2Connections}x${aria2Splits} (min-split: ${aria2MinSplitSize}), speedLimit: ${speedLimit}M, downloadPath: ${downloadPath}, playerClient: ${youtubePlayerClient || 'default'}`
-      );
-
-      if (window.AndroidYtDlp.downloadWithSettingsV2) {
-        window.AndroidYtDlp.downloadWithSettingsV2(
-          url,
-          format || null,
-          playlistFolder || null,
-          isAudioOnly,
-          aria2Connections,
-          aria2Splits,
-          aria2MinSplitSize,
-          speedLimit,
-          downloadPath,
-          youtubePlayerClient,
-          callbackName
-        );
-      } else {
-        window.AndroidYtDlp.downloadWithSettings(
-          url,
-          format || null,
-          playlistFolder || null,
-          isAudioOnly,
-          aria2Connections,
-          aria2Splits,
-          aria2MinSplitSize,
-          speedLimit,
-          downloadPath,
-          callbackName
-        );
-      }
-    } catch (error) {
-      hasCompleted = true;
-      cleanup();
-      logHandler?.('error', 'Android', `Failed to call download: ${error}`);
-      reject(error);
-    }
+  const outputConfigJson = JSON.stringify({
+    downloadPath: settings.downloadPath ?? null,
+    playlistFolder: settings.playlistFolder ?? null,
   });
+
+  // Prefer V2 path: Rust builds yt-dlp options; Android only executes.
+  if (window.AndroidYtDlp.startDownloadJobWithOptions) {
+    // Note: invoke is available on Android; keep logic centralized in Rust.
+    // Dynamic import avoids pulling tauri api into non-android builds unnecessarily.
+    void (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const result = await invoke<{ options: Array<{ key: string; value?: string | null }> }>(
+          'build_android_ytdlp_options',
+          {
+            url,
+            settingsJson: JSON.stringify(settingsPayload),
+          }
+        );
+        window.AndroidYtDlp!.startDownloadJobWithOptions!(
+          jobId,
+          JSON.stringify(result.options),
+          outputConfigJson
+        );
+      } catch (e) {
+        logHandler?.('warn', 'Android', `build_android_ytdlp_options failed; using legacy: ${e}`);
+        const legacySettingsJson = JSON.stringify({
+          ...settingsPayload,
+          downloadPath: settings.downloadPath ?? null,
+          clearMetadata: settings.clearMetadata ?? false,
+        });
+        window.AndroidYtDlp!.startDownloadJob!(jobId, url, legacySettingsJson);
+      }
+    })();
+    return jobId;
+  }
+
+  // Fallback: legacy settings-based method
+  const settingsJson = JSON.stringify({
+    ...settingsPayload,
+    downloadPath: settings.downloadPath ?? null,
+    clearMetadata: settings.clearMetadata ?? false,
+  });
+  window.AndroidYtDlp.startDownloadJob(jobId, url, settingsJson);
+  return jobId;
+}
+
+export function cancelAndroidJob(jobId: string): boolean {
+  if (!isAndroid() || !window.AndroidYtDlp?.cancelJob) return false;
+  try {
+    return window.AndroidYtDlp.cancelJob(jobId);
+  } catch (e) {
+    logHandler?.('warn', 'Android', `cancelJob failed: ${e}`);
+    return false;
+  }
 }
 
 export function getVideoInfoOnAndroid(

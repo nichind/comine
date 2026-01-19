@@ -10,9 +10,17 @@
     active?: boolean;
     badge?: number;
     external?: boolean;
+    register?: (node: HTMLElement) => void | { destroy?: () => void };
   }
 
-  let { href, icon, title = '', active = false, badge, external = false }: Props = $props();
+  let { href, icon, title = '', active = false, badge, external = false, register }: Props =
+    $props();
+
+  function registerAction(node: HTMLElement) {
+    const result = register?.(node);
+    if (result && typeof result === 'object') return result;
+    return {};
+  }
 </script>
 
 {#if external}
@@ -26,6 +34,7 @@
     class:github={icon === 'github'}
     use:spotlight
     use:tooltip={title}
+    use:registerAction
     data-tauri-drag-region="false"
   >
     <Icon name={icon} />
@@ -37,6 +46,7 @@
     class:active
     use:spotlight
     use:tooltip={title}
+    use:registerAction
     data-tauri-drag-region="false"
   >
     <Icon name={icon} />
@@ -60,6 +70,7 @@
       color 0.15s ease,
       background 0.15s ease;
     position: relative;
+    z-index: 1;
     border-left: 2px solid transparent;
   }
 
@@ -84,8 +95,8 @@
 
   .nav-item.active {
     color: #ffffff;
-    background: #ffffff24;
-    border-left-color: #ffffff24;
+    background: transparent;
+    border-left-color: transparent;
   }
 
   .badge {

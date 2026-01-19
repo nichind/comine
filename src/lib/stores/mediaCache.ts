@@ -1,5 +1,6 @@
 import { writable, derived } from 'svelte/store';
 import { load, type Store } from '@tauri-apps/plugin-store';
+import { LRUCache } from '$lib/utils/LRUCache';
 
 const PERSISTENCE_CONFIG = {
   storeFile: 'media-cache.json',
@@ -26,6 +27,29 @@ export interface MediaPreview {
   isMusic?: boolean;
 }
 
+export interface Chapter {
+  title: string;
+  start_time: number;
+  end_time: number;
+}
+
+export interface Storyboard {
+  url: string;
+  width: number;
+  height: number;
+  cols: number;
+  rows: number;
+  fragment_count: number;
+  fragment_duration: number;
+}
+
+export interface SponsorBlockSegment {
+  category: string;
+  segment: [number, number];
+  UUID?: string;
+  actionType?: string;
+}
+
 export interface VideoInfo {
   title: string;
   author: string | null;
@@ -37,6 +61,9 @@ export interface VideoInfo {
   description: string | null;
   channelUrl: string | null;
   channelId: string | null;
+  chapters: Chapter[] | null;
+  storyboards: Storyboard[] | null;
+  sponsorSegments: SponsorBlockSegment[] | null;
 }
 
 export interface VideoFormat {
@@ -243,91 +270,6 @@ function isExpired(timestamp: number | null, ttl: number): boolean {
   return !timestamp || Date.now() - timestamp > ttl;
 }
 
-class LRUMap<K, V> {
-  private map = new Map<K, V>();
-  private order: K[] = [];
-  private onMutate: (() => void) | null = null;
-
-  constructor(private maxSize: number) {}
-
-  setMutationCallback(cb: () => void): void {
-    this.onMutate = cb;
-  }
-
-  get(key: K): V | undefined {
-    const value = this.map.get(key);
-    if (value !== undefined) {
-      this.touch(key);
-    }
-    return value;
-  }
-
-  set(key: K, value: V): void {
-    if (!this.map.has(key)) {
-      this.order.push(key);
-    }
-    this.map.set(key, value);
-    this.touch(key);
-    this.evict();
-    this.onMutate?.();
-  }
-
-  has(key: K): boolean {
-    return this.map.has(key);
-  }
-
-  delete(key: K): void {
-    this.map.delete(key);
-    this.order = this.order.filter((k) => k !== key);
-    this.onMutate?.();
-  }
-
-  clear(): void {
-    this.map.clear();
-    this.order = [];
-  }
-
-  get size(): number {
-    return this.map.size;
-  }
-
-  values(): IterableIterator<V> {
-    return this.map.values();
-  }
-
-  entries(): IterableIterator<[K, V]> {
-    return this.map.entries();
-  }
-
-  toJSON(): Array<[K, V]> {
-    return Array.from(this.map.entries());
-  }
-
-  fromJSON(data: Array<[K, V]>): void {
-    this.map.clear();
-    this.order = [];
-    for (const [key, value] of data) {
-      this.map.set(key, value);
-      this.order.push(key);
-    }
-    this.evict();
-  }
-
-  private touch(key: K): void {
-    const idx = this.order.indexOf(key);
-    if (idx !== -1) {
-      this.order.splice(idx, 1);
-    }
-    this.order.push(key);
-  }
-
-  private evict(): void {
-    while (this.map.size > this.maxSize && this.order.length > 0) {
-      const oldest = this.order.shift()!;
-      this.map.delete(oldest);
-    }
-  }
-}
 
 interface DiskCacheData {
   metadata: Array<[string, MetadataEntry]>;
@@ -336,8 +278,8 @@ interface DiskCacheData {
 }
 
 class UnifiedMediaCache {
-  private metadata = new LRUMap<string, MetadataEntry>(CONFIG.maxMetadataEntries);
-  private heavyData = new LRUMap<string, HeavyDataEntry>(CONFIG.maxHeavyDataEntries);
+  private metadata = new LRUCache<string, MetadataEntry>(CONFIG.maxMetadataEntries);
+  private heavyData = new LRUCache<string, HeavyDataEntry>(CONFIG.maxHeavyDataEntries);
   private store = writable(0);
   private version = 0;
   private dirty = false;
@@ -830,6 +772,8 @@ export function convertBackendVideoInfo(backend: {
   duration?: number | null;
   channel_url?: string | null;
   channel_id?: string | null;
+  chapters?: Chapter[] | null;
+  storyboards?: Storyboard[] | null;
 }): VideoInfo {
   return {
     title: backend.title,
@@ -842,6 +786,9 @@ export function convertBackendVideoInfo(backend: {
     description: null,
     channelUrl: backend.channel_url ?? null,
     channelId: backend.channel_id ?? null,
+    chapters: backend.chapters ?? null,
+    storyboards: backend.storyboards ?? null,
+    sponsorSegments: null,
   };
 }
 
@@ -873,6 +820,8 @@ export function convertBackendFormats(backend: {
   upload_date?: string | null;
   channel_url?: string | null;
   channel_id?: string | null;
+  chapters?: Chapter[] | null;
+  storyboards?: Storyboard[] | null;
 }): { info: VideoInfo; formats: VideoFormat[] } {
   return {
     info: {
@@ -886,6 +835,9 @@ export function convertBackendFormats(backend: {
       description: backend.description ?? null,
       channelUrl: backend.channel_url ?? null,
       channelId: backend.channel_id ?? null,
+      chapters: backend.chapters ?? null,
+      storyboards: backend.storyboards ?? null,
+      sponsorSegments: null,
     },
     formats: backend.formats.map((f) => ({
       formatId: f.format_id,

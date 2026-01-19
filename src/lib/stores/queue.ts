@@ -2,7 +2,8 @@ import { writable, derived, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event';
 import { stat } from '@tauri-apps/plugin-fs';
-import { load, Store } from '@tauri-apps/plugin-store';
+import { load } from '@tauri-apps/plugin-store';
+import type { Store } from '@tauri-apps/plugin-store';
 import {
   isPermissionGranted,
   requestPermission,
@@ -15,15 +16,15 @@ import { settings, getSettings, getProxyConfig } from './settings';
 import { appStats } from './stats';
 import { toast } from '$lib/components/Toast.svelte';
 import { translate } from '$lib/i18n';
+import { decodeJobEvent, type JobEvent } from '$lib/jobs/jobEvent';
 import {
   isAndroid,
-  downloadOnAndroid,
-  getVideoInfoOnAndroid,
   waitForAndroidYtDlp,
-  type DownloadProgress as AndroidProgress,
-  type AndroidDownloadSettings,
+  startAndroidDownloadJob,
+  cancelAndroidJob,
+  type AndroidYtDlpJobSettings,
 } from '$lib/utils/android';
-import { detectBackendForUrl, isLuxPreferred } from '$lib/utils/backend-detection';
+import { getVideoInfoBackend } from '$lib/backend/mediaBackend';
 
 export type DownloadStatus =
   | 'pending'
@@ -35,8 +36,6 @@ export type DownloadStatus =
   | 'failed';
 
 export type QueueItemSource = 'ytdlp' | 'file';
-
-export type ProcessorType = 'ytdlp' | 'lux';
 
 export interface QueueItem {
   id: string;
@@ -66,7 +65,7 @@ export interface QueueItem {
   mimeType?: string;
   totalBytes?: number;
   downloadedBytes?: number;
-  processor: ProcessorType;
+  jobId?: string;
 }
 
 export interface PrefetchedInfo {
@@ -89,11 +88,17 @@ export interface DownloadOptions {
   cookiesFromBrowser: string;
   customCookies: string;
   sponsorBlock: boolean;
+  sponsorBlockSkipSponsors?: boolean;
+  sponsorBlockSkipIntros?: boolean;
+  sponsorBlockSkipSelfPromo?: boolean;
+  sponsorBlockSkipInteraction?: boolean;
   chapters: boolean;
   embedSubtitles: boolean;
   subtitleLanguages: string;
   embedThumbnail: boolean;
   prefetchedInfo?: PrefetchedInfo;
+  outputTemplate?: string;
+  clipRanges?: { start: number; end: number }[];
 }
 
 interface QueueState {
@@ -190,10 +195,87 @@ function createQueueStore() {
   });
 
   let unlisten: UnlistenFn | null = null;
-  let unlistenFilePath: UnlistenFn | null = null;
+  let unlistenDownloadProgress: UnlistenFn | null = null;
   let notificationPermission: boolean | null = null;
 
+  const jobToItemId = new Map<string, string>();
+  const jobWaiters = new Map<
+    string,
+    {
+      resolve: () => void;
+      reject: (err: unknown) => void;
+    }
+  >();
+
+  // Throttle high-frequency progress updates.
+  const progressThrottleState = new Map<
+    string,
+    {
+      lastUpdateAt: number;
+      lastPercent: number | null;
+    }
+  >();
+
+  // Throttle high-frequency log lines from job processes.
+  const logThrottleState = new Map<
+    string,
+    {
+      lastAt: number;
+    }
+  >();
+
+  const lastJobStatusMessage = new Map<
+    string,
+    {
+      at: number;
+      message: string;
+    }
+  >();
+
   const maxProgressMap = new Map<string, number>();
+
+  // Clip downloads frequently use ffmpeg section downloader, which often only emits 100% per section.
+  // Track per-section state so the progress bar advances across sections instead of jumping to 95%.
+  const clipProgressMap = new Map<
+    string,
+    {
+      totalSections: number;
+      completedDestinations: Set<string>;
+      destinationOrder: string[];
+      destinationIndex: Map<string, number>;
+      lastDestination?: string;
+    }
+  >();
+
+  function formatTimestamp(seconds: number): string {
+    if (!Number.isFinite(seconds)) return '';
+    const total = Math.max(0, Math.floor(seconds));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    return `${minutes}:${String(secs).padStart(2, '0')}`;
+  }
+
+  function formatClipRange(start: number, end: number): string {
+    const a = formatTimestamp(start);
+    const b = formatTimestamp(end);
+    if (!a || !b) return '';
+    return `${a}–${b}`;
+  }
+
+  function formatClipStatus(
+    base: string,
+    clipIndex: number | null,
+    total: number,
+    rangeLabel?: string
+  ): string {
+    if (!total || total <= 0) return base;
+    const idx = clipIndex && clipIndex > 0 ? clipIndex : null;
+    const prefix = idx ? `${base} (clip ${idx}/${total}` : `${base} (clip ?/${total}`;
+    if (rangeLabel) return `${prefix} • ${rangeLabel})`;
+    return `${prefix})`;
+  }
 
   const videoInfoPromises = new Map<string, Promise<void>>();
 
@@ -216,6 +298,15 @@ function createQueueStore() {
       }
     });
 
+    // Clean up clipProgressMap for URLs no longer in queue
+    let cleanedClip = 0;
+    clipProgressMap.forEach((_, url) => {
+      if (!activeUrls.has(url)) {
+        clipProgressMap.delete(url);
+        cleanedClip++;
+      }
+    });
+
     // Clean up videoInfoPromises for items no longer in queue
     let cleanedPromises = 0;
     videoInfoPromises.forEach((_, id) => {
@@ -234,10 +325,10 @@ function createQueueStore() {
       }
     });
 
-    if (cleanedProgress + cleanedPromises + cleanedCancelled > 0) {
+    if (cleanedProgress + cleanedClip + cleanedPromises + cleanedCancelled > 0) {
       logs.debug(
         'queue',
-        `Cleaned up ${cleanedProgress} progress entries, ${cleanedPromises} promises, ${cleanedCancelled} cancelled IDs`
+        `Cleaned up ${cleanedProgress} progress entries, ${cleanedClip} clip entries, ${cleanedPromises} promises, ${cleanedCancelled} cancelled IDs`
       );
     }
   }
@@ -289,347 +380,448 @@ function createQueueStore() {
         body: body || '',
       });
     } catch (e) {
-      console.warn('Failed to send notification:', e);
+      logs.warn('queue', `Failed to send notification: ${e}`);
     }
   }
 
   async function setupListener() {
     if (unlisten) return;
 
-    logs.debug('queue', 'Setting up download progress listener');
+    logs.debug('queue', 'Setting up job-event listener');
 
-    const progressThrottleMap = new Map<string, number>();
-    const PROGRESS_THROTTLE_MS = 200;
+    const formatSpeed = (bps: number | null): string => {
+      if (!bps || !Number.isFinite(bps) || bps <= 0) return '';
+      const kb = 1024;
+      const mb = kb * 1024;
+      const gb = mb * 1024;
+      if (bps >= gb) return `${(bps / gb).toFixed(2)} GiB/s`;
+      if (bps >= mb) return `${(bps / mb).toFixed(2)} MiB/s`;
+      if (bps >= kb) return `${(bps / kb).toFixed(1)} KiB/s`;
+      return `${bps} B/s`;
+    };
 
-    unlisten = await listen<{ url: string; message: string }>('download-progress', (event) => {
-      const { url, message } = event.payload;
+    const formatEta = (ms: number | null): string => {
+      if (!ms || !Number.isFinite(ms) || ms <= 0) return '';
+      const totalSec = Math.floor(ms / 1000);
+      const h = Math.floor(totalSec / 3600);
+      const m = Math.floor((totalSec % 3600) / 60);
+      const s = totalSec % 60;
+      if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      return `${m}:${String(s).padStart(2, '0')}`;
+    };
 
-      const now = Date.now();
-      const lastUpdate = progressThrottleMap.get(url) || 0;
-      const isImportantMessage =
-        message.includes('100%') ||
-        message.includes('Destination') ||
-        message.includes('[Merger]') ||
-        message.includes('[ffmpeg]') ||
-        message.includes('Deleting') ||
-        message.includes('ERROR') ||
-        message.includes('WARNING');
+    const INVALID_JOB_EVENT_TOAST_DEBOUNCE_MS = 5_000;
+    let lastInvalidJobEventToastAt = 0;
 
-      if (!isImportantMessage && now - lastUpdate < PROGRESS_THROTTLE_MS) {
+    const PROGRESS_THROTTLE_MS = 150;
+    const LOG_THROTTLE_MS = 250;
+
+    type BackendDownloadProgress = {
+      url: string;
+      progress?: number;
+      downloadedBytes?: number;
+      totalBytes?: number;
+      speedBps?: number;
+      message?: string;
+    };
+
+    const onFileDownloadProgress = (p: BackendDownloadProgress) => {
+      const url = p.url;
+      if (!url) return;
+
+      const currentState = get({ subscribe });
+      const item = currentState.items.find((i) => i.url === url && i.source === 'file');
+      if (!item) return;
+
+      const speed = formatSpeed(typeof p.speedBps === 'number' ? p.speedBps : null);
+
+      const downloaded =
+        typeof p.downloadedBytes === 'number' && Number.isFinite(p.downloadedBytes)
+          ? Math.max(0, Math.floor(p.downloadedBytes))
+          : undefined;
+      const total =
+        typeof p.totalBytes === 'number' && Number.isFinite(p.totalBytes)
+          ? Math.max(0, Math.floor(p.totalBytes))
+          : undefined;
+
+      const etaMs =
+        downloaded != null && total != null && typeof p.speedBps === 'number' && p.speedBps > 0
+          ? Math.max(0, Math.floor(((total - downloaded) / p.speedBps) * 1000))
+          : null;
+      const eta = formatEta(etaMs);
+
+      const rawProgress =
+        typeof p.progress === 'number' && Number.isFinite(p.progress)
+          ? Math.max(0, Math.min(100, Math.floor(p.progress)))
+          : total != null && total > 0 && downloaded != null
+            ? Math.max(0, Math.min(100, Math.floor((downloaded / total) * 100)))
+            : null;
+
+      const progress =
+        rawProgress != null
+          ? (() => {
+              const capped = Math.min(rawProgress, 99);
+              const prevMax = maxProgressMap.get(url) ?? 0;
+              const next = Math.max(prevMax, capped);
+              maxProgressMap.set(url, next);
+              return next;
+            })()
+          : null;
+
+      const statusMessage =
+        item.statusMessage && item.statusMessage !== translate('downloads.status.downloading')
+          ? item.statusMessage
+          : translate('downloads.status.downloading');
+
+      update((state) => ({
+        ...state,
+        items: state.items.map((i) =>
+          i.id === item.id
+            ? {
+                ...i,
+                status: progress != null && progress >= 99 ? ('processing' as DownloadStatus) : ('downloading' as DownloadStatus),
+                progress: progress != null ? progress : i.progress,
+                speed,
+                eta,
+                statusMessage,
+                downloadedBytes: downloaded ?? i.downloadedBytes,
+                totalBytes: total ?? i.totalBytes,
+              }
+            : i
+        ),
+      }));
+
+      if (progress != null) {
+        emit('download-progress-parsed', {
+          url,
+          progress,
+          speed,
+          eta,
+          status: progress >= 99 ? 'processing' : 'downloading',
+          statusMessage: '',
+        });
+      }
+    };
+
+    const onJobEventPayload = async (payload: unknown) => {
+      const decoded = decodeJobEvent(payload);
+      if (!decoded.ok) {
+        logs.warn(
+          'queue',
+          `Received invalid job-event payload: ${decoded.error}${
+            decoded.context ? ` | Context: ${JSON.stringify(decoded.context)}` : ''
+          }`
+        );
+
+        const now = Date.now();
+        if (now - lastInvalidJobEventToastAt >= INVALID_JOB_EVENT_TOAST_DEBOUNCE_MS) {
+          lastInvalidJobEventToastAt = now;
+          toast.error('Internal error: invalid job event received');
+        }
+
         return;
       }
 
-      progressThrottleMap.set(url, now);
+      const p = decoded.event;
+      const jobId = p.job_id;
 
-      if (progressThrottleMap.size > 20) {
-        const activeUrls = new Set(get({ subscribe }).items.map((i) => i.url));
-        for (const [throttleUrl] of progressThrottleMap) {
-          if (!activeUrls.has(throttleUrl)) {
-            progressThrottleMap.delete(throttleUrl);
-          }
-        }
+      const itemId = jobToItemId.get(jobId);
+      if (!itemId) return;
+
+      const currentState = get({ subscribe });
+      const currentItem = currentState.items.find((i) => i.id === itemId);
+      const url = currentItem?.url;
+
+      if (p.type === 'Started') {
+        const argsPreview = p.args?.length ? ` ${p.args.slice(0, 6).join(' ')}${p.args.length > 6 ? ' …' : ''}` : '';
+        logs.info('job', `Started ${p.title} (${p.command}${argsPreview})`);
+
+        // Give the user something concrete to look at in the popup while the job spins up.
+        update((state) => ({
+          ...state,
+          items: state.items.map((item) =>
+            item.id === itemId
+              ? {
+                  ...item,
+                  statusMessage: translate('downloads.status.starting'),
+                }
+              : item
+          ),
+        }));
+        return;
       }
 
-      logs.trace('progress', `[${url.slice(0, 50)}...] ${message}`);
-      let statusMessage = '';
-      let isPostProcessing = false;
+      if (p.type === 'Log') {
+        const raw = (p.level || '').toLowerCase();
+        const level = (['trace', 'debug', 'info', 'warn', 'error'] as const).includes(raw as any)
+          ? (raw as any)
+          : ('info' as const);
 
-      // Detect disk space errors early (aria2 specific)
-      const lowerMessage = message.toLowerCase();
-      if (
-        lowerMessage.includes('not enough space on the disk') ||
-        (lowerMessage.includes('errnum=112') && lowerMessage.includes('failed to write'))
-      ) {
-        logs.error('queue', `Disk space error detected for ${url}`);
-        const state = get({ subscribe });
-        const item = state.items.find((i) => i.url === url);
-        if (item) {
-          const errorMsg = translate('download.errorDiskFull') || 'Not enough disk space';
-          update((state) => ({
-            ...state,
-            items: state.items.map((i) =>
-              i.url === url ? { ...i, status: 'failed' as DownloadStatus, error: errorMsg } : i
-            ),
-          }));
-          emit('download-status-changed', {
+        const throttleKey = `${jobId}:${p.step_id}:${level}`;
+        const now = Date.now();
+        const prev = logThrottleState.get(throttleKey) ?? { lastAt: 0 };
+
+        const shouldThrottle = level === 'trace' || level === 'debug' || level === 'info';
+        if (shouldThrottle && now - prev.lastAt < LOG_THROTTLE_MS) {
+          return;
+        }
+        logThrottleState.set(throttleKey, { lastAt: now });
+
+        const source = `job:${jobId}`;
+        const message = p.message?.trim?.() ? p.message.trim() : '';
+        if (!message) return;
+        logs.log(level, source, message);
+        return;
+      }
+
+      if (p.type === 'Status') {
+        const now = Date.now();
+        const rawFallback = p.message?.replace(/\s+/g, ' ').trim() || '';
+        const keyed = p.key ? translate(p.key) : '';
+        const resolved = p.key ? (keyed !== p.key ? keyed : rawFallback) : rawFallback;
+        const cleaned = resolved.replace(/\s+/g, ' ').trim();
+        if (!cleaned) return;
+        const short = cleaned.length > 80 ? `${cleaned.slice(0, 77)}…` : cleaned;
+
+        const last = lastJobStatusMessage.get(jobId);
+        const isNew = !last || last.message !== short;
+        const uiThrottleOk = !last || now - last.at >= 400;
+        if (!isNew || !uiThrottleOk) return;
+
+        lastJobStatusMessage.set(jobId, { at: now, message: short });
+        update((state) => ({
+          ...state,
+          items: state.items.map((item) =>
+            item.id === itemId
+              ? {
+                  ...item,
+                  statusMessage: short,
+                }
+              : item
+          ),
+        }));
+        return;
+      }
+
+      if (p.type === 'Progress') {
+        const fraction = p.fraction ?? null;
+        const rawProgress =
+          fraction != null ? Math.max(0, Math.min(100, Math.round(fraction * 100))) : null;
+
+        // Many download backends reset progress between sub-steps (video->audio, merge, post-process).
+        // Keep progress monotonic and reserve 100% for the terminal Finished event.
+        const progress =
+          rawProgress != null
+            ? (() => {
+                const capped = Math.min(rawProgress, 99);
+                if (!url) return capped;
+                const prevMax = maxProgressMap.get(url) ?? 0;
+                const next = Math.max(prevMax, capped);
+                maxProgressMap.set(url, next);
+                return next;
+              })()
+            : null;
+        const speed = formatSpeed(p.speed_bps);
+        const eta = formatEta(p.eta_ms);
+
+        const now = Date.now();
+        const throttleKey = `${jobId}:${p.step_id}`;
+        const prev = progressThrottleState.get(throttleKey) ?? {
+          lastUpdateAt: 0,
+          lastPercent: null,
+        };
+
+        const percentChanged = progress != null && progress !== prev.lastPercent;
+        const timeOk = now - prev.lastUpdateAt >= PROGRESS_THROTTLE_MS;
+        const isTerminalish = progress != null && progress >= 99;
+
+        // Always allow updates when percent changes or near completion.
+        if (!percentChanged && !isTerminalish && !timeOk) {
+          return;
+        }
+
+        progressThrottleState.set(throttleKey, {
+          lastUpdateAt: now,
+          lastPercent: progress,
+        });
+
+        const inferredStatus: DownloadStatus =
+          p.phase && p.phase.toLowerCase().includes('processing')
+            ? ('processing' as DownloadStatus)
+            : ('downloading' as DownloadStatus);
+
+        // If the backend doesn't emit Status events for a while (or for tools that only emit Progress),
+        // keep the UI message aligned with the current phase so it doesn't get stuck.
+        const statusKey =
+          inferredStatus === 'processing'
+            ? 'downloads.status.processing'
+            : ('downloads.status.downloading' as const);
+        const lastMsg = lastJobStatusMessage.get(jobId);
+        const shouldRefreshMessage = !lastMsg || now - lastMsg.at >= 2_000;
+        const refreshedMessage = shouldRefreshMessage ? translate(statusKey) : null;
+
+        update((state) => ({
+          ...state,
+          items: state.items.map((item) =>
+            item.id === itemId
+              ? {
+                  ...item,
+                  status: progress != null ? (progress >= 99 ? ('processing' as DownloadStatus) : inferredStatus) : inferredStatus,
+                  progress: progress != null ? progress : item.progress,
+                  speed,
+                  eta,
+                  statusMessage: refreshedMessage ?? item.statusMessage,
+                  downloadedBytes: p.downloaded_bytes ?? undefined,
+                  totalBytes: p.total_bytes ?? undefined,
+                }
+              : item
+          ),
+        }));
+
+        if (refreshedMessage) {
+          lastJobStatusMessage.set(jobId, { at: now, message: refreshedMessage });
+        }
+
+        if (url && progress != null) {
+          emit('download-progress-parsed', {
             url,
-            status: 'failed',
-            error: errorMsg,
+            progress,
+            speed,
+            eta,
+            status: progress >= 99 ? ('processing' as DownloadStatus) : inferredStatus,
+            statusMessage: '',
           });
         }
         return;
       }
 
-      if (message.includes('[download]') && message.includes('Destination')) {
-        statusMessage = translate('downloads.status.starting');
-        const destMatch = message.match(/Destination:\s*(.+)/);
-        if (destMatch) {
-          const destPath = destMatch[1].trim();
-          const filename = destPath.split(/[/\\]/).pop() || '';
-          let titleFromPath = filename.replace(/\.[^.]+$/, '').trim();
-          titleFromPath = titleFromPath.replace(/\.f(?:hls-?)?\d+$/i, '').trim();
-          titleFromPath = titleFromPath.replace(/(\.f\d+)+$/i, '').trim();
+      if (p.type === 'Artifact') {
+        const filePath = p.path;
+        if (!filePath) return;
 
-          if (titleFromPath && titleFromPath.length > 3) {
-            const state = get({ subscribe });
-            const item = state.items.find((i) => i.url === url);
-            const needsTitleFallback =
-              item && (item.title === url || item.title.startsWith('http'));
+        const extension =
+          p.ext?.toString?.()?.toLowerCase?.() ||
+          filePath.split('.').pop()?.toLowerCase() ||
+          'mp4';
 
-            if (needsTitleFallback) {
-              logs.info('queue', `Using title from destination as fallback: "${titleFromPath}"`);
-              update((state) => ({
-                ...state,
-                items: state.items.map((i) =>
-                  i.url === url ? { ...i, title: titleFromPath.slice(0, 200) } : i
-                ),
-              }));
-            }
+        let filesize =
+          typeof p.size_bytes === 'number' && Number.isFinite(p.size_bytes)
+            ? Math.max(0, Math.floor(p.size_bytes))
+            : 0;
+
+        // On desktop, stat() is reliable; on Android prefer native-provided size.
+        if (!isAndroid() && (!filesize || filesize <= 0)) {
+          try {
+            const fileStat = await stat(filePath);
+            filesize = fileStat.size;
+          } catch (err) {
+            logs.warn('queue', `Could not get file size: ${err}`);
           }
         }
-      } else if (message.includes('[Merger]') || message.includes('Merging')) {
-        statusMessage = translate('downloads.status.merging');
-        isPostProcessing = true;
-      } else if (message.includes('[ExtractAudio]')) {
-        statusMessage = translate('downloads.status.extractingAudio');
-        isPostProcessing = true;
-      } else if (message.includes('[EmbedThumbnail]')) {
-        statusMessage = translate('downloads.status.embeddingThumbnail');
-        isPostProcessing = true;
-      } else if (message.includes('[Metadata]') || message.includes('[Mutagen]')) {
-        statusMessage = translate('downloads.status.writingMetadata');
-        isPostProcessing = true;
-      } else if (message.includes('[ffmpeg]')) {
-        statusMessage = translate('downloads.status.processing');
-        isPostProcessing = true;
-      } else if (message.includes('%')) {
-        const state = get({ subscribe });
-        const item = state.items.find((i) => i.url === url);
-        const isAudio = item?.options?.downloadMode === 'audio';
-        statusMessage = isAudio
-          ? translate('downloads.status.downloadingAudio')
-          : translate('downloads.status.downloading');
-      }
 
-      let speed = '';
-      let eta = '';
-      let rawProgress = -1;
-
-      const aria2InlineMatch = message.match(
-        /\[#\w+\s+[\d.]+\w+\/[\d.]+\w+\((\d+)%\)\s*CN:\d+\s+DL:([\d.]+\w+)(?:\s+ETA:(\S+))?\]/
-      );
-
-      if (aria2InlineMatch) {
-        rawProgress = parseFloat(aria2InlineMatch[1]);
-        speed = aria2InlineMatch[2] ? aria2InlineMatch[2] + '/s' : '';
-        const etaRaw = aria2InlineMatch[3] || '';
-        eta = etaRaw === 'NA' || etaRaw === '' ? '' : etaRaw;
-        if (!statusMessage) {
-          const state = get({ subscribe });
-          const item = state.items.find((i) => i.url === url);
-          const isAudio = item?.options?.downloadMode === 'audio';
-          statusMessage = isAudio
-            ? translate('downloads.status.downloadingAudio')
-            : translate('downloads.status.downloading');
-        }
-      } else {
-        const match = message.match(/^\s*(\d+\.?\d*)%\s+(\S*)\s*(.*)/);
-        if (match && !message.includes('[debug]') && !message.includes('[info]')) {
-          rawProgress = parseFloat(match[1]);
-          speed = match[2] || '';
-          eta = match[3] || '';
-        } else {
-          const aria2TrailingMatch = message.match(/\[#\w+[^\]]*\](\d+\.?\d*)%\s+(\S+)\s*(.*)/);
-          if (aria2TrailingMatch) {
-            rawProgress = parseFloat(aria2TrailingMatch[1]);
-            speed = aria2TrailingMatch[2] ? aria2TrailingMatch[2].replace(/^DL:/, '') : '';
-            if (speed && !speed.includes('/s')) speed += '/s';
-            const etaRaw = aria2TrailingMatch[3] || '';
-            eta = etaRaw === 'NA' || etaRaw === '' ? '' : etaRaw;
-            if (!statusMessage) {
-              const state = get({ subscribe });
-              const item = state.items.find((i) => i.url === url);
-              const isAudio = item?.options?.downloadMode === 'audio';
-              statusMessage = isAudio
-                ? translate('downloads.status.downloadingAudio')
-                : translate('downloads.status.downloading');
-            }
-          } else {
-            const luxMatch = message.match(
-              /[\d.]+\s*\w*\s*\/\s*[\d.]+\s*\w*\s*\[.*?\]\s*([\d.]+)%\s*([\d.]+\s*\w+\/s)?\s*(\d+m\d+s)?/
-            );
-            if (luxMatch) {
-              rawProgress = parseFloat(luxMatch[1]);
-              speed = luxMatch[2]?.replace(/\s+/g, '') || '';
-              eta = luxMatch[3]?.replace(/(\d+)m(\d+)s/, '$1:$2') || '';
-              if (!statusMessage) {
-                const state = get({ subscribe });
-                const item = state.items.find((i) => i.url === url);
-                const isAudio = item?.options?.downloadMode === 'audio';
-                statusMessage = isAudio
-                  ? translate('downloads.status.downloadingAudio')
-                  : translate('downloads.status.downloading');
-              }
-            }
-          }
-        }
-      }
-
-      if (message.includes('Merging video parts')) {
-        statusMessage = translate('downloads.status.merging');
         update((state) => ({
           ...state,
           items: state.items.map((item) =>
-            item.url === url
-              ? {
-                  ...item,
-                  status: 'processing' as DownloadStatus,
-                  statusMessage,
-                  progress: 95,
-                }
-              : item
+            item.id === itemId ? { ...item, filePath, extension, filesize } : item
           ),
         }));
         return;
       }
 
-      if (rawProgress >= 0 && rawProgress <= 100) {
-        if (
-          speed.toLowerCase() === 'na' ||
-          speed.toLowerCase() === 'unknown' ||
-          speed === 'N/A' ||
-          speed === '~'
-        ) {
-          speed = '';
-        }
-        if (
-          eta.toLowerCase() === 'na' ||
-          eta.toLowerCase() === 'unknown' ||
-          eta === 'N/A' ||
-          eta === '~'
-        ) {
-          eta = '';
-        }
-
-        const currentMax = maxProgressMap.get(url) || 0;
-
-        let cappedProgress: number;
-        let newStatus: DownloadStatus = 'downloading';
-        let newStatusMessage = statusMessage;
-
-        if (rawProgress >= 99.9) {
-          cappedProgress = 95;
-          newStatus = 'processing';
-          newStatusMessage = translate('downloads.status.processing');
-          speed = '';
-          eta = '';
-          logs.debug('queue', `Download at ${rawProgress}%, entering processing phase`);
-        } else {
-          cappedProgress = Math.min(rawProgress * 0.9, 90);
-        }
-
-        const progress = Math.max(cappedProgress, currentMax);
-        if (cappedProgress > currentMax) {
-          maxProgressMap.set(url, cappedProgress);
-        }
-
-        const state = get({ subscribe });
-        const currentItem = state.items.find((i) => i.url === url);
-
+      if (p.type === 'Failed') {
         update((state) => ({
           ...state,
           items: state.items.map((item) =>
-            item.url === url
-              ? {
-                  ...item,
-                  progress,
-                  speed: speed || (newStatus === 'processing' ? '' : currentItem?.speed || ''),
-                  eta: eta || (newStatus === 'processing' ? '' : currentItem?.eta || ''),
-                  status: newStatus,
-                  statusMessage: newStatusMessage || item.statusMessage,
-                }
+            item.id === itemId
+              ? { ...item, status: 'failed' as DownloadStatus, error: p.error || 'Download failed' }
               : item
           ),
         }));
+        jobWaiters.get(jobId)?.reject(p.error || 'Download failed');
+        jobWaiters.delete(jobId);
+        jobToItemId.delete(jobId);
+        // Clear throttling state for this job.
+        for (const key of progressThrottleState.keys()) {
+          if (key.startsWith(`${jobId}:`)) progressThrottleState.delete(key);
+        }
 
-        emit('download-progress-parsed', {
-          url,
-          progress,
-          speed: speed || (newStatus === 'processing' ? '' : currentItem?.speed || ''),
-          eta: eta || (newStatus === 'processing' ? '' : currentItem?.eta || ''),
-          status: newStatus,
-          statusMessage: newStatusMessage,
-        });
-      } else if (isPostProcessing) {
-        const currentMax = maxProgressMap.get(url) || 0;
-        const postProcessProgress = Math.max(95, currentMax);
-        maxProgressMap.set(url, postProcessProgress);
+        if (url) maxProgressMap.delete(url);
+        lastJobStatusMessage.delete(jobId);
 
-        update((state) => ({
-          ...state,
-          items: state.items.map((item) =>
-            item.url === url
-              ? {
-                  ...item,
-                  progress: postProcessProgress,
-                  speed: '',
-                  eta: '',
-                  status: 'processing' as DownloadStatus,
-                  statusMessage: statusMessage || item.statusMessage,
-                }
-              : item
-          ),
-        }));
-
-        emit('download-progress-parsed', {
-          url,
-          progress: postProcessProgress,
-          speed: '',
-          eta: '',
-          status: 'processing' as DownloadStatus,
-          statusMessage,
-        });
-      } else {
-        update((state) => ({
-          ...state,
-          items: state.items.map((item) =>
-            item.url === url
-              ? {
-                  ...item,
-                  statusMessage: statusMessage || item.statusMessage,
-                }
-              : item
-          ),
-        }));
+        for (const key of logThrottleState.keys()) {
+          if (key.startsWith(`${jobId}:`)) logThrottleState.delete(key);
+        }
+        return;
       }
-    });
 
-    unlistenFilePath = await listen<{ url: string; file_path: string }>(
-      'download-file-path',
-      async (event) => {
-        const { url, file_path } = event.payload;
-        logs.info('queue', `Received file path event: ${file_path}`);
-        console.log('Received file path for', url, ':', file_path);
+      if (p.type === 'Cancelled') {
+        jobWaiters.get(jobId)?.reject('cancelled');
+        jobWaiters.delete(jobId);
+        jobToItemId.delete(jobId);
+        for (const key of progressThrottleState.keys()) {
+          if (key.startsWith(`${jobId}:`)) progressThrottleState.delete(key);
+        }
 
-        const extension = file_path.split('.').pop()?.toLowerCase() || 'mp4';
+        if (url) maxProgressMap.delete(url);
+        lastJobStatusMessage.delete(jobId);
 
-        let filesize = 0;
-        try {
-          const fileStat = await stat(file_path);
-          filesize = fileStat.size;
-          console.log('File size:', filesize);
-        } catch (err) {
-          console.warn('Could not get file size:', err);
+        for (const key of logThrottleState.keys()) {
+          if (key.startsWith(`${jobId}:`)) logThrottleState.delete(key);
+        }
+        return;
+      }
+
+      if (p.type === 'Finished') {
+        jobWaiters.get(jobId)?.resolve();
+        jobWaiters.delete(jobId);
+        jobToItemId.delete(jobId);
+
+        for (const key of progressThrottleState.keys()) {
+          if (key.startsWith(`${jobId}:`)) progressThrottleState.delete(key);
+        }
+
+        if (url) maxProgressMap.delete(url);
+        lastJobStatusMessage.delete(jobId);
+
+        for (const key of logThrottleState.keys()) {
+          if (key.startsWith(`${jobId}:`)) logThrottleState.delete(key);
         }
 
         update((state) => ({
           ...state,
           items: state.items.map((item) =>
-            item.url === url ? { ...item, filePath: file_path, extension, filesize } : item
+            item.id === itemId ? { ...item, progress: 100 } : item
           ),
         }));
+        return;
       }
-    );
+    };
+
+    if (isAndroid()) {
+      const domHandler = (e: Event) => {
+        const detail = (e as CustomEvent).detail;
+        void onJobEventPayload(detail);
+      };
+      window.addEventListener('job-event', domHandler as EventListener);
+      unlisten = () => window.removeEventListener('job-event', domHandler as EventListener);
+    } else {
+      unlisten = await listen<JobEvent>('job-event', async (event) => {
+        await onJobEventPayload(event.payload);
+      });
+
+      if (!unlistenDownloadProgress) {
+        unlistenDownloadProgress = await listen<BackendDownloadProgress>(
+          'download-progress',
+          (event) => {
+            try {
+              onFileDownloadProgress(event.payload);
+            } catch (e) {
+              logs.debug('queue', `download-progress handler error: ${e}`);
+            }
+          }
+        );
+      }
+    }
   }
 
   async function processQueue() {
@@ -712,30 +904,90 @@ function createQueueStore() {
         ? { mode: 'none', customUrl: '', retryWithoutProxy: false }
         : proxyConfig;
 
-      logs.info('queue', `Invoking download_file command for ${pendingItem.title}`);
-
-      const result = await invoke<string>('download_file', {
-        url: url,
-        filename: pendingItem.title,
-        downloadPath: currentSettings.downloadPath || '',
-        proxyConfig: effectiveProxyConfig,
-        connections: currentSettings.aria2Connections,
-        splits: currentSettings.aria2Splits,
-        minSplitSize: currentSettings.aria2MinSplitSize,
-        speedLimit: currentSettings.downloadSpeedLimit,
-      });
-
-      logs.info('queue', `download_file returned: ${result}`);
-
-      const filePath = result;
-      const extension = filePath.split('.').pop()?.toLowerCase() || pendingItem.extension;
-
+      let filePath = '';
+      let extension = pendingItem.extension;
       let filesize = pendingItem.totalBytes || 0;
-      try {
-        const fileStat = await stat(filePath);
-        filesize = fileStat.size;
-      } catch (err) {
-        logs.warn('queue', `Could not get file size: ${err}`);
+
+      if (isAndroid()) {
+        await setupListener();
+
+        const initStart = Date.now();
+        await waitForAndroidYtDlp();
+        logs.debug('queue', `[Android] yt-dlp ready after ${Date.now() - initStart}ms (file download)`);
+
+        const androidJobSettings = {
+          format: 'best',
+          playlistFolder: null,
+          isAudioOnly: false,
+          aria2Connections: currentSettings.aria2Connections ?? 8,
+          aria2Splits: currentSettings.aria2Splits ?? 8,
+          aria2MinSplitSize: currentSettings.aria2MinSplitSize ?? '1M',
+          speedLimit: currentSettings.downloadSpeedLimit ?? 0,
+          downloadPath: currentSettings.downloadPath || null,
+          youtubePlayerClient: currentSettings.youtubePlayerClient || null,
+          // For direct file URLs we want a deterministic filename.
+          outputTemplate: pendingItem.title || 'download',
+          // Keep post-processing off for files.
+          embedThumbnail: false,
+          embedChapters: false,
+          embedSubtitles: false,
+          subtitleLanguages: null,
+          sponsorBlock: false,
+          sponsorBlockCategories: [],
+          clearMetadata: false,
+          remux: false,
+          convertToMp4: false,
+          clipRanges: null,
+        };
+
+        const jobId = startAndroidDownloadJob(url, androidJobSettings);
+        logs.info('queue', `Android file download job started: jobId=${jobId}`);
+
+        jobToItemId.set(jobId, itemId);
+        update((state) => ({
+          ...state,
+          items: state.items.map((i) => (i.id === itemId ? { ...i, jobId } : i)),
+        }));
+
+        await new Promise<void>((resolve, reject) => {
+          jobWaiters.set(jobId, { resolve, reject });
+        });
+
+        const stateAfter = get({ subscribe });
+        const completed = stateAfter.items.find((i) => i.id === itemId);
+        filePath = completed?.filePath || '';
+        extension = completed?.extension || extension;
+        filesize = completed?.filesize || filesize;
+      } else {
+        logs.info('queue', `Invoking download_file command for ${pendingItem.title}`);
+
+        const result = await invoke<string>('download_file', {
+          url: url,
+          filename: pendingItem.title,
+          downloadPath: currentSettings.downloadPath || '',
+          proxyConfig: effectiveProxyConfig,
+          connections: currentSettings.aria2Connections,
+          splits: currentSettings.aria2Splits,
+          minSplitSize: currentSettings.aria2MinSplitSize,
+          speedLimit: currentSettings.downloadSpeedLimit,
+        });
+
+        logs.info('queue', `download_file returned: ${result}`);
+
+        filePath = result;
+        extension = filePath.split('.').pop()?.toLowerCase() || pendingItem.extension;
+
+        filesize = pendingItem.totalBytes || 0;
+        try {
+          const fileStat = await stat(filePath);
+          filesize = fileStat.size;
+        } catch (err) {
+          logs.warn('queue', `Could not get file size: ${err}`);
+        }
+      }
+
+      if (!filePath) {
+        throw new Error('Download completed but no output file was reported');
       }
 
       logs.info('queue', `File download completed: ${filePath}`);
@@ -890,16 +1142,26 @@ function createQueueStore() {
     );
 
     try {
-      logs.debug('queue', `Fetching video info before download for: ${url.slice(0, 50)}...`);
-      try {
-        await fetchVideoInfo(
-          itemId,
-          url,
-          pendingItem.options?.cookiesFromBrowser,
-          pendingItem.options?.customCookies
-        );
-      } catch (infoError) {
-        logs.warn('queue', `Failed to fetch video info (continuing with download): ${infoError}`);
+      // Skip fetching video info if essential data is already present.
+      const hasEssentialInfo = pendingItem.title && pendingItem.title !== url && pendingItem.duration > 0;
+
+      // On Android, fetch metadata after starting the job.
+      if (!isAndroid()) {
+        if (!hasEssentialInfo) {
+          logs.debug('queue', `Fetching video info before download for: ${url.slice(0, 50)}...`);
+          try {
+            await fetchVideoInfo(
+              itemId,
+              url,
+              pendingItem.options?.cookiesFromBrowser,
+              pendingItem.options?.customCookies
+            );
+          } catch (infoError) {
+            logs.warn('queue', `Failed to fetch video info (continuing with download): ${infoError}`);
+          }
+        } else {
+          logs.debug('queue', `Skipping video info fetch (already have info): ${pendingItem.title}`);
+        }
       }
 
       let filePath = '';
@@ -907,7 +1169,9 @@ function createQueueStore() {
       let extension = pendingItem.options?.downloadMode === 'audio' ? 'mp3' : 'mp4';
 
       if (isAndroid()) {
+        const initStart = Date.now();
         await waitForAndroidYtDlp();
+        logs.debug('queue', `[Android] yt-dlp ready after ${Date.now() - initStart}ms`);
 
         const downloadMode = pendingItem.options?.downloadMode ?? 'auto';
         const videoQuality = pendingItem.options?.videoQuality ?? '';
@@ -933,15 +1197,6 @@ function createQueueStore() {
           pendingItem.playlistTitle && pendingItem.usePlaylistFolder !== false
             ? pendingItem.playlistTitle
             : null;
-
-        console.log(
-          'Starting Android download:',
-          url,
-          'format:',
-          format,
-          'playlistFolder:',
-          playlistFolder
-        );
         logs.info(
           'queue',
           `Starting Android download: ${url} (format: ${format}, isAudioOnly: ${isAudioOnly}${playlistFolder ? `, folder: ${playlistFolder}` : ''})`
@@ -955,83 +1210,90 @@ function createQueueStore() {
           logs.info('queue', `[Android] Using separate audio path: ${androidDownloadPath}`);
         }
 
-        const androidSettings: AndroidDownloadSettings = {
-          aria2Connections: currentSettings.aria2Connections,
-          aria2Splits: currentSettings.aria2Splits,
-          aria2MinSplitSize: currentSettings.aria2MinSplitSize,
-          speedLimit: currentSettings.downloadSpeedLimit,
-          downloadPath: androidDownloadPath,
-        };
+        // Check if ytdlp advanced settings override global aria2 settings (same as desktop path)
+        const ytdlpAdvanced = currentSettings.ytdlpAdvanced;
+        const useYtdlpAria2Override = ytdlpAdvanced?.aria2OverrideGlobal ?? false;
+        
+        // Determine aria2 settings (use yt-dlp specific if override is enabled)
+        const aria2Connections = useYtdlpAria2Override
+          ? (ytdlpAdvanced?.aria2YtdlpConnections ?? 8)
+          : (currentSettings.aria2Connections ?? 8);
+        const aria2Splits = useYtdlpAria2Override
+          ? (ytdlpAdvanced?.aria2YtdlpSplits ?? 8)
+          : (currentSettings.aria2Splits ?? 8);
+        const aria2MinSplitSize = useYtdlpAria2Override
+          ? (ytdlpAdvanced?.aria2YtdlpMinSplitSize ?? '1M')
+          : (currentSettings.aria2MinSplitSize ?? '1M');
 
-        const result = await downloadOnAndroid(
-          url,
+        // Build SponsorBlock categories array from individual flags
+        const sponsorBlockCategories: string[] = [];
+        if (pendingItem.options?.sponsorBlock ?? currentSettings.sponsorBlock) {
+          if (pendingItem.options?.sponsorBlockSkipSponsors ?? currentSettings.sponsorBlockSkipSponsors ?? true) {
+            sponsorBlockCategories.push('sponsor');
+          }
+          if (pendingItem.options?.sponsorBlockSkipIntros ?? currentSettings.sponsorBlockSkipIntros ?? false) {
+            sponsorBlockCategories.push('intro', 'outro');
+          }
+          if (pendingItem.options?.sponsorBlockSkipSelfPromo ?? currentSettings.sponsorBlockSkipSelfPromo ?? false) {
+            sponsorBlockCategories.push('selfpromo');
+          }
+          if (pendingItem.options?.sponsorBlockSkipInteraction ?? currentSettings.sponsorBlockSkipInteraction ?? false) {
+            sponsorBlockCategories.push('interaction');
+          }
+        }
+
+        const androidJobSettings: AndroidYtDlpJobSettings = {
           format,
-          (progress: AndroidProgress) => {
-            const rawProgress = Math.max(0, progress.progress);
-
-            let cappedProgress: number;
-            if (rawProgress >= 99.9) {
-              cappedProgress = 95;
-            } else if (rawProgress >= 90) {
-              cappedProgress = 85 + ((rawProgress - 90) / 10) * 10;
-            } else {
-              cappedProgress = ((rawProgress * 0.85) / 90) * 90;
-            }
-
-            const currentMax = maxProgressMap.get(url) || 0;
-            const effectiveProgress = Math.max(cappedProgress, currentMax);
-            if (cappedProgress > currentMax) {
-              maxProgressMap.set(url, cappedProgress);
-            }
-
-            let statusMessage = '';
-            const line = progress.line || '';
-            if (line.includes('[ExtractAudio]') || line.includes('[ffmpeg]')) {
-              statusMessage = 'Converting...';
-            } else if (line.includes('[download]') && !line.includes('Destination')) {
-              statusMessage = 'Downloading...';
-            } else if (line.includes('[Merger]')) {
-              statusMessage = 'Merging...';
-            }
-
-            update((state) => ({
-              ...state,
-              items: state.items.map((item) =>
-                item.url === url
-                  ? {
-                      ...item,
-                      progress: effectiveProgress,
-                      eta: progress.etaSeconds > 0 ? `${progress.etaSeconds}s` : '',
-                      status: 'downloading' as DownloadStatus,
-                      statusMessage: statusMessage || item.statusMessage,
-                    }
-                  : item
-              ),
-            }));
-          },
           playlistFolder,
           isAudioOnly,
-          androidSettings
-        );
+          aria2Connections,
+          aria2Splits,
+          aria2MinSplitSize,
+          speedLimit: currentSettings.downloadSpeedLimit,
+          downloadPath: androidDownloadPath,
+          youtubePlayerClient: currentSettings.youtubePlayerClient ?? null,
+          outputTemplate: pendingItem.options?.outputTemplate || ytdlpAdvanced?.outputTemplate || null,
+          embedThumbnail: isAudioOnly ? (pendingItem.options?.embedThumbnail ?? currentSettings.embedThumbnail) : false,
+          embedChapters: pendingItem.options?.chapters ?? currentSettings.chapters,
+          embedSubtitles: pendingItem.options?.embedSubtitles ?? currentSettings.embedSubtitles,
+          subtitleLanguages: pendingItem.options?.subtitleLanguages ?? currentSettings.subtitleLanguages ?? 'en,ru',
+          sponsorBlock: sponsorBlockCategories.length > 0,
+          sponsorBlockCategories,
+          clearMetadata: pendingItem.options?.clearMetadata ?? false,
+          remux: pendingItem.options?.remux ?? true,
+          convertToMp4: pendingItem.options?.convertToMp4 ?? false,
+          clipRanges: pendingItem.options?.clipRanges ?? null,
+        };
 
-        console.log('Android download result:', result);
-        logs.info(
-          'queue',
-          `Android download result: success=${result.success}, exitCode=${result.exitCode}, filePath=${result.filePath}`
-        );
+        const jobId = startAndroidDownloadJob(url, androidJobSettings);
+        logs.info('queue', `Android download job started: jobId=${jobId}`);
 
-        if (result.filePath) {
-          filePath = result.filePath;
-          extension = filePath.split('.').pop()?.toLowerCase() || extension;
-        }
-        if (result.fileSize) {
-          filesize = result.fileSize;
+        if (!hasEssentialInfo) {
+          void fetchVideoInfo(
+            itemId,
+            url,
+            pendingItem.options?.cookiesFromBrowser,
+            pendingItem.options?.customCookies
+          ).catch((infoError) => {
+            logs.debug('queue', `[Android] Video info fetch (post-start) failed: ${infoError}`);
+          });
         }
 
-        if (!result.success) {
-          logs.error('queue', `Android download failed: ${result.error || 'Unknown error'}`);
-          throw new Error(result.error || 'Download failed');
-        }
+        jobToItemId.set(jobId, itemId);
+        update((state) => ({
+          ...state,
+          items: state.items.map((i) => (i.id === itemId ? { ...i, jobId } : i)),
+        }));
+
+        await new Promise<void>((resolve, reject) => {
+          jobWaiters.set(jobId, { resolve, reject });
+        });
+
+        const stateAfter = get({ subscribe });
+        const completed = stateAfter.items.find((i) => i.id === itemId);
+        filePath = completed?.filePath || '';
+        extension = completed?.extension || extension;
+        filesize = completed?.filesize || 0;
       } else {
         const currentSettings = getSettings();
         const isAudioDownload = pendingItem.options?.downloadMode === 'audio';
@@ -1054,129 +1316,127 @@ function createQueueStore() {
 
         const proxyConfig = getProxyConfig();
 
-        const useLux = pendingItem.processor === 'lux';
-        const depsState = get(deps);
+        logs.info('queue', `Starting download job for: ${url}`);
 
-        if (useLux && !depsState.lux?.installed) {
-          logs.warn('queue', 'Lux selected but not installed, falling back to yt-dlp');
-          toast.warning('Lux not installed, using yt-dlp instead');
-          update((state) => ({
-            ...state,
-            items: state.items.map((item) =>
-              item.id === itemId ? { ...item, processor: 'ytdlp' as ProcessorType } : item
-            ),
-          }));
-        }
+        // Check if ytdlp advanced settings override global aria2 settings
+        const ytdlpAdvanced = currentSettings.ytdlpAdvanced;
+        const useYtdlpAria2Override = ytdlpAdvanced?.aria2OverrideGlobal ?? false;
 
-        const canUseLux = useLux && depsState.lux?.installed;
+        // Determine aria2 settings (use yt-dlp specific if override is enabled)
+        const aria2Connections = useYtdlpAria2Override
+          ? (ytdlpAdvanced?.aria2YtdlpConnections ?? 8)
+          : (currentSettings.aria2Connections ?? 8);
+        const aria2Splits = useYtdlpAria2Override
+          ? (ytdlpAdvanced?.aria2YtdlpSplits ?? 8)
+          : (currentSettings.aria2Splits ?? 8);
+        const aria2MinSplitSize = useYtdlpAria2Override
+          ? (ytdlpAdvanced?.aria2YtdlpMinSplitSize ?? '1M')
+          : (currentSettings.aria2MinSplitSize ?? '1M');
+        const aria2DisableIpv6 = useYtdlpAria2Override
+          ? (ytdlpAdvanced?.aria2YtdlpDisableIPv6 ?? true)
+          : (currentSettings.aria2DisableIPv6 ?? true);
+        const aria2CustomArgs = useYtdlpAria2Override
+          ? (ytdlpAdvanced?.aria2YtdlpCustomArgs ?? '')
+          : (currentSettings.aria2CustomArgs ?? '');
 
-        let downloadPromise: Promise<string>;
+        // Build custom args from advanced settings
+        const downloadCustomArgs = ytdlpAdvanced?.downloadCustomArgs ?? '';
+        const concurrentFragments = ytdlpAdvanced?.downloadConcurrentFragments ?? 1;
+        const retries = ytdlpAdvanced?.downloadRetries ?? 10;
+        const fragmentRetries = ytdlpAdvanced?.downloadFragmentRetries ?? 10;
 
-        if (canUseLux) {
-          logs.info('queue', `Using LUX backend for: ${url}`);
-
-          let luxFormatId = pendingItem.options?.videoQuality;
-
-          if (
-            luxFormatId &&
-            (luxFormatId.includes('+') || // Format merging like "bestvideo+bestaudio"
-              luxFormatId.includes('/') || // Fallback like "best/bestvideo+bestaudio"
-              luxFormatId === 'bestvideo' ||
-              luxFormatId === 'bestaudio' ||
-              luxFormatId === 'best' ||
-              luxFormatId === 'max')
-          ) {
-            luxFormatId = '';
-            logs.info('queue', `Converted yt-dlp format string to lux auto-select`);
-          }
-
-          const luxCookies = pendingItem.options?.cookiesFromBrowser === 'custom' 
-            ? (pendingItem.options?.customCookies ?? '') 
-            : '';
-
-          downloadPromise = invoke<string>('lux_download_video', {
-            url: url,
-            formatId: luxFormatId || '',
-            downloadPath: downloadPath,
-            customCookies: luxCookies,
-            proxyConfig: proxyConfig,
-            multiThread: true,
-            threadCount: currentSettings.aria2Connections ?? 8,
-          });
-        } else {
-          logs.info('queue', `Using yt-dlp backend for: ${url}`);
-          downloadPromise = invoke<string>('download_video', {
-            url: url,
-            videoQuality: pendingItem.options?.videoQuality ?? 'max',
-            downloadMode: pendingItem.options?.downloadMode ?? 'auto',
-            audioQuality: pendingItem.options?.audioQuality ?? 'best',
-            convertToMp4: pendingItem.options?.convertToMp4 ?? false,
-            remux: pendingItem.options?.remux ?? true,
-            clearMetadata: pendingItem.options?.clearMetadata ?? false,
-            useAria2: pendingItem.options?.useAria2 ?? currentSettings.useAria2 ?? true,
-            aria2Connections: currentSettings.aria2Connections,
-            aria2Splits: currentSettings.aria2Splits,
-            aria2MinSplitSize: currentSettings.aria2MinSplitSize,
-            aria2DisableIpv6: currentSettings.aria2DisableIPv6 ?? true,
-            aria2CustomArgs: currentSettings.aria2CustomArgs ?? '',
-            noPlaylist: pendingItem.options?.ignoreMixes ?? true,
-            cookiesFromBrowser: pendingItem.options?.cookiesFromBrowser ?? '',
-            customCookies: pendingItem.options?.customCookies ?? '',
-            downloadPath: downloadPath,
-            embedThumbnail:
-              isAudioDownload &&
-              (pendingItem.options?.embedThumbnail ?? currentSettings.embedThumbnail),
-            thumbnailUrlForEmbed: pendingItem.thumbnail || '',
-            playlistTitle: playlistTitle,
-            proxyConfig: proxyConfig,
-            sponsorBlock: pendingItem.options?.sponsorBlock ?? currentSettings.sponsorBlock,
-            chapters: pendingItem.options?.chapters ?? currentSettings.chapters,
-            embedSubtitles: pendingItem.options?.embedSubtitles ?? currentSettings.embedSubtitles,
-            subtitleLanguages:
-              pendingItem.options?.subtitleLanguages ??
-              currentSettings.subtitleLanguages ??
-              'en,ru',
-            downloadSpeedLimit: currentSettings.downloadSpeedLimit,
-            youtubePlayerClient: currentSettings.youtubePlayerClient,
-          });
-        }
+        const downloadPromise = invoke<string>('download_video', {
+          url: url,
+          videoQuality: pendingItem.options?.videoQuality ?? 'max',
+          downloadMode: pendingItem.options?.downloadMode ?? 'auto',
+          audioQuality: pendingItem.options?.audioQuality ?? 'best',
+          convertToMp4: pendingItem.options?.convertToMp4 ?? false,
+          remux: pendingItem.options?.remux ?? true,
+          clearMetadata: pendingItem.options?.clearMetadata ?? false,
+          useAria2: pendingItem.options?.useAria2 ?? currentSettings.useAria2 ?? true,
+          aria2Connections: aria2Connections,
+          aria2Splits: aria2Splits,
+          aria2MinSplitSize: aria2MinSplitSize,
+          aria2DisableIpv6: aria2DisableIpv6,
+          aria2CustomArgs: aria2CustomArgs,
+          noPlaylist: pendingItem.options?.ignoreMixes ?? true,
+          cookiesFromBrowser: pendingItem.options?.cookiesFromBrowser ?? '',
+          customCookies: pendingItem.options?.customCookies ?? '',
+          downloadPath: downloadPath,
+          embedThumbnail:
+            isAudioDownload &&
+            (pendingItem.options?.embedThumbnail ?? currentSettings.embedThumbnail),
+          thumbnailUrlForEmbed: pendingItem.thumbnail || '',
+          playlistTitle: playlistTitle,
+          proxyConfig: proxyConfig,
+          sponsorBlock: pendingItem.options?.sponsorBlock ?? currentSettings.sponsorBlock,
+          sponsorBlockSkipSponsors:
+            pendingItem.options?.sponsorBlockSkipSponsors ??
+            currentSettings.sponsorBlockSkipSponsors ??
+            true,
+          sponsorBlockSkipIntros:
+            pendingItem.options?.sponsorBlockSkipIntros ??
+            currentSettings.sponsorBlockSkipIntros ??
+            false,
+          sponsorBlockSkipSelfPromo:
+            pendingItem.options?.sponsorBlockSkipSelfPromo ??
+            currentSettings.sponsorBlockSkipSelfPromo ??
+            false,
+          sponsorBlockSkipInteraction:
+            pendingItem.options?.sponsorBlockSkipInteraction ??
+            currentSettings.sponsorBlockSkipInteraction ??
+            false,
+          chapters: pendingItem.options?.chapters ?? currentSettings.chapters,
+          embedSubtitles: pendingItem.options?.embedSubtitles ?? currentSettings.embedSubtitles,
+          subtitleLanguages:
+            pendingItem.options?.subtitleLanguages ?? currentSettings.subtitleLanguages ?? 'en,ru',
+          downloadSpeedLimit: currentSettings.downloadSpeedLimit,
+          youtubePlayerClient: currentSettings.youtubePlayerClient,
+          // Advanced yt-dlp options
+          concurrentFragments: concurrentFragments,
+          retries: retries,
+          fragmentRetries: fragmentRetries,
+          downloadCustomArgs: downloadCustomArgs,
+          postProcessCustomArgs: ytdlpAdvanced?.postProcessCustomArgs ?? '',
+          keepOriginal: ytdlpAdvanced?.postProcessKeepOriginal ?? false,
+          // Use per-item output template if provided, otherwise fall back to global settings
+          outputTemplate: pendingItem.options?.outputTemplate
+            ? pendingItem.options.outputTemplate
+            : ytdlpAdvanced?.outputTemplate ?? '',
+          restrictFilenames: ytdlpAdvanced?.outputRestrictFilenames ?? false,
+          windowsFilenames: ytdlpAdvanced?.outputWindowsFilenames ?? false,
+          // Clip ranges for partial downloads
+          clipRanges: pendingItem.options?.clipRanges ?? null,
+        });
 
         logs.info(
           'queue',
-          `Invoking ${canUseLux ? 'lux_download_video' : 'download_video'}: downloadMode=${pendingItem.options?.downloadMode}, isAudioDownload=${isAudioDownload}, downloadPath=${downloadPath}, playlistTitle=${playlistTitle}`
+          `Invoking download_video: downloadMode=${pendingItem.options?.downloadMode}, isAudioDownload=${isAudioDownload}, downloadPath=${downloadPath}, playlistTitle=${playlistTitle}`
         );
         logs.debug(
           'queue',
           `Full invoke params: videoQuality=${pendingItem.options?.videoQuality ?? 'max'}, remux=${pendingItem.options?.remux ?? true}, convertToMp4=${pendingItem.options?.convertToMp4 ?? false}`
         );
 
-        logs.debug('queue', `Awaiting ${canUseLux ? 'lux' : 'ytdlp'} download invoke...`);
-        const result = await downloadPromise;
-        logs.info('queue', `download_video returned: ${result?.slice(0, 100) || 'null'}`);
+        logs.debug('queue', 'Awaiting download invoke...');
+        const jobId = await downloadPromise;
+        logs.info('queue', `download job started: jobId=${jobId}`);
 
-        const isFilePath = result && (result.match(/^[A-Z]:\\/) || result.startsWith('/'));
-        filePath = isFilePath ? result : '';
+        jobToItemId.set(jobId, itemId);
+        update((state) => ({
+          ...state,
+          items: state.items.map((i) => (i.id === itemId ? { ...i, jobId } : i)),
+        }));
 
-        logs.debug('queue', `extractedPath=${filePath?.slice(0, 80) || 'none'}`);
+        await new Promise<void>((resolve, reject) => {
+          jobWaiters.set(jobId, { resolve, reject });
+        });
 
-        if (filePath) {
-          extension = filePath.split('.').pop()?.toLowerCase() || extension;
-
-          try {
-            const fileStat = await stat(filePath);
-            filesize = fileStat.size;
-            logs.debug('queue', `File stats retrieved: size=${filesize}, ext=${extension}`);
-            console.log('File stats:', { filePath, extension, filesize });
-          } catch (err) {
-            logs.warn('queue', `Could not get file size: ${err}`);
-            console.warn('Could not get file size:', err);
-          }
-        } else {
-          logs.warn(
-            'queue',
-            'No file path returned from download_video - download may have failed silently'
-          );
-        }
+        const stateAfter = get({ subscribe });
+        const completed = stateAfter.items.find((i) => i.id === itemId);
+        filePath = completed?.filePath || '';
+        extension = completed?.extension || extension;
+        filesize = completed?.filesize || 0;
       }
 
       update((state) => ({
@@ -1272,11 +1532,9 @@ function createQueueStore() {
     } catch (error) {
       if (cancelledIds.has(itemId)) {
         cancelledIds.delete(itemId);
-        console.log('Download was cancelled, skipping error handling');
+        logs.debug('queue', `Download was cancelled, skipping error handling: ${url}`);
         return;
       }
-
-      console.error('Download failed:', error);
       logs.error('queue', `Download failed for ${url}: ${error}`);
 
       appStats.trackDownload(0, false);
@@ -1345,9 +1603,6 @@ function createQueueStore() {
       ext?: string;
     }
 
-    const useLux = isLuxPreferred(url);
-    const depsState = get(deps);
-    const luxAvailable = depsState.lux?.installed ?? false;
     const currentSettings = getSettings();
 
     let lastError: unknown;
@@ -1356,59 +1611,22 @@ function createQueueStore() {
       try {
         let info: VideoInfo;
 
-        if (isAndroid()) {
-          await waitForAndroidYtDlp();
-          const playerClient = currentSettings.usePlayerClientForExtraction
-            ? currentSettings.youtubePlayerClient
-            : currentSettings.extractionPlayerClient || null;
-          const androidInfo = await getVideoInfoOnAndroid(url, playerClient);
-          if (!androidInfo) {
-            throw new Error('Failed to get video info from Android');
-          }
-          info = {
-            title: String(androidInfo.title || ''),
-            uploader: String(androidInfo.uploader || ''),
-            uploader_id: String(androidInfo.uploader_id || ''),
-            channel: String(androidInfo.channel || ''),
-            thumbnail: String(androidInfo.thumbnail || ''),
-            duration: Number(androidInfo.duration || 0),
-            ext: String(androidInfo.ext || ''),
-          };
-          logs.debug(
-            'queue',
-            `Android video info: title=${info.title}, uploader_id=${info.uploader_id}, duration=${info.duration}`
-          );
-        } else if (useLux && luxAvailable) {
-          const proxyConfig = getProxyConfig();
-          logs.debug('queue', `Using lux to fetch video info for: ${url}`);
-          info = await invoke<VideoInfo>('lux_get_video_info', {
-            url,
-            customCookies: customCookies ?? '',
-            proxyConfig: proxyConfig,
-            youtubePlayerClient: currentSettings.usePlayerClientForExtraction
-              ? currentSettings.youtubePlayerClient
-              : null,
-          });
-          logs.debug(
-            'queue',
-            `Lux video info (attempt ${attempt}): title=${info.title}, uploader=${info.uploader}`
-          );
-        } else {
-          const proxyConfig = getProxyConfig();
-          info = await invoke<VideoInfo>('get_video_info', {
-            url,
-            cookiesFromBrowser: cookiesFromBrowser ?? '',
-            customCookies: customCookies ?? '',
-            proxyConfig: proxyConfig,
-            youtubePlayerClient: currentSettings.usePlayerClientForExtraction
-              ? currentSettings.youtubePlayerClient
-              : null,
-          });
-          logs.debug(
-            'queue',
-            `Desktop video info (attempt ${attempt}): title=${info.title}, uploader=${info.uploader}, uploader_id=${info.uploader_id}`
-          );
-        }
+        const playerClient = currentSettings.usePlayerClientForExtraction
+          ? currentSettings.youtubePlayerClient
+          : currentSettings.extractionPlayerClient || null;
+
+        const proxyConfig = getProxyConfig();
+        info = await getVideoInfoBackend({
+          url,
+          cookiesFromBrowser: cookiesFromBrowser ?? '',
+          customCookies: customCookies ?? '',
+          proxyConfig,
+          youtubePlayerClient: playerClient,
+        });
+        logs.debug(
+          'queue',
+          `Video info (attempt ${attempt}): title=${info.title}, uploader=${info.uploader}`
+        );
 
         const isTwitter = /(?:twitter\.com|x\.com)/i.test(url);
         const authorDisplay =
@@ -1454,7 +1672,6 @@ function createQueueStore() {
       'queue',
       `All ${MAX_RETRIES} attempts to fetch video info failed for ${url}: ${lastError}`
     );
-    console.warn('Failed to fetch video info after retries:', lastError);
   }
 
   return {
@@ -1485,15 +1702,33 @@ function createQueueStore() {
         }));
 
         if (resetItems.length > 0) {
-          update((state) => ({
-            ...state,
-            items: [...resetItems, ...state.items],
-          }));
-          logs.info('queue', `Restored ${resetItems.length} queue items from storage`);
+          const currentState = get({ subscribe });
+          const existingUrls = new Set(
+            currentState.items
+              .filter((i) => i.status !== 'completed' && i.status !== 'failed')
+              .map((i) => i.url)
+          );
+          const uniqueResetItems = resetItems.filter((item) => !existingUrls.has(item.url));
 
-          saveQueue(resetItems);
+          if (uniqueResetItems.length < resetItems.length) {
+            logs.info(
+              'queue',
+              `Skipped ${resetItems.length - uniqueResetItems.length} duplicate items from storage`
+            );
+          }
 
-          processQueue();
+          if (uniqueResetItems.length > 0) {
+            const mergedItems = [...uniqueResetItems, ...currentState.items];
+            update((state) => ({
+              ...state,
+              items: mergedItems,
+            }));
+            logs.info('queue', `Restored ${uniqueResetItems.length} queue items from storage`);
+            saveQueue(mergedItems);
+            processQueue();
+          } else {
+            logs.info('queue', 'No valid queue items to restore');
+          }
         } else {
           logs.info('queue', 'No valid queue items to restore');
         }
@@ -1513,20 +1748,19 @@ function createQueueStore() {
       if (!isAndroid()) {
         const depsState = get(deps);
         const ytdlpInstalled = depsState.ytdlp?.installed ?? false;
+        const luxInstalled = depsState.lux?.installed ?? false;
         const ffmpegInstalled = depsState.ffmpeg?.installed ?? false;
 
-        if (!ytdlpInstalled || !ffmpegInstalled) {
+        if ((!ytdlpInstalled && !luxInstalled) || !ffmpegInstalled) {
           logs.warn(
             'queue',
-            `Missing dependencies: yt-dlp=${ytdlpInstalled}, ffmpeg=${ffmpegInstalled}`
+            `Missing dependencies: ytdlp=${ytdlpInstalled}, lux=${luxInstalled}, ffmpeg=${ffmpegInstalled}`
           );
 
-          if (!ytdlpInstalled && !ffmpegInstalled) {
-            toast.error(translate('settings.deps.missingBoth'));
-          } else if (!ytdlpInstalled) {
-            toast.error(translate('settings.deps.missingYtdlp'));
-          } else {
+          if (!ffmpegInstalled) {
             toast.error(translate('settings.deps.missingFfmpeg'));
+          } else {
+            toast.error('Missing backend: install yt-dlp or lux');
           }
 
           return null;
@@ -1538,7 +1772,7 @@ function createQueueStore() {
         (item) => item.url === url && item.status !== 'completed' && item.status !== 'failed'
       );
       if (existingItem) {
-        console.log('URL already in queue:', url);
+        logs.debug('queue', `URL already in queue: ${url}`);
         return null;
       }
 
@@ -1558,27 +1792,7 @@ function createQueueStore() {
 
       logs.info('queue', `Final downloadMode: ${finalOptions.downloadMode}`);
 
-      let processor: ProcessorType = 'ytdlp';
-      const processorSetting = currentSettings.defaultProcessor;
-
-      if (processorSetting === 'auto') {
-        processor = detectBackendForUrl(url);
-        logs.info('queue', `Auto-detected processor: ${processor} for URL: ${url.slice(0, 50)}...`);
-      } else if (processorSetting === 'lux') {
-        if (isLuxPreferred(url)) {
-          processor = 'lux';
-        } else {
-          logs.warn(
-            'queue',
-            `Lux selected but URL is not a Chinese platform, falling back to yt-dlp: ${url.slice(0, 50)}...`
-          );
-          processor = 'ytdlp';
-        }
-      } else {
-        processor = 'ytdlp';
-      }
-
-      logs.info('queue', `Using processor: ${processor} (setting: ${processorSetting})`);
+      logs.info('queue', 'Using backend auto-selection');
 
       const id = crypto.randomUUID();
       const prefetched = finalOptions?.prefetchedInfo;
@@ -1607,10 +1821,21 @@ function createQueueStore() {
         playlistIndex: playlistInfo?.playlistIndex,
         usePlaylistFolder: playlistInfo?.usePlaylistFolder,
         source: 'ytdlp',
-        processor,
       };
 
+      let wasAdded = false;
+
       update((state) => {
+        const alreadyExists = state.items.some(
+          (item) => item.url === url && item.status !== 'completed' && item.status !== 'failed'
+        );
+
+        if (alreadyExists) {
+          logs.info('queue', `Duplicate prevented (race condition): ${url}`);
+          return state;
+        }
+
+        wasAdded = true;
         const newItems = [...state.items, newItem];
         saveQueue(newItems);
         return {
@@ -1618,6 +1843,10 @@ function createQueueStore() {
           items: newItems,
         };
       });
+
+      if (!wasAdded) {
+        return null;
+      }
 
       processQueue();
 
@@ -1636,7 +1865,7 @@ function createQueueStore() {
           item.url === fileInfo.url && item.status !== 'completed' && item.status !== 'failed'
       );
       if (existingItem) {
-        console.log('URL already in queue:', fileInfo.url);
+        logs.debug('queue', `URL already in queue: ${fileInfo.url}`);
         return null;
       }
 
@@ -1666,10 +1895,22 @@ function createQueueStore() {
         mimeType: fileInfo.mimeType,
         totalBytes: fileInfo.size,
         downloadedBytes: 0,
-        processor: 'ytdlp',
       };
 
+      let wasAdded = false;
+
       update((state) => {
+        const alreadyExists = state.items.some(
+          (item) =>
+            item.url === fileInfo.url && item.status !== 'completed' && item.status !== 'failed'
+        );
+
+        if (alreadyExists) {
+          logs.info('queue', `Duplicate file prevented (race condition): ${fileInfo.url}`);
+          return state;
+        }
+
+        wasAdded = true;
         const newItems = [...state.items, newItem];
         saveQueue(newItems);
         return {
@@ -1677,6 +1918,10 @@ function createQueueStore() {
           items: newItems,
         };
       });
+
+      if (!wasAdded) {
+        return null;
+      }
 
       processQueue();
 
@@ -1698,6 +1943,10 @@ function createQueueStore() {
         downloadMode?: 'auto' | 'audio' | 'mute';
         videoQuality?: string;
         sponsorBlock?: boolean;
+        sponsorBlockSkipSponsors?: boolean;
+        sponsorBlockSkipIntros?: boolean;
+        sponsorBlockSkipSelfPromo?: boolean;
+        sponsorBlockSkipInteraction?: boolean;
         chapters?: boolean;
         embedSubtitles?: boolean;
         subtitleLanguages?: string;
@@ -1730,6 +1979,10 @@ function createQueueStore() {
           downloadMode: entry.downloadMode ?? globalOptions?.downloadMode,
           videoQuality: entry.videoQuality ?? globalOptions?.videoQuality,
           sponsorBlock: entry.sponsorBlock ?? globalOptions?.sponsorBlock,
+          sponsorBlockSkipSponsors: entry.sponsorBlockSkipSponsors ?? globalOptions?.sponsorBlockSkipSponsors,
+          sponsorBlockSkipIntros: entry.sponsorBlockSkipIntros ?? globalOptions?.sponsorBlockSkipIntros,
+          sponsorBlockSkipSelfPromo: entry.sponsorBlockSkipSelfPromo ?? globalOptions?.sponsorBlockSkipSelfPromo,
+          sponsorBlockSkipInteraction: entry.sponsorBlockSkipInteraction ?? globalOptions?.sponsorBlockSkipInteraction,
           chapters: entry.chapters ?? globalOptions?.chapters,
           embedSubtitles: entry.embedSubtitles ?? globalOptions?.embedSubtitles,
           subtitleLanguages: entry.subtitleLanguages ?? globalOptions?.subtitleLanguages,
@@ -1771,10 +2024,19 @@ function createQueueStore() {
 
       if (item && (item.status === 'downloading' || item.status === 'processing')) {
         try {
-          await invoke('cancel_download', { url: item.url });
-          console.log('Download cancelled:', item.url);
+          if (item.jobId) {
+            jobToItemId.delete(item.jobId);
+            jobWaiters.get(item.jobId)?.reject('cancelled');
+            jobWaiters.delete(item.jobId);
+            if (isAndroid()) {
+              cancelAndroidJob(item.jobId);
+            } else {
+              await invoke('jobs_cancel', { jobId: item.jobId });
+            }
+          }
+          logs.info('queue', `Download cancelled: ${item.url}`);
         } catch (err) {
-          console.warn('Failed to cancel download:', err);
+          logs.warn('queue', `Failed to cancel download: ${err}`);
         }
       }
 
@@ -1943,13 +2205,15 @@ function createQueueStore() {
         unlisten();
         unlisten = null;
       }
-      if (unlistenFilePath) {
-        unlistenFilePath();
-        unlistenFilePath = null;
+      if (unlistenDownloadProgress) {
+        unlistenDownloadProgress();
+        unlistenDownloadProgress = null;
       }
       maxProgressMap.clear();
       videoInfoPromises.clear();
       cancelledIds.clear();
+      jobToItemId.clear();
+      jobWaiters.clear();
     },
 
     cancelPlaylist(playlistId: string) {
@@ -1959,7 +2223,20 @@ function createQueueStore() {
       playlistItems.forEach((item) => {
         cancelledIds.add(item.id);
         if (item.status === 'downloading' || item.status === 'processing') {
-          invoke('cancel_download', { url: item.url }).catch(console.warn);
+          if (item.jobId) {
+            jobToItemId.delete(item.jobId);
+            jobWaiters.get(item.jobId)?.reject('cancelled');
+            jobWaiters.delete(item.jobId);
+            if (isAndroid()) {
+              try {
+                cancelAndroidJob(item.jobId);
+              } catch (e) {
+                console.warn(e);
+              }
+            } else {
+              invoke('jobs_cancel', { jobId: item.jobId }).catch(console.warn);
+            }
+          }
         }
       });
 

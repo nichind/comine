@@ -28,16 +28,18 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 14px;
+    height: 36px;
+    padding: 0 14px;
     font-size: 13px;
     font-weight: 500;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 20px;
+    border-radius: 10px;
     color: rgba(255, 255, 255, 0.7);
     cursor: pointer;
     transition: all 0.15s;
     white-space: nowrap;
+    box-sizing: border-box;
   }
 
   .chip:hover {

@@ -3,6 +3,7 @@
   import { isAndroid } from '$lib/utils/android';
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { convertFileSrc } from '@tauri-apps/api/core';
 
   let onDesktop = $state(false);
   let platform = $state<'windows' | 'macos' | 'linux' | 'android'>('windows');
@@ -71,6 +72,17 @@
     return `#${((1 << 24) | (r2 << 16) | (g2 << 8) | b2).toString(16).slice(1)}`;
   });
 
+  function isLocalFilePath(value: string): boolean {
+    return /^[A-Za-z]:[\\\//]/.test(value) || (value.startsWith('/') && !value.startsWith('//'))
+  }
+
+  function toAssetUrl(path: string): string {
+    if (!path) return '';
+    if (/^(https?:|asset:|blob:|data:)/i.test(path)) return path;
+    if (isLocalFilePath(path)) return convertFileSrc(path);
+    return path;
+  }
+
   let videoEl: HTMLVideoElement | null = $state(null);
 
   onMount(async () => {
@@ -115,7 +127,7 @@
   data-accent-style={accentStyle}
 >
   {#if effectiveBackgroundType === 'animated' && $settings.backgroundVideo}
-    {@const videoSrc = $settings.backgroundVideo}
+    {@const videoSrc = toAssetUrl($settings.backgroundVideo)}
     {@const opacity = onDesktop ? $settings.backgroundOpacity / 100 : 1}
     <video
       bind:this={videoEl}
@@ -130,7 +142,7 @@
     ></video>
     <div class="video-overlay"></div>
   {:else if effectiveBackgroundType === 'image' && $settings.backgroundImage}
-    {@const imageSrc = $settings.backgroundImage}
+    {@const imageSrc = toAssetUrl($settings.backgroundImage)}
     {@const opacity = onDesktop ? $settings.backgroundOpacity / 100 : 1}
     <div
       class="background-image"

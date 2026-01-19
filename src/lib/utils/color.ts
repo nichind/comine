@@ -4,14 +4,16 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
+import { LRUCache } from '$lib/utils/LRUCache';
+
 export interface RGB {
   r: number;
   g: number;
   b: number;
 }
 
-const COLOR_CACHE_MAX_SIZE = 100;
-const colorCache = new Map<string, RGB>();
+const COLOR_CACHE_MAX_SIZE = 500;
+const colorCache = new LRUCache<string, RGB>(COLOR_CACHE_MAX_SIZE);
 
 let sharedCanvas: HTMLCanvasElement | null = null;
 let sharedCtx: CanvasRenderingContext2D | null = null;
@@ -68,27 +70,12 @@ function getSharedCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingCon
 
 function setCacheEntry(key: string, value: RGB): void {
   const normalizedKey = normalizeThumbnailUrlForCache(key);
-  // If key exists, delete it first so it moves to the end (most recent)
-  if (colorCache.has(normalizedKey)) {
-    colorCache.delete(normalizedKey);
-  }
-  // Evict oldest entries if at capacity
-  while (colorCache.size >= COLOR_CACHE_MAX_SIZE) {
-    const oldestKey = colorCache.keys().next().value;
-    if (oldestKey) colorCache.delete(oldestKey);
-  }
   colorCache.set(normalizedKey, value);
 }
 
 function getCacheEntry(key: string): RGB | undefined {
   const normalizedKey = normalizeThumbnailUrlForCache(key);
-  const value = colorCache.get(normalizedKey);
-  if (value !== undefined) {
-    // Move to end (most recently used)
-    colorCache.delete(normalizedKey);
-    colorCache.set(normalizedKey, value);
-  }
-  return value;
+  return colorCache.get(normalizedKey);
 }
 
 export async function extractDominantColor(imageUrl: string): Promise<RGB | null> {
@@ -113,8 +100,6 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
     imageUrl.includes('ggpht.com') ||
     imageUrl.includes('googleusercontent.com');
 
-  // For YouTube thumbnails, use Rust backend to fetch and extract color
-  // (cross-origin restrictions prevent JS canvas extraction)
   if (isYouTubeThumbnail) {
     try {
       const rustColor = await invoke<[number, number, number]>('extract_thumbnail_color', {
@@ -130,6 +115,7 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
     }
     return null;
   }
+
 
   return new Promise((resolve) => {
     const img = new Image();

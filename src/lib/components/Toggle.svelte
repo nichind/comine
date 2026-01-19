@@ -22,6 +22,7 @@
   class:disabled
   class:checked
   onclick={toggle}
+  data-setting-activator="true"
   {disabled}
 >
   {#if label}
@@ -128,6 +129,33 @@
   .toggle-wrapper:not(.disabled):hover .slider,
   .toggle-wrapper:not(.disabled):active .slider {
     box-shadow: 0 0 0 4px var(--accent-alpha, rgba(99, 102, 241, 0.25));
+  }
+
+  @media (max-width: 640px) {
+    .toggle {
+      width: 44px;
+      height: 24px;
+      border-radius: 12px;
+    }
+
+    .slider {
+      width: 20px;
+      height: 20px;
+    }
+
+    .toggle-wrapper.checked .slider {
+      transform: translateX(20px);
+    }
+
+    .indicator {
+      width: 7px;
+      height: 7px;
+    }
+
+    .toggle-wrapper.checked .indicator {
+      width: 2px;
+      height: 7px;
+    }
   }
 
   .label {

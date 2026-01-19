@@ -21,7 +21,7 @@ export interface HistoryItem {
 }
 
 export type FilterType = 'all' | 'video' | 'audio' | 'image' | 'file';
-export type SortType = 'date' | 'name' | 'size';
+export type SortType = 'date' | 'name' | 'size' | 'duration' | 'format';
 
 interface HistoryState {
   items: HistoryItem[];
@@ -126,6 +126,28 @@ function createHistoryStore() {
       });
 
       return newItem;
+    },
+
+    /**
+     * Add multiple items directly to history, preserving their IDs and timestamps.
+     * Useful for imports and migrations.
+     */
+    async restore(newItems: HistoryItem[]) {
+      await ensureInitialized();
+      
+      update((state) => {
+        // Filter out any duplicates by ID just in case
+        const currentIds = new Set(state.items.map(i => i.id));
+        const uniqueNew = newItems.filter(i => !currentIds.has(i.id));
+        
+        // Merge and sort by date descending
+        const items = [...uniqueNew, ...state.items]
+          .sort((a, b) => b.downloadedAt - a.downloadedAt)
+          .slice(0, MAX_HISTORY_ITEMS);
+          
+        debouncedSave(items);
+        return { ...state, items };
+      });
     },
 
     remove(id: string) {
@@ -478,26 +500,3 @@ export const historyStats = derived(history, ($history) => {
     mostCommonFormat,
   };
 });
-
-export function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B';
-
-  const sizeUnit = get(settings).sizeUnit || 'binary';
-
-  const k = sizeUnit === 'binary' ? 1024 : 1000;
-  const sizes = sizeUnit === 'binary' ? ['B', 'KiB', 'MiB', 'GiB'] : ['B', 'kB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
-
-export function formatDuration(seconds: number): string {
-  if (seconds === 0) return '0:00';
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-
-  if (h > 0) {
-    return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  }
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}

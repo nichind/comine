@@ -174,12 +174,13 @@
 <style>
   .select-trigger {
     width: 100%;
-    padding: 10px 14px;
+    height: 36px;
+    padding: 0 14px;
     font-family: inherit;
     font-size: 13px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 6px;
+    border-radius: 8px; /* Matching buttons radius */
     color: white;
     cursor: pointer;
     outline: none;
@@ -189,6 +190,7 @@
     justify-content: space-between;
     gap: 8px;
     text-align: left;
+    box-sizing: border-box;
   }
 
   .select-trigger:hover:not(:disabled) {

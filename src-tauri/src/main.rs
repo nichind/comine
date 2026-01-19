@@ -21,11 +21,12 @@ fn main() {
         if std::env::var("GTK3_MODULES").is_err() {
             std::env::set_var("GTK3_MODULES", "");
         }
-        if std::env::var("GDK_BACKEND").is_err() {
-            std::env::set_var("GDK_BACKEND", "x11");
-        }
+        
         if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+        if std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").is_err() {
+            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
         }
     }
 

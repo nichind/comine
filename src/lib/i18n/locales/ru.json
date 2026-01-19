@@ -199,6 +199,9 @@
       "skipIntros": "Пропускать интро/аутро",
       "skipSelfPromo": "Пропускать самопиар",
       "skipInteraction": "Пропускать интерактивы",
+      "clipRange": "Фрагмент",
+      "resetToFull": "Сбросить на полное видео",
+      "fullVideo": "Полное видео",
       "embedSubs": "Встроить субтитры",
       "subLangsHint": "Коды языков (например: en,ru,de)",
       "subtitles": "Субтитры",
@@ -211,7 +214,15 @@
       "embedThumbnail": "Превью",
       "embedMetadata": "Метаданные",
       "hint": "Можно скачать сейчас с лучшим качеством или подождать загрузки форматов",
-      "title": "Выбор дорожек"
+      "title": "Выбор дорожек",
+      "outputFilename": "Имя файла",
+      "template": "Шаблон",
+      "customName": "Своё имя",
+      "templateHelp": "Справка по переменным шаблона",
+      "preview": "Превью",
+      "enterFilename": "Введите имя файла",
+      "clickToEdit": "Нажмите, чтобы изменить имя",
+      "extensionAuto": "Расширение выбирается автоматически на основе формата"
     },
     "blocks": {
       "general": "Основные",
@@ -220,15 +231,19 @@
       "embedThumbnail": "Встроить превью",
       "ytdlpDesc": "Универсальный загрузчик для 1000+ сайтов",
       "installFirst": "Установить в Настройках",
+      "basicOptions": "Основные настройки",
+      "basicOptionsDesc": "Авторизация, функции YouTube и загрузчик",
       "authentication": "Авторизация",
+      "authenticationHint": "Используйте куки браузера для возрастного или приватного контента",
       "youtubeOptions": "Настройки YouTube",
       "sponsorBlock": "Пропускать спонсоров (SponsorBlock)",
       "chapters": "Встроить главы",
       "embedSubtitles": "Встроить субтитры",
       "subtitleLanguages": "Языки субтитров",
       "downloader": "Загрузчик",
-      "aria2NotInstalled": "Установите aria2 в Настройках для ускорения загрузок",
-      "aria2Active": "aria2 будет использован для ускорения загрузок",
+      "aria2NotInstalled": "Установите aria2 в Настройках",
+      "aria2Active": "Ускоренная параллельная загрузка включена",
+      "aria2Hint": "Используйте aria2 для ускоренной загрузки",
       "luxDesc": "Оптимизирован для китайских видеоплатформ",
       "luxInfo": "Lux оптимизирован для китайских платформ. Используется автоматически при загрузке с поддерживаемых сайтов.",
       "advanced": "Дополнительно",
@@ -284,6 +299,13 @@
       "name": "По названию",
       "size": "По размеру"
     },
+    "sortDate": "Дата",
+    "sortName": "Название",
+    "sortSize": "Размер",
+    "filterAll": "Все",
+    "filterVideo": "Видео",
+    "filterAudio": "Музыка",
+    "filterImage": "Изображения",
     "sort": {
       "label": "Сортировка",
       "date": "Дата",
@@ -380,8 +402,12 @@
     },
     "processing": {
       "title": "Бэкенд загрузки",
+      "groups": {
+        "backend": "Бэкенд",
+        "youtube": "YouTube"
+      },
       "defaultProcessor": "Процессор по умолчанию",
-      "defaultProcessorDescription": "Выберите инструмент для обработки загрузок. Авто режим выбирает лучший для каждой ссылки.",
+      "defaultProcessorDescription": "Какой бэкенд использовать по умолчанию",
       "auto": "Авто (рекомендуется)",
       "autoDescription": "Автоматически выбирает лучший процессор для каждой ссылки. Использует cobalt для поддерживаемых сайтов (быстрее), yt-dlp для остальных.",
       "youtubePlayerClient": "Клиенты плеера YouTube",
@@ -645,6 +671,12 @@
     },
     "notifications": {
       "title": "Уведомления",
+      "groups": {
+        "general": "Общие",
+        "layout": "Расположение",
+        "style": "Стиль",
+        "timing": "Время"
+      },
       "enabled": "Включить всплывающие уведомления",
       "enabledTooltip": "Показывать уведомления при обнаружении медиа-ссылок в буфере обмена, когда приложение свёрнуто",
       "position": "Позиция уведомлений",
@@ -777,7 +809,9 @@
     "channel": "Канал",
     "youtubeVideo": "YouTube Видео",
     "youtubePlaylist": "YouTube Плейлист",
-    "youtubeChannel": "YouTube Канал"
+    "youtubeChannel": "YouTube Канал",
+    "enabled": "Включено",
+    "disabled": "Выключено"
   },
   "window": {
     "minimize": "Свернуть",
@@ -928,5 +962,80 @@
     "setupRequired": "Требуется настройка",
     "componentsNeeded": "компонентов",
     "installAll": "Установить всё"
+  },
+  "ytdlp": {
+    "advanced": {
+      "title": "Расширенные настройки",
+      "description": "Тонкая настройка yt-dlp для извлечения, загрузки и пост-обработки",
+      "enable": "Расширенный режим",
+      "enableHint": "Показать расширенные настройки yt-dlp",
+      "youtube": {
+        "title": "YouTube",
+        "description": "Настройки клиента плеера YouTube"
+      },
+      "extraction": {
+        "title": "Извлечение",
+        "description": "Настройка получения информации о видео",
+        "skipWebpage": "Пропустить загрузку страницы",
+        "skipWebpageHint": "Не загружать веб-страницу видео (быстрее, может пропустить метаданные)",
+        "skipConfigs": "Пропустить конфиги плеера",
+        "skipConfigsHint": "Не загружать конфигурационные файлы плеера (быстрее)",
+        "flatPlaylist": "Плоское извлечение плейлиста",
+        "flatPlaylistHint": "Извлечь плейлист без загрузки метаданных видео",
+        "noPlaylist": "Только одно видео",
+        "noPlaylistHint": "Извлечь только видео, не весь плейлист",
+        "customArgs": "Пользовательские аргументы извлечения",
+        "customArgsHint": "Дополнительные аргументы yt-dlp для извлечения (через пробел)"
+      },
+      "download": {
+        "title": "Загрузка",
+        "description": "Настройка процесса загрузки",
+        "noPlaylist": "Загрузить только видео",
+        "noPlaylistHint": "Загрузить только видео, игнорировать плейлист",
+        "concurrentFragments": "Параллельные фрагменты",
+        "concurrentFragmentsHint": "Загружать несколько фрагментов одновременно (для DASH/HLS)",
+        "retries": "Повторы",
+        "retriesHint": "Количество повторных попыток при ошибке",
+        "fragmentRetries": "Повторы фрагментов",
+        "fragmentRetriesHint": "Количество повторных попыток для каждого фрагмента",
+        "customArgs": "Пользовательские аргументы загрузки",
+        "customArgsHint": "Дополнительные аргументы yt-dlp для загрузки (через пробел)"
+      },
+      "aria2": {
+        "title": "Загрузчик aria2",
+        "description": "Настройка внешнего загрузчика aria2",
+        "notInstalled": "Установите aria2 в Настройках",
+        "disabled": "Включите aria2 в блоке yt-dlp",
+        "overrideGlobal": "Переопределить глобальные настройки aria2",
+        "overrideGlobalHint": "Использовать отдельные настройки aria2 вместо глобальных",
+        "usingGlobal": "Используются глобальные настройки aria2 из раздела Загрузки",
+        "minSplitSize": "Мин. размер части",
+        "customArgs": "Пользовательские аргументы aria2",
+        "customArgsHint": "Дополнительные аргументы aria2 (без aria2c:)",
+        "fallbackToNative": "Переключиться на встроенный загрузчик",
+        "fallbackToNativeHint": "Использовать встроенный загрузчик yt-dlp при ошибке aria2"
+      },
+      "postProcess": {
+        "title": "Пост-обработка",
+        "description": "Настройка действий после загрузки",
+        "keepOriginal": "Сохранить оригинал",
+        "keepOriginalHint": "Не удалять исходный файл после конвертации/ремукса",
+        "embedInfoJson": "Встроить info.json",
+        "embedInfoJsonHint": "Встроить метаданные видео как info.json",
+        "customArgs": "Пользовательские аргументы пост-обработки",
+        "customArgsHint": "Дополнительные аргументы пост-обработки yt-dlp"
+      },
+      "output": {
+        "title": "Вывод",
+        "description": "Настройка имени и формата выходного файла",
+        "template": "Шаблон имени файла",
+        "templateHint": "Шаблон имени выходного файла yt-dlp",
+        "templateHelp": "Доступные токены:",
+        "restrictFilenames": "Ограничить имена файлов",
+        "restrictFilenamesHint": "Использовать только ASCII символы",
+        "windowsFilenames": "Windows-совместимые имена",
+        "windowsFilenamesHint": "Заменить символы, недопустимые в Windows"
+      }
+    }
   }
 }

@@ -99,6 +99,38 @@ jobs:
           echo "=== Updater bundle files ==="
           ls -la src-tauri/target/release/bundle/appimage-updater/ || true
 
+      - name: Prepare release assets
+        run: |
+          VERSION=${{ needs.create-release.outputs.version }}
+          mkdir -p release-assets
+
+          APPIMAGE=$(ls -1 src-tauri/target/release/bundle/appimage/*.AppImage 2>/dev/null | head -n 1)
+          if [ -n "$APPIMAGE" ]; then
+            cp "$APPIMAGE" "release-assets/Comine-${VERSION}-Linux-x86_64.AppImage"
+          fi
+
+          DEB=$(ls -1 src-tauri/target/release/bundle/deb/*.deb 2>/dev/null | head -n 1)
+          if [ -n "$DEB" ]; then
+            cp "$DEB" "release-assets/Comine-${VERSION}-Linux-x86_64.deb"
+          fi
+
+          RPM=$(ls -1 src-tauri/target/release/bundle/rpm/*.rpm 2>/dev/null | head -n 1)
+          if [ -n "$RPM" ]; then
+            cp "$RPM" "release-assets/Comine-${VERSION}-Linux-x86_64.rpm"
+          fi
+
+          UPDATER_TGZ=$(ls -1 src-tauri/target/release/bundle/appimage-updater/*.AppImage.tar.gz 2>/dev/null | head -n 1)
+          if [ -n "$UPDATER_TGZ" ]; then
+            cp "$UPDATER_TGZ" "release-assets/Comine-${VERSION}-Linux-x86_64-updater.AppImage.tar.gz"
+          fi
+          UPDATER_SIG=$(ls -1 src-tauri/target/release/bundle/appimage-updater/*.AppImage.tar.gz.sig 2>/dev/null | head -n 1)
+          if [ -n "$UPDATER_SIG" ]; then
+            cp "$UPDATER_SIG" "release-assets/Comine-${VERSION}-Linux-x86_64-updater.AppImage.tar.gz.sig"
+          fi
+
+          echo "=== Prepared release assets ==="
+          ls -la release-assets || true
+
       - name: Upload to release
         uses: softprops/action-gh-release@v1
         env:
@@ -107,11 +139,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           draft: true
           files: |
-            src-tauri/target/release/bundle/deb/*.deb
-            src-tauri/target/release/bundle/rpm/*.rpm
-            src-tauri/target/release/bundle/appimage/*.AppImage
-            src-tauri/target/release/bundle/appimage-updater/*.AppImage.tar.gz
-            src-tauri/target/release/bundle/appimage-updater/*.AppImage.tar.gz.sig
+            release-assets/*
 
   build-windows:
     needs: create-release
@@ -174,8 +202,40 @@ jobs:
           $version = "${{ needs.create-release.outputs.version }}"
           $exePath = "src-tauri/target/release/comine.exe"
           if (Test-Path $exePath) {
-            Copy-Item $exePath "src-tauri/target/release/comine_${version}_x64-portable.exe"
+            Copy-Item $exePath "src-tauri/target/release/Comine-${version}-Windows-x64-Portable.exe"
           }
+
+      - name: Prepare release assets
+        shell: pwsh
+        run: |
+          $version = "${{ needs.create-release.outputs.version }}"
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+
+          $nsis = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($nsis) {
+            Copy-Item $nsis.FullName "release-assets/Comine-$version-Windows-x64-Setup.exe"
+          }
+          $nsisSig = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*.exe.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($nsisSig) {
+            Copy-Item $nsisSig.FullName "release-assets/Comine-$version-Windows-x64-Setup.exe.sig"
+          }
+
+          $msi = Get-ChildItem -Path "src-tauri/target/release/bundle/msi" -Filter "*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($msi) {
+            Copy-Item $msi.FullName "release-assets/Comine-$version-Windows-x64.msi"
+          }
+          $msiSig = Get-ChildItem -Path "src-tauri/target/release/bundle/msi" -Filter "*.msi.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($msiSig) {
+            Copy-Item $msiSig.FullName "release-assets/Comine-$version-Windows-x64.msi.sig"
+          }
+
+          $portable = "src-tauri/target/release/Comine-$version-Windows-x64-Portable.exe"
+          if (Test-Path $portable) {
+            Copy-Item $portable "release-assets/Comine-$version-Windows-x64-Portable.exe"
+          }
+
+          Write-Host "=== Prepared release assets ==="
+          Get-ChildItem release-assets | Format-Table -AutoSize
 
       - name: Upload to release
         uses: softprops/action-gh-release@v1
@@ -186,11 +246,7 @@ jobs:
           draft: true
           fail_on_unmatched_files: false
           files: |
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/msi/*.msi.sig
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/nsis/*.exe.sig
-            src-tauri/target/release/comine_*_x64-portable.exe
+            release-assets/*
 
   build-macos:
     needs: create-release
@@ -247,6 +303,36 @@ jobs:
             for f in *.app.tar.gz.sig; do mv "$f" "${f%.app.tar.gz.sig}_x64.app.tar.gz.sig" 2>/dev/null || true; done
           fi
 
+      - name: Prepare release assets
+        run: |
+          VERSION=${{ needs.create-release.outputs.version }}
+          mkdir -p release-assets
+
+          if [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then
+            ARCH=arm64
+          else
+            ARCH=x64
+          fi
+
+          DMG=$(ls -1 src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg 2>/dev/null | head -n 1)
+          if [ -n "$DMG" ]; then
+            cp "$DMG" "release-assets/Comine-${VERSION}-macOS-${ARCH}.dmg"
+          fi
+
+          MACOS_DIR="src-tauri/target/${{ matrix.target }}/release/bundle/macos"
+          UPDATER_TGZ=$(ls -1 "$MACOS_DIR"/*.app.tar.gz 2>/dev/null | head -n 1)
+          if [ -n "$UPDATER_TGZ" ]; then
+            cp "$UPDATER_TGZ" "release-assets/Comine-${VERSION}-macOS-${ARCH}-updater.app.tar.gz"
+          fi
+
+          UPDATER_SIG=$(ls -1 "$MACOS_DIR"/*.app.tar.gz.sig 2>/dev/null | head -n 1)
+          if [ -n "$UPDATER_SIG" ]; then
+            cp "$UPDATER_SIG" "release-assets/Comine-${VERSION}-macOS-${ARCH}-updater.app.tar.gz.sig"
+          fi
+
+          echo "=== Prepared release assets ==="
+          ls -la release-assets || true
+
       - name: Upload to release
         uses: softprops/action-gh-release@v1
         env:
@@ -255,9 +341,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           draft: true
           files: |
-            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
-            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
-            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz.sig
+            release-assets/*
 
   build-android:
     needs: create-release
@@ -342,7 +426,7 @@ jobs:
         run: |
           VERSION=${{ needs.create-release.outputs.version }}
           mkdir -p release-assets
-          find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" -exec cp {} release-assets/comine-${VERSION}-${{ matrix.artifact_name }}.apk \;
+          find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" -exec cp {} release-assets/Comine-${VERSION}-Android-${{ matrix.artifact_name }}.apk \;
 
       - name: Upload to release
         uses: softprops/action-gh-release@v1
@@ -427,11 +511,11 @@ jobs:
           # Find the release APK (fat APK with all ABIs)
           APK=$(find src-tauri/gen/android/app/build/outputs/apk/release -name "*.apk" -type f | head -1)
           if [ -n "$APK" ]; then
-            cp "$APK" "release-assets/comine-${VERSION}-universal.apk"
+            cp "$APK" "release-assets/Comine-${VERSION}-Android-universal.apk"
           else
             # Fallback: find any APK
             APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" -type f | head -1)
-            cp "$APK" "release-assets/comine-${VERSION}-universal.apk"
+            cp "$APK" "release-assets/Comine-${VERSION}-Android-universal.apk"
           fi
           ls -la release-assets/
 
@@ -510,11 +594,11 @@ jobs:
               "https://api.github.com/repos/nichind/comine/releases/$RELEASE_ID/assets")
             
             ALL_FOUND=true
-            
-            download_asset "comine_${VERSION}_amd64.AppImage.tar.gz.sig" "linux.sig" || ALL_FOUND=false
-            download_asset "comine_${VERSION}_x64-setup.exe.sig" "windows.sig" || ALL_FOUND=false
-            download_asset "comine.app.tar.gz.sig" "darwin-arm.sig" || ALL_FOUND=false
-            download_asset "comine_x64.app.tar.gz.sig" "darwin-x64.sig" || ALL_FOUND=false
+
+            download_asset "Comine-${VERSION}-Linux-x86_64-updater.AppImage.tar.gz.sig" "linux.sig" || ALL_FOUND=false
+            download_asset "Comine-${VERSION}-Windows-x64-Setup.exe.sig" "windows.sig" || ALL_FOUND=false
+            download_asset "Comine-${VERSION}-macOS-arm64-updater.app.tar.gz.sig" "darwin-arm.sig" || ALL_FOUND=false
+            download_asset "Comine-${VERSION}-macOS-x64-updater.app.tar.gz.sig" "darwin-x64.sig" || ALL_FOUND=false
             
             if [ "$ALL_FOUND" = true ]; then
               echo ""
@@ -552,13 +636,13 @@ jobs:
             --arg version "$VERSION" \
             --arg notes "See release notes at https://github.com/nichind/comine/releases/tag/v${VERSION}" \
             --arg pub_date "$DATE" \
-            --arg linux_url "${REPO}/comine_${VERSION}_amd64.AppImage.tar.gz" \
+            --arg linux_url "${REPO}/Comine-${VERSION}-Linux-x86_64-updater.AppImage.tar.gz" \
             --arg linux_sig "$LINUX_SIG" \
-            --arg windows_url "${REPO}/comine_${VERSION}_x64-setup.exe" \
+            --arg windows_url "${REPO}/Comine-${VERSION}-Windows-x64-Setup.exe" \
             --arg windows_sig "$WINDOWS_SIG" \
-            --arg darwin_arm_url "${REPO}/comine.app.tar.gz" \
+            --arg darwin_arm_url "${REPO}/Comine-${VERSION}-macOS-arm64-updater.app.tar.gz" \
             --arg darwin_arm_sig "$DARWIN_ARM_SIG" \
-            --arg darwin_x64_url "${REPO}/comine_x64.app.tar.gz" \
+            --arg darwin_x64_url "${REPO}/Comine-${VERSION}-macOS-x64-updater.app.tar.gz" \
             --arg darwin_x64_sig "$DARWIN_X64_SIG" \
             '{
               version: $version,

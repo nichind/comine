@@ -224,6 +224,8 @@
         containerClass="log-list-virtual"
         onscroll={handleScroll}
         getKey={(entry) => entry.id}
+        useFadeMask={!isMobile}
+        useCustomScrollbar={true}
       >
         {#snippet children(entry, _index)}
           {#if isMobile}
@@ -397,35 +399,10 @@
     font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Consolas', monospace;
     font-size: 12px;
     padding-bottom: 30px;
-    padding-right: 6px;
-    margin-right: 4px;
-    margin-bottom: 4px;
-    mask-image: linear-gradient(to bottom, black, black 0px, black calc(100% - 56px), transparent);
-    -webkit-mask-image: linear-gradient(
-      to bottom,
-      black,
-      black 0px,
-      black calc(100% - 56px),
-      transparent
-    );
+    /* Mask handled by VirtualList now */
   }
 
-  .log-container.scrolled {
-    mask-image: linear-gradient(
-      to bottom,
-      transparent,
-      black 32px,
-      black calc(100% - 56px),
-      transparent
-    );
-    -webkit-mask-image: linear-gradient(
-      to bottom,
-      transparent,
-      black 32px,
-      black calc(100% - 56px),
-      transparent
-    );
-  }
+  /* .scrolled class logic removed/handled by VirtualList */
 
   :global(.log-list-virtual) {
     padding: 4px 8px;
@@ -433,9 +410,6 @@
 
   :global(.app.mobile) .log-container {
     padding-bottom: 180px;
-    /* No bottom mask on mobile - navbar has glassmorphism */
-    mask-image: none;
-    -webkit-mask-image: none;
   }
 
   .empty-state {

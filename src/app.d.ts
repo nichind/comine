@@ -13,6 +13,7 @@ declare global {
   interface Window {
     AndroidColors?: {
       getMaterialColors(): string;
+      getWallpaperColors?: () => string;
     };
     i18n?: {
       t: (key: string) => string;

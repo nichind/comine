@@ -41,10 +41,13 @@
     isLikelyPlaylist,
     isLikelyChannel,
     isValidMediaUrl,
+    isHttpUrl,
     getQuickThumbnail,
     isDirectFileUrl,
+    formatSpeed,
+    formatSize,
   } from '$lib/utils/format';
-  import { detectBackendForUrl } from '$lib/utils/backend-detection';
+  import { getPlaylistInfoBackend, getVideoInfoBackend } from '$lib/backend/mediaBackend';
   import {
     isAndroid,
     onShareIntent,
@@ -85,15 +88,7 @@
 
     if (totalBytesPerSec === 0) return '';
 
-    // Format back to human readable
-    if (totalBytesPerSec >= 1024 * 1024 * 1024) {
-      return `${(totalBytesPerSec / (1024 * 1024 * 1024)).toFixed(1)} GB/s`;
-    } else if (totalBytesPerSec >= 1024 * 1024) {
-      return `${(totalBytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
-    } else if (totalBytesPerSec >= 1024) {
-      return `${(totalBytesPerSec / 1024).toFixed(1)} KB/s`;
-    }
-    return `${Math.round(totalBytesPerSec)} B/s`;
+    return formatSpeed(totalBytesPerSec);
   });
 
   let isDownloading = $derived($activeDownloadsCount > 0 && totalDownloadSpeed !== '');
@@ -108,6 +103,38 @@
   let windowWidth = $state(0);
   let lastClipboardText = $state('');
   let clipboardCheckInterval: ReturnType<typeof setInterval> | null = null;
+
+  let lastClipboardSystemNotificationKey: string | null = null;
+  let lastClipboardSystemNotificationAtMs = 0;
+
+  async function maybeSendClipboardSystemNotification(
+    key: string,
+    title: string,
+    body: string
+  ): Promise<void> {
+    if (isAndroid()) return;
+    if (!$settings.notificationsEnabled) return;
+
+    const now = Date.now();
+    if (lastClipboardSystemNotificationKey === key && now - lastClipboardSystemNotificationAtMs < 5000) {
+      return;
+    }
+
+    try {
+      const hasPermission = await isPermissionGranted();
+      if (!hasPermission) return;
+
+      lastClipboardSystemNotificationKey = key;
+      lastClipboardSystemNotificationAtMs = now;
+
+      sendNotification({
+        title,
+        body,
+      });
+    } catch (e) {
+      logs.debug('layout', `System clipboard notification skipped: ${e}`);
+    }
+  }
 
   let hasShownTrayNotification = false;
   let isWindowHidden = $state(false);
@@ -153,8 +180,6 @@
   let cleanupKeyboard: (() => void) | null = null;
 
   function setupKeyboardShortcuts() {
-    const pages = ['/', '/downloads', '/settings', '/info', '/logs'];
-
     const handleKeyDown = async (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       const tagName = target.tagName.toLowerCase();
@@ -169,7 +194,7 @@
           e.preventDefault();
           try {
             const text = await readText();
-            if (text && isValidMediaUrl(text, $settings.clipboardPatterns || [])) {
+            if (text && isHttpUrl(text)) {
               const url = cleanUrl(text);
               goto(`/?url=${encodeURIComponent(url)}`);
               toast.info(`📋 ${$t('clipboard.detected')}`);
@@ -182,6 +207,10 @@
       }
 
       if (isEditable) return;
+
+      // Page navigation shortcuts (desktop): Ctrl+Tab cycles, Alt+1..N jumps.
+      // Uses the same order as the visible nav so it's always consistent.
+      const pages = allNavItems.map((i) => i.path);
 
       if (e.ctrlKey && e.key === 'Tab') {
         e.preventDefault();
@@ -200,38 +229,12 @@
       }
 
       if (e.altKey && !e.ctrlKey && !e.metaKey) {
-        const num = parseInt(e.key);
+        const num = Number.parseInt(e.key, 10);
         if (num >= 1 && num <= pages.length) {
           e.preventDefault();
           goto(pages[num - 1]);
           return;
         }
-      }
-
-      switch (e.key.toLowerCase()) {
-        case 'h':
-        case 'n':
-          e.preventDefault();
-          goto('/');
-          break;
-        case 'd':
-          e.preventDefault();
-          goto('/downloads');
-          break;
-        case 's':
-          if (!e.ctrlKey && !e.metaKey) {
-            e.preventDefault();
-            goto('/settings');
-          }
-          break;
-        case 'i':
-          e.preventDefault();
-          goto('/info');
-          break;
-        case 'l':
-          e.preventDefault();
-          goto('/logs');
-          break;
       }
     };
 
@@ -343,7 +346,6 @@
   let diskSpaceWarningShown = false;
 
   async function autoStartExtensionServer() {
-    // Wait for settings to load
     if (!$settingsReady) {
       await new Promise<void>((resolve) => {
         const unsub = settingsReady.subscribe((ready) => {
@@ -355,7 +357,6 @@
       });
     }
 
-    // Only auto-start if it was previously enabled
     if ($settings.extensionServerEnabled) {
       const port = $settings.extensionLocalPort || 9549;
       try {
@@ -439,6 +440,10 @@
     const handleResize = () => {
       windowWidth = window.innerWidth;
       isMobile = windowWidth < MOBILE_BREAKPOINT;
+
+      if (!isMobile) {
+        queueSidebarNavIndicatorUpdate();
+      }
     };
 
     window.addEventListener('resize', handleResize);
@@ -743,28 +748,24 @@
       // - Direct URL
       let videoUrl = event.payload;
 
-      // Handle download?url= or download/?url= format
       if (videoUrl.startsWith('download?url=') || videoUrl.startsWith('download/?url=')) {
         videoUrl = videoUrl.replace(/^download\/??\?url=/, '');
       } else if (videoUrl.startsWith('url=')) {
         videoUrl = videoUrl.replace(/^url=/, '');
       }
 
-      // URL decode if needed
       try {
         videoUrl = decodeURIComponent(videoUrl);
       } catch (e) {
-        // Already decoded or invalid encoding
       }
 
       const url = cleanUrl(videoUrl);
       logs.info('layout', `Extracted video URL: ${url}`);
 
-      if (url && isValidMediaUrl(url, $settings.clipboardPatterns || [])) {
+      if (url && isHttpUrl(url)) {
         goto(`/?url=${encodeURIComponent(url)}`);
         toast.info(`🔗 ${$t('deeplink.received') || 'URL received from browser'}`);
 
-        // Focus the window
         if (appWindow) {
           try {
             await appWindow.show();
@@ -777,7 +778,6 @@
       }
     });
 
-    // Listen for extension downloads (from browser extension via localhost API)
     unlistenExtensionDownload = await listen<{
       url: string;
       title?: string | null;
@@ -811,8 +811,6 @@
         `Extension download received: ${rawUrl} (id: ${id}, openApp: ${openApp}, fromRelay: ${fromRelay})`
       );
 
-      // v2-only relay: trust is based on knowing the shared secret.
-      // No per-device permission gate (for now).
 
       const url = cleanUrl(rawUrl);
       if (!url) {
@@ -820,7 +818,6 @@
         return;
       }
 
-      // Prefetch media info cache if we have metadata
       if (title || thumbnail) {
         mediaCache.setPreview(url, {
           title: title || undefined,
@@ -829,41 +826,27 @@
       }
 
       if (openApp) {
-        // Ensure the window is visible and focused FIRST
         if (appWindow) {
           try {
-            // Show the window first (if hidden to tray)
             await appWindow.show();
-            // Unminimize if minimized
             await appWindow.unminimize();
-            // Request user attention (flash taskbar on Windows)
-            await appWindow.requestUserAttention(1); // 1 = Critical
-            // Set focus
+            await appWindow.requestUserAttention(1);
             await appWindow.setFocus();
-            // Restore internal state
             await onWindowShown();
           } catch (e) {
             logs.warn('layout', `Failed to focus window: ${e}`);
           }
         }
 
-        // Navigate to home with the URL
         goto(`/?url=${encodeURIComponent(url)}`);
         toast.info(`🔗 ${$t('extension.received') || 'URL received from browser extension'}`);
       } else {
-        // Quick download mode - start download in background without UI interaction
         const currentSettings = getSettings();
 
-        // Track this extension download
         extensionDownloads.set(url, { id, lastState: 'queued', lastProgress: 0 });
-
-        // Use extension options if provided, otherwise fall back to app settings
-        const videoQuality =
-          extOptions?.videoQuality ?? currentSettings.defaultVideoQuality ?? 'max';
-        const downloadMode =
-          (extOptions?.downloadMode as 'auto' | 'audio' | 'mute' | undefined) ?? undefined; // Use auto mode if not specified
-        const audioQuality =
-          extOptions?.audioQuality ?? currentSettings.defaultAudioQuality ?? 'best';
+        const videoQuality = extOptions?.videoQuality ?? currentSettings.defaultVideoQuality ?? 'max';
+        const downloadMode = (extOptions?.downloadMode as 'auto' | 'audio' | 'mute' | undefined) ?? undefined;
+        const audioQuality = extOptions?.audioQuality ?? currentSettings.defaultAudioQuality ?? 'best';
         const convertToMp4 = extOptions?.convertToMp4 ?? currentSettings.convertToMp4 ?? false;
         const remux = extOptions?.remux ?? currentSettings.remux ?? true;
         const clearMetadata = extOptions?.clearMetadata ?? currentSettings.clearMetadata ?? false;
@@ -892,17 +875,15 @@
         });
 
         if (queueId) {
-          toast.info(`⬇️ ${$t('extension.quickDownload') || 'Quick download started'}`);
+          toast.info(`${$t('extension.quickDownload') || 'Quick download started'}`);
           logs.info('layout', `Quick download queued: ${queueId}`);
         } else {
           toast.info($t('queue.alreadyInQueue') || 'Already in queue');
-          // Remove from tracking since it wasn't added
           extensionDownloads.delete(url);
         }
       }
     });
 
-    // Listen for extension cancel requests
     unlistenExtensionCancel = await listen<{
       url: string;
       id: string;
@@ -912,9 +893,6 @@
       const { url, id, deviceId, fromRelay } = event.payload;
       logs.info('layout', `Extension cancel received: ${url} (id: ${id}, fromRelay: ${fromRelay})`);
 
-      // v2-only relay: trust is based on knowing the shared secret.
-      // No per-device permission gate (for now).
-
       const state = get(queue);
       const item = state.items.find((i) => i.url === url);
       if (item) {
@@ -923,7 +901,6 @@
       }
     });
 
-    // Listen for server open file requests (from browser extension)
     unlistenServerOpen = await listen<string>('server-open', async (event) => {
       const filePath = event.payload;
       logs.info('layout', `Server open request: ${filePath}`);
@@ -935,7 +912,6 @@
       }
     });
 
-    // Listen for server reveal file requests (from browser extension)
     unlistenServerReveal = await listen<string>('server-reveal', async (event) => {
       const filePath = event.payload;
       logs.info('layout', `Server reveal request: ${filePath}`);
@@ -947,34 +923,32 @@
       }
     });
 
-    // Listen for extension cookies (from browser extension)
     unlistenExtensionCookies = await listen<{
       domain: string;
+      sourceUrl?: string | null;
       count: number;
       cookies: string;
     }>('extension-cookies', async (event) => {
-      const { domain, count, cookies } = event.payload;
+      const { domain, sourceUrl, count, cookies } = event.payload;
       logs.info('layout', `Extension cookies received: ${count} cookies from ${domain}`);
-
+      
       // Update the customCookies setting with the received cookies
       // Merge with existing cookies if any
       const currentCookies = getSettings().customCookies || '';
       let newCookies = cookies;
-
+      
       // If there are existing cookies, merge them (extension cookies take priority)
       if (currentCookies && currentCookies.includes('# Netscape HTTP Cookie File')) {
-        // Parse existing cookies into a map
         const existingMap = new Map<string, string>();
         for (const line of currentCookies.split('\n')) {
           if (line.startsWith('#') || !line.trim()) continue;
           const parts = line.split('\t');
           if (parts.length >= 7) {
-            const key = `${parts[0]}|${parts[5]}`; // domain|name
+            const key = `${parts[0]}|${parts[5]}`;
             existingMap.set(key, line);
           }
         }
 
-        // Add new cookies (overwriting existing)
         for (const line of cookies.split('\n')) {
           if (line.startsWith('#') || !line.trim()) continue;
           const parts = line.split('\t');
@@ -984,25 +958,28 @@
           }
         }
 
-        // Reconstruct cookies
-        newCookies = '# Netscape HTTP Cookie File\n' + Array.from(existingMap.values()).join('\n');
+        newCookies = '# Netscape HTTP Cookie File\n' + 
+          Array.from(existingMap.values()).join('\n');
       }
+      
+      const currentReceipt = getSettings().extensionCookiesReceived || [];
+      const nextEntry = { domain, sourceUrl: sourceUrl ?? null, count, receivedAt: Date.now() };
+      const merged = [nextEntry, ...currentReceipt.filter((e) => e.domain !== domain)].slice(0, 12);
 
       await updateSettings({
         customCookies: newCookies,
-        cookiesFromBrowser: 'custom', // Switch to custom mode
+        cookiesFromBrowser: 'custom',
+        extensionCookiesReceived: merged,
       });
-
+      
       toast.success($t('extension.cookiesReceived') || `${count} cookies received from extension`);
     });
 
-    // Subscribe to queue changes to report extension download progress
     extensionProgressUnsub = queue.subscribe((state) => {
       for (const [url, tracking] of extensionDownloads) {
         const item = state.items.find((i) => i.url === url);
         if (!item) continue;
 
-        // Map queue status to extension state
         let extState: string;
         switch (item.status) {
           case 'pending':
@@ -1024,7 +1001,6 @@
             extState = 'queued';
         }
 
-        // Only update if state or progress changed significantly
         const progressChanged = Math.abs(item.progress - tracking.lastProgress) >= 1;
         const stateChanged = extState !== tracking.lastState;
 
@@ -1032,7 +1008,6 @@
           tracking.lastState = extState;
           tracking.lastProgress = item.progress;
 
-          // Report to backend
           invoke('extension_update_status', {
             id: tracking.id,
             state: extState,
@@ -1046,7 +1021,6 @@
             logs.debug('layout', `Failed to update extension status: ${err}`);
           });
 
-          // Remove from tracking on terminal states
           if (extState === 'completed' || extState === 'error') {
             extensionDownloads.delete(url);
           }
@@ -1054,14 +1028,12 @@
       }
     });
 
-    // Check for deep links that launched the app (startup URLs)
     try {
       const { getCurrent } = await import('@tauri-apps/plugin-deep-link');
       const startupUrls = await getCurrent();
       if (startupUrls && startupUrls.length > 0) {
         logs.info('layout', `App launched with deep link URLs: ${startupUrls.join(', ')}`);
         for (const rawUrl of startupUrls) {
-          // Extract the actual URL from comine://download?url=...
           let videoUrl = rawUrl;
           if (rawUrl.startsWith('comine://download?url=')) {
             videoUrl = decodeURIComponent(rawUrl.replace('comine://download?url=', ''));
@@ -1072,10 +1044,10 @@
           }
 
           const cleanedUrl = cleanUrl(videoUrl);
-          if (cleanedUrl && isValidMediaUrl(cleanedUrl, $settings.clipboardPatterns || [])) {
+          if (cleanedUrl && isHttpUrl(cleanedUrl)) {
             goto(`/?url=${encodeURIComponent(cleanedUrl)}`);
             toast.info(`🔗 ${$t('deeplink.received') || 'URL received from browser'}`);
-            break; // Only handle the first valid URL
+            break;
           }
         }
       }
@@ -1087,6 +1059,10 @@
   onDestroy(() => {
     if (cleanupResize) {
       cleanupResize();
+    }
+    if (sidebarNavIndicatorRaf !== null) {
+      cancelAnimationFrame(sidebarNavIndicatorRaf);
+      sidebarNavIndicatorRaf = null;
     }
     if (cleanupKeyboard) {
       cleanupKeyboard();
@@ -1482,7 +1458,7 @@
       await invoke('show_notification_window', {
         data: {
           title: fileInfo.filename,
-          body: formatFileSize(fileInfo.size),
+          body: formatSize(fileInfo.size),
           thumbnail: null,
           url: rawUrl,
           compact: currentSettings.compactNotifications,
@@ -1498,14 +1474,6 @@
     } catch (err) {
       logs.warn('layout', `Failed to check file URL: ${err}`);
     }
-  }
-
-  function formatFileSize(bytes: number): string {
-    if (bytes === 0) return 'Unknown size';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 
   async function handleDetectedUrl(rawUrl: string) {
@@ -1548,12 +1516,12 @@
           total_count: number;
           channel_follower_count?: number | null;
         }
-        const channelInfo = await invoke<ChannelInfo>('get_playlist_info', {
+        const channelInfo = await getPlaylistInfoBackend<ChannelInfo>({
           url,
           offset: 0,
           limit: 1,
-          cookiesFromBrowser: currentSettings.cookiesFromBrowser || null,
-          customCookies: currentSettings.customCookies || null,
+          cookiesFromBrowser: currentSettings.cookiesFromBrowser || '',
+          customCookies: currentSettings.customCookies || '',
           proxyConfig: getProxyConfig(),
           youtubePlayerClient: currentSettings.usePlayerClientForExtraction
             ? currentSettings.youtubePlayerClient
@@ -1579,6 +1547,11 @@
           });
 
           dismissToast(fetchingToastId);
+          await maybeSendClipboardSystemNotification(
+            `clipboard:${url}`,
+            'Comine • Clipboard',
+            `${channelName} (${channelInfo.total_count} videos)`
+          );
           await invoke('show_notification_window', {
             data: {
               title: channelName,
@@ -1607,12 +1580,12 @@
           thumbnail: string | null;
           total_count: number;
         }
-        const playlistInfo = await invoke<PlaylistInfo>('get_playlist_info', {
+        const playlistInfo = await getPlaylistInfoBackend<PlaylistInfo>({
           url,
           offset: 0,
           limit: 1,
-          cookiesFromBrowser: currentSettings.cookiesFromBrowser || null,
-          customCookies: currentSettings.customCookies || null,
+          cookiesFromBrowser: currentSettings.cookiesFromBrowser || '',
+          customCookies: currentSettings.customCookies || '',
           proxyConfig: getProxyConfig(),
           youtubePlayerClient: currentSettings.usePlayerClientForExtraction
             ? currentSettings.youtubePlayerClient
@@ -1636,6 +1609,11 @@
           });
 
           dismissToast(fetchingToastId);
+          await maybeSendClipboardSystemNotification(
+            `clipboard:${url}`,
+            'Comine • Clipboard',
+            `${playlistInfo.title || $t('playlist.notification.detected')} (${playlistInfo.total_count} ${$t('playlist.videos')})`
+          );
           await invoke('show_notification_window', {
             data: {
               title: playlistInfo.title || $t('playlist.notification.detected'),
@@ -1655,14 +1633,10 @@
         }
       }
 
-      const backend = detectBackendForUrl(url);
-      const luxInstalled = backend === 'lux' && $deps.lux?.installed;
-      const command = luxInstalled ? 'lux_get_video_info' : 'get_video_info';
-
-      const videoInfo: VideoInfo = await invoke(command, {
+      const videoInfo: VideoInfo = await getVideoInfoBackend({
         url,
-        cookiesFromBrowser: currentSettings.cookiesFromBrowser || null,
-        customCookies: currentSettings.customCookies || null,
+        cookiesFromBrowser: currentSettings.cookiesFromBrowser || '',
+        customCookies: currentSettings.customCookies || '',
         proxyConfig: getProxyConfig(),
         youtubePlayerClient: currentSettings.usePlayerClientForExtraction
           ? currentSettings.youtubePlayerClient
@@ -1692,6 +1666,12 @@
       });
 
       dismissToast(fetchingToastId);
+
+      await maybeSendClipboardSystemNotification(
+        `clipboard:${url}`,
+        'Comine • Clipboard',
+        `${videoInfo.title || $t('notification.mediaDetected')}${authorDisplay ? ` • ${authorDisplay}` : ''}${durationStr}`
+      );
       await invoke('show_notification_window', {
         data: {
           title: videoInfo.title || $t('notification.mediaDetected'),
@@ -1711,6 +1691,12 @@
       dismissToast(fetchingToastId);
       const currentSettings = getSettings();
       const quickThumbnail = getQuickThumbnail(url);
+
+      await maybeSendClipboardSystemNotification(
+        `clipboard:${url}`,
+        'Comine • Clipboard',
+        $t('notification.clickToDownload')
+      );
       await invoke('show_notification_window', {
         data: {
           title: $t('notification.mediaDetected'),
@@ -1772,21 +1758,77 @@
       labelKey: 'nav.downloads',
       badge: $activeDownloadsCount > 0 ? $activeDownloadsCount : undefined,
     },
-    { path: '/logs', icon: 'text', labelKey: 'nav.logs' },
     { path: '/settings', icon: 'settings', labelKey: 'nav.settings' },
   ]);
 
   const secondaryNavItems: NavItemConfig[] = [
     { path: '/info', icon: 'info', labelKey: 'nav.info' },
+    { path: '/logs', icon: 'text', labelKey: 'nav.logs' },
   ];
 
   let allNavItems = $derived<NavItemConfig[]>([...mainNavItems, ...secondaryNavItems]);
 
   let currentPath = $derived($page.url.pathname);
+
+  // Desktop sidebar active indicator
+  let sidebarNavEl: HTMLElement | null = $state(null);
+  let sidebarNavIndicatorStyle = $state('');
+  let sidebarNavIndicatorVisible = $state(false);
+  const sidebarNavItemEls = new Map<string, HTMLElement>();
+  let sidebarNavIndicatorRaf: number | null = null;
+
+  function registerSidebarNavItem(node: HTMLElement, path: string) {
+    sidebarNavItemEls.set(path, node);
+    queueSidebarNavIndicatorUpdate();
+    return {
+      destroy() {
+        sidebarNavItemEls.delete(path);
+        queueSidebarNavIndicatorUpdate();
+      },
+    };
+  }
+
+  function queueSidebarNavIndicatorUpdate() {
+    if (isMobile) return;
+    if (sidebarNavIndicatorRaf !== null) cancelAnimationFrame(sidebarNavIndicatorRaf);
+    sidebarNavIndicatorRaf = requestAnimationFrame(() => {
+      sidebarNavIndicatorRaf = null;
+      updateSidebarNavIndicator();
+    });
+  }
+
+  function updateSidebarNavIndicator() {
+    if (isMobile || !sidebarNavEl) {
+      sidebarNavIndicatorVisible = false;
+      sidebarNavIndicatorStyle = '';
+      return;
+    }
+
+    const activeEl = sidebarNavItemEls.get(currentPath);
+    if (!activeEl) {
+      sidebarNavIndicatorVisible = false;
+      sidebarNavIndicatorStyle = '';
+      return;
+    }
+
+    const containerRect = sidebarNavEl.getBoundingClientRect();
+    const activeRect = activeEl.getBoundingClientRect();
+    const top = Math.round(activeRect.top - containerRect.top);
+    const height = Math.round(activeRect.height);
+
+    sidebarNavIndicatorVisible = true;
+    sidebarNavIndicatorStyle = `transform: translateY(${top}px); height: ${height}px;`;
+  }
+
+  $effect(() => {
+    // Track path changes and responsive breakpoint changes.
+    currentPath;
+    isMobile;
+    allNavItems;
+    queueSidebarNavIndicatorUpdate();
+  });
 </script>
 
-<!-- Notification windows get minimal rendering - no app shell -->
-<!-- During SSR, browser is false, but we check currentPath which works on server too -->
 {#if isNotificationWindow || currentPath.startsWith('/notification')}
   {@render children()}
 {:else}
@@ -1838,7 +1880,10 @@
       <!-- Desktop sidebar -->
       {#if !isMobile}
         <aside class="sidebar" data-tauri-drag-region>
-          <nav class="sidebar-nav" data-tauri-drag-region>
+          <nav class="sidebar-nav" bind:this={sidebarNavEl} data-tauri-drag-region>
+            {#if sidebarNavIndicatorVisible}
+              <div class="sidebar-nav-active-indicator" style={sidebarNavIndicatorStyle}></div>
+            {/if}
             {#each allNavItems as item}
               <NavItem
                 href={item.path}
@@ -1846,6 +1891,7 @@
                 title={$t(item.labelKey)}
                 active={currentPath === item.path}
                 badge={item.badge}
+                register={(node) => registerSidebarNavItem(node, item.path)}
               />
             {/each}
           </nav>
@@ -2002,6 +2048,10 @@
   }
 
   .app {
+    /* --page-padding-inline: clamp(16px, 2.5vw, 48px);
+    --page-padding-inline-compact: clamp(8px, 1.6vw, 16px); */
+    --page-padding-inline: 16px;
+    --page-padding-inline-compact: 8px;
     background: rgba(19, 19, 19, var(--window-tint, 0.48));
     height: 100%;
     width: 100%;
@@ -2179,6 +2229,24 @@
     flex-direction: column;
     padding: 0 0 8px;
     gap: 4px;
+    position: relative;
+  }
+
+  .sidebar-nav-active-indicator {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    border-radius: 0 8px 8px 0;
+    background: rgba(255, 255, 255, 0.14);
+    border-left: 2px solid rgba(255, 255, 255, 0.18);
+    transition:
+      transform 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
+      height 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
+      opacity 180ms ease;
+    will-change: transform, height;
+    z-index: 0;
+    pointer-events: none;
   }
 
   .sidebar-bottom {
@@ -2213,7 +2281,7 @@
 
   .bottom-bar {
     display: flex;
-    justify-content: space-evenly;
+    justify-content: center;
     align-items: center;
     width: 92%;
     max-width: 420px;
@@ -2242,13 +2310,14 @@
     align-items: center;
     justify-content: center;
     gap: 2px;
-    padding: 8px 12px;
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 8px 0;
     color: rgba(255, 255, 255, 0.5);
     text-decoration: none;
     border-radius: 16px;
     transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
     position: relative;
-    min-width: 48px;
     -webkit-tap-highlight-color: transparent;
   }
 

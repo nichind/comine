@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { invoke } from '@tauri-apps/api/core';
   import { t } from '$lib/i18n';
   import { getProxyConfig, getSettings } from '$lib/stores/settings';
   import { queue } from '$lib/stores/queue';
@@ -8,32 +7,32 @@
   import Modal from './Modal.svelte';
   import Icon from './Icon.svelte';
   import { formatSize, formatDuration } from '$lib/utils/format';
-  import { isAndroid, getVideoInfoOnAndroid, waitForAndroidYtDlp } from '$lib/utils/android';
+  import { getVideoFormatsBackend } from '$lib/backend/mediaBackend';
 
   interface VideoFormat {
     format_id: string;
     ext: string;
-    resolution: string | null;
-    fps: number | null;
-    vcodec: string | null;
-    acodec: string | null;
-    filesize: number | null;
-    filesize_approx: number | null;
-    tbr: number | null;
-    vbr: number | null;
-    abr: number | null;
-    asr: number | null;
-    format_note: string | null;
+    resolution?: string | null;
+    fps?: number | null;
+    vcodec?: string | null;
+    acodec?: string | null;
+    filesize?: number | null;
+    filesize_approx?: number | null;
+    tbr?: number | null;
+    vbr?: number | null;
+    abr?: number | null;
+    asr?: number | null;
+    format_note?: string | null;
     has_video: boolean;
     has_audio: boolean;
-    quality: number | null;
+    quality?: number | null;
   }
 
   interface VideoFormats {
     title: string;
-    author: string | null;
-    thumbnail: string | null;
-    duration: number | null;
+    author?: string | null;
+    thumbnail?: string | null;
+    duration?: number | null;
     formats: VideoFormat[];
   }
 
@@ -112,60 +111,24 @@
     try {
       logs.info('formats', `Fetching formats for: ${url}`);
 
-      if (isAndroid()) {
-        await waitForAndroidYtDlp();
-        const currentSettings = getSettings();
-        const playerClient = currentSettings.usePlayerClientForExtraction
+      const currentSettings = getSettings();
+      const backendFormats = await getVideoFormatsBackend({
+        url,
+        cookiesFromBrowser: cookiesFromBrowser || '',
+        customCookies: customCookies || '',
+        proxyConfig: getProxyConfig(),
+        youtubePlayerClient: currentSettings.usePlayerClientForExtraction
           ? currentSettings.youtubePlayerClient
-          : currentSettings.extractionPlayerClient || null;
-        const info = await getVideoInfoOnAndroid(url, playerClient);
+          : null,
+      });
 
-        if (!info) {
-          throw new Error('Failed to get video info from Android');
-        }
-
-        const rawFormats = (info.formats as Array<Record<string, unknown>>) || [];
-        formats = {
-          title: (info.title as string) || url,
-          author:
-            (info.uploader as string) ||
-            (info.channel as string) ||
-            (info.artist as string) ||
-            null,
-          thumbnail: (info.thumbnail as string) || null,
-          duration: (info.duration as number) || null,
-          formats: rawFormats.map((f) => ({
-            format_id: (f.format_id as string) || '',
-            ext: (f.ext as string) || '',
-            resolution: (f.resolution as string) || null,
-            fps: (f.fps as number) || null,
-            vcodec: (f.vcodec as string) || null,
-            acodec: (f.acodec as string) || null,
-            filesize: (f.filesize as number) || null,
-            filesize_approx: (f.filesize_approx as number) || null,
-            tbr: (f.tbr as number) || null,
-            vbr: (f.vbr as number) || null,
-            abr: (f.abr as number) || null,
-            asr: (f.asr as number) || null,
-            format_note: (f.format_note as string) || null,
-            has_video: f.vcodec !== null && f.vcodec !== 'none',
-            has_audio: f.acodec !== null && f.acodec !== 'none',
-            quality: (f.quality as number) || null,
-          })),
-        };
-      } else {
-        // Use Tauri command for desktop
-        const currentSettings = getSettings();
-        formats = await invoke<VideoFormats>('get_video_formats', {
-          url,
-          cookiesFromBrowser: cookiesFromBrowser || null,
-          customCookies: customCookies || null,
-          proxyConfig: getProxyConfig(),
-          youtubePlayerClient: currentSettings.usePlayerClientForExtraction
-            ? currentSettings.youtubePlayerClient
-            : null,
-        });
-      }
+      formats = {
+        title: backendFormats.title || url,
+        author: backendFormats.author ?? null,
+        thumbnail: backendFormats.thumbnail ?? null,
+        duration: backendFormats.duration ?? null,
+        formats: (backendFormats.formats ?? []) as VideoFormat[],
+      };
 
       logs.info('formats', `Got ${formats.formats.length} formats`);
 

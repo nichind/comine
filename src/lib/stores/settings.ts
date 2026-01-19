@@ -6,11 +6,10 @@ function checkIsAndroid(): boolean {
   return typeof window !== 'undefined' && 'AndroidYtDlp' in window;
 }
 
-export type ProcessorId = 'auto' | 'cobalt' | 'yt-dlp' | 'lux';
-
 export type VideoQuality = 'max' | '4k' | '1440p' | '1080p' | '720p' | '480p' | '360p' | '240p';
 export type DownloadMode = 'auto' | 'audio' | 'mute';
 export type AudioQuality = 'best' | '320' | '256' | '192' | '128' | '96';
+export type DefaultProcessor = 'auto' | 'yt-dlp' | 'lux';
 
 export interface CustomPreset {
   id: string;
@@ -28,7 +27,9 @@ export interface CustomPreset {
   sponsorBlock?: boolean;
   chapters?: boolean;
   embedSubtitles?: boolean;
+  subtitleLanguages?: string;
   embedThumbnail?: boolean;
+  outputTemplate?: string;
 }
 
 export type CloseBehavior = 'close' | 'minimize' | 'tray';
@@ -84,6 +85,80 @@ export type BackgroundType =
 export type AccentStyle = 'solid' | 'gradient' | 'glow';
 export type ProxyMode = 'none' | 'system' | 'custom';
 
+/**
+ * yt-dlp Advanced Settings
+ * Controls extraction, download, aria2, and post-processing behavior
+ */
+export interface YtDlpAdvancedSettings {
+  // Master toggle for advanced settings visibility
+  advancedMode: boolean;
+
+  // Extraction settings
+  extractionPlayerSkipWebpage: boolean;
+  extractionPlayerSkipConfigs: boolean;
+  extractionFlatPlaylist: boolean;
+  extractionNoPlaylist: boolean;
+  extractionCustomArgs: string;
+
+  // Download settings
+  downloadNoPlaylist: boolean;
+  downloadConcurrentFragments: number;
+  downloadRetries: number;
+  downloadFragmentRetries: number;
+  downloadCustomArgs: string;
+
+  // aria2 override settings (when useAria2 is enabled)
+  aria2OverrideGlobal: boolean; // false = use global aria2 settings, true = use yt-dlp specific
+  aria2YtdlpConnections: number;
+  aria2YtdlpSplits: number;
+  aria2YtdlpMinSplitSize: string;
+  aria2YtdlpDisableIPv6: boolean;
+  aria2YtdlpCustomArgs: string;
+  aria2FallbackToNative: boolean;
+
+  // Post-processing settings
+  postProcessCustomArgs: string;
+  postProcessKeepOriginal: boolean;
+  postProcessEmbedInfoJson: boolean;
+
+  // Output settings
+  outputTemplate: string;
+  outputRestrictFilenames: boolean;
+  outputWindowsFilenames: boolean;
+}
+
+export const defaultYtDlpAdvanced: YtDlpAdvancedSettings = {
+  advancedMode: false,
+
+  extractionPlayerSkipWebpage: true,
+  extractionPlayerSkipConfigs: true,
+  extractionFlatPlaylist: true,
+  extractionNoPlaylist: true,
+  extractionCustomArgs: '',
+
+  downloadNoPlaylist: true,
+  downloadConcurrentFragments: 1,
+  downloadRetries: 10,
+  downloadFragmentRetries: 10,
+  downloadCustomArgs: '',
+
+  aria2OverrideGlobal: false,
+  aria2YtdlpConnections: 8,
+  aria2YtdlpSplits: 8,
+  aria2YtdlpMinSplitSize: '1M',
+  aria2YtdlpDisableIPv6: true,
+  aria2YtdlpCustomArgs: '',
+  aria2FallbackToNative: true,
+
+  postProcessCustomArgs: '',
+  postProcessKeepOriginal: false,
+  postProcessEmbedInfoJson: false,
+
+  outputTemplate: '%(uploader)s - %(title)s.%(ext)s',
+  outputRestrictFilenames: false,
+  outputWindowsFilenames: true,
+};
+
 export interface AppSettings {
   onboardingCompleted: boolean;
   onboardingVersion: number;
@@ -113,7 +188,6 @@ export interface AppSettings {
 
   closeBehavior: CloseBehavior;
 
-  defaultProcessor: ProcessorId;
 
   autoUpdate: boolean;
   allowPreReleases: boolean;
@@ -157,10 +231,24 @@ export interface AppSettings {
   ignoreMixes: boolean;
   cookiesFromBrowser: string;
   customCookies: string;
+
+  // Tracks cookie updates pushed from the browser extension (for visibility/debugging).
+  extensionCookiesReceived: Array<{
+    domain: string;
+    sourceUrl?: string | null;
+    count: number;
+    receivedAt: number;
+  }>;
   sponsorBlock: boolean;
+  sponsorBlockSkipSponsors: boolean;
+  sponsorBlockSkipIntros: boolean;
+  sponsorBlockSkipSelfPromo: boolean;
+  sponsorBlockSkipInteraction: boolean;
   chapters: boolean;
   embedSubtitles: boolean;
   subtitleLanguages: string;
+
+  defaultProcessor: DefaultProcessor;
   youtubePlayerClient: string;
   usePlayerClientForExtraction: boolean;
   extractionPlayerClient: string;
@@ -187,11 +275,16 @@ export interface AppSettings {
   fileDownloadNotifications: boolean;
 
   downloadsViewMode: 'list' | 'grid';
+  downloadsSortType: 'date' | 'name' | 'size' | 'duration' | 'format';
+  downloadsSortDirection: 'asc' | 'desc';
   historyViewMode: 'list' | 'grid';
 
   showMobileNavLabels: boolean;
 
   customPresets: CustomPreset[];
+
+  // yt-dlp Advanced Settings
+  ytdlpAdvanced: YtDlpAdvancedSettings;
 }
 
 export const defaultSettings: AppSettings = {
@@ -215,7 +308,6 @@ export const defaultSettings: AppSettings = {
     'twitch.tv',
     'soundcloud.com',
     'spotify.com',
-    // Chinese platforms (lux backend)
     'bilibili.com',
     'b23.tv',
     'douyin.com',
@@ -252,7 +344,6 @@ export const defaultSettings: AppSettings = {
 
   closeBehavior: 'tray',
 
-  defaultProcessor: 'auto',
 
   autoUpdate: true,
   allowPreReleases: false,
@@ -266,7 +357,7 @@ export const defaultSettings: AppSettings = {
   backgroundVideo: 'https://nichind.dev/assets/video/atri.mp4',
   backgroundBlur: 20,
   backgroundOpacity: 100,
-  windowTint: 48,
+  windowTint: 32,
 
   accentColor: '#6366F1',
   accentStyle: 'solid',
@@ -295,13 +386,20 @@ export const defaultSettings: AppSettings = {
   ignoreMixes: true,
   cookiesFromBrowser: '',
   customCookies: '',
+  extensionCookiesReceived: [],
   sponsorBlock: false,
+  sponsorBlockSkipSponsors: true,
+  sponsorBlockSkipIntros: false,
+  sponsorBlockSkipSelfPromo: false,
+  sponsorBlockSkipInteraction: false,
   chapters: true,
   embedSubtitles: false,
   subtitleLanguages: 'en,ru',
-  youtubePlayerClient: 'tv,android_sdkless',
+
+  defaultProcessor: 'auto',
+  youtubePlayerClient: 'android_sdkless',
   usePlayerClientForExtraction: false,
-  extractionPlayerClient: 'android_sdkless,web_safari',
+  extractionPlayerClient: 'android_sdkless',
 
   thumbnailTheming: true,
   builderThumbnailGlow: true,
@@ -325,11 +423,15 @@ export const defaultSettings: AppSettings = {
   fileDownloadNotifications: true,
 
   downloadsViewMode: 'list',
+  downloadsSortType: 'date',
+  downloadsSortDirection: 'desc',
   historyViewMode: 'list',
 
   showMobileNavLabels: true,
 
   customPresets: [],
+
+  ytdlpAdvanced: defaultYtDlpAdvanced,
 };
 
 let store: Store | null = null;
@@ -392,6 +494,11 @@ export async function initSettings(): Promise<void> {
         }
       }
     }
+
+    loaded.ytdlpAdvanced = {
+      ...defaultYtDlpAdvanced,
+      ...(loaded.ytdlpAdvanced ?? {}),
+    };
 
     settings.set(loaded);
     settingsReady.set(true);

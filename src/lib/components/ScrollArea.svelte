@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import type { Snippet } from 'svelte';
 
   interface Props {
-    children?: any;
+    children?: Snippet;
     class?: string;
     maskSize?: number;
     /** Initial scroll position to restore */
@@ -146,6 +147,8 @@
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
+    /* Reserve scrollbar space to prevent layout shift during animations */
+    scrollbar-gutter: stable;
     /* 4px from right/bottom edge of window */
     margin-right: 4px;
     margin-bottom: 4px;

@@ -1,5 +1,6 @@
 import { writable, derived } from 'svelte/store';
 import { mediaCache, type MediaPreview } from './mediaCache';
+import { getQuickThumbnail } from '$lib/utils/format';
 
 export type ViewType = 'home' | 'video' | 'playlist' | 'channel';
 
@@ -93,7 +94,13 @@ function createNavigationStore() {
       }
 
       update((state) => {
-        const cachedData = mediaCache.getBestPreview(url) ?? undefined;
+        let cachedData = mediaCache.getBestPreview(url) ?? undefined;
+        if (!cachedData) {
+          const quickThumb = getQuickThumbnail(url);
+          if (quickThumb) {
+            cachedData = { thumbnail: quickThumb, isPlaylist: false };
+          }
+        }
 
         let newStack = [...state.stack, { type: 'video' as ViewType, url, cachedData }];
         if (newStack.length > MAX_STACK_DEPTH) {
@@ -114,7 +121,13 @@ function createNavigationStore() {
       }
 
       update((state) => {
-        const cachedData = mediaCache.getBestPreview(url) ?? undefined;
+        let cachedData = mediaCache.getBestPreview(url) ?? undefined;
+        if (!cachedData) {
+          const quickThumb = getQuickThumbnail(url);
+          if (quickThumb) {
+            cachedData = { thumbnail: quickThumb, isPlaylist: true };
+          }
+        }
 
         let newStack = [...state.stack, { type: 'playlist' as ViewType, url, cachedData }];
         if (newStack.length > MAX_STACK_DEPTH) {
@@ -135,7 +148,13 @@ function createNavigationStore() {
       }
 
       update((state) => {
-        const cachedData = mediaCache.getBestPreview(url) ?? undefined;
+        let cachedData = mediaCache.getBestPreview(url) ?? undefined;
+        if (!cachedData) {
+          const quickThumb = getQuickThumbnail(url);
+          if (quickThumb) {
+            cachedData = { thumbnail: quickThumb, isPlaylist: false };
+          }
+        }
 
         let newStack = [...state.stack, { type: 'channel' as ViewType, url, cachedData }];
         if (newStack.length > MAX_STACK_DEPTH) {

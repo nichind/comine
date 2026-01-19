@@ -8,34 +8,48 @@
     title: string;
     icon?: IconName;
     onResetSection?: () => void;
+    showHeader?: boolean;
     children?: import('svelte').Snippet;
   }
 
-  let { title, icon, onResetSection, children }: Props = $props();
+  let { title, icon, onResetSection, showHeader = true, children }: Props = $props();
 </script>
 
-<section class="settings-block">
-  <div class="block-header">
-    <div class="header-content">
-      {#if icon}
-        <Icon name={icon} size={18} class="header-icon" />
+<section class="settings-block" class:headerless={!showHeader}>
+  {#if showHeader}
+    <div class="block-header">
+      <div class="header-content">
+        {#if icon}
+          <Icon name={icon} size={18} class="header-icon" />
+        {/if}
+        <h2 class="block-title">{title}</h2>
+      </div>
+
+      {#if onResetSection}
+        <button
+          class="section-reset-btn"
+          onclick={onResetSection}
+          use:tooltip={$t('settings.resetSectionTooltip')}
+        >
+          <Icon name="undo" size={14} />
+          <span class="reset-text">{$t('settings.resetSection')}</span>
+        </button>
       {/if}
-      <h2 class="block-title">{title}</h2>
     </div>
-
+  {:else}
     {#if onResetSection}
-      <button
-        class="section-reset-btn"
-        onclick={onResetSection}
-        use:tooltip={$t('settings.resetSectionTooltip')}
-      >
-        <Icon name="undo" size={14} />
-        <span class="reset-text">{$t('settings.resetSection')}</span>
-      </button>
+      <div class="block-actions">
+        <button
+          class="section-reset-btn"
+          onclick={onResetSection}
+          use:tooltip={$t('settings.resetSectionTooltip')}
+        >
+          <Icon name="undo" size={14} />
+          <span class="reset-text">{$t('settings.resetSection')}</span>
+        </button>
+      </div>
     {/if}
-  </div>
-
-  <Divider mt={8} mb={4} />
+  {/if}
 
   <div class="block-content">
     {@render children?.()}
@@ -50,11 +64,16 @@
     gap: 8px;
   }
 
+  .settings-block.headerless {
+    gap: 0px;
+  }
+
   .block-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    min-height: 28px;
+    min-height: 32px;
+    margin-bottom: 8px;
   }
 
   .header-content {
@@ -72,11 +91,10 @@
   }
 
   .block-title {
-    font-size: 13px;
+    font-size: 20px;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.6);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    color: rgba(255, 255, 255, 0.85);
+    letter-spacing: 0.01em;
     margin: 0;
   }
 
@@ -103,7 +121,13 @@
   .block-content {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 10px;
+  }
+
+  .block-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
   }
 
   @media (max-width: 640px) {

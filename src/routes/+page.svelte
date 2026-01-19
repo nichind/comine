@@ -30,13 +30,16 @@
   import { type ChannelEntry, mediaCache } from '$lib/stores/mediaCache';
   import ViewStack, { type ViewInstance } from '$lib/components/ViewStack.svelte';
   import type { IconName } from '$lib/components/Icon.svelte';
+  import Toggle from '$lib/components/Toggle.svelte';
 
-  import { isAndroid, isAndroidYtDlpReady, getPlaylistInfoOnAndroid } from '$lib/utils/android';
+  import { isAndroid, isAndroidYtDlpReady } from '$lib/utils/android';
   import {
     settings,
     settingsReady,
     updateSetting,
     updateSettings,
+    defaultYtDlpAdvanced,
+    type YtDlpAdvancedSettings as YtDlpAdvancedSettingsType,
     type CustomPreset,
     type VideoQuality,
     type DownloadMode,
@@ -86,8 +89,6 @@
     scrollMaskStyle = `mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade}); -webkit-mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade});`;
   }
 
-  import { detectBackendForUrl } from '$lib/utils/backend-detection';
-
   let ytdlpInstalled = $derived($deps.ytdlp?.installed ?? false);
   let luxInstalled = $derived($deps.lux?.installed ?? false);
   let aria2Installed = $derived($deps.aria2?.installed ?? false);
@@ -99,22 +100,14 @@
     return u.includes('youtube.com') || u.includes('youtu.be');
   }
 
-  function checkIsLuxUrl(urlStr: string): boolean {
-    if (!urlStr.trim()) return false;
-    return detectBackendForUrl(urlStr) === 'lux';
-  }
-
   function checkIsPlaylistUrl(urlStr: string): boolean {
     if (!urlStr.trim()) return false;
-    return (
-      checkIsYouTubeUrl(urlStr) &&
-      isLikelyPlaylist(urlStr.trim(), { ignoreMixes: $settings.ignoreMixes })
-    );
+    return isLikelyPlaylist(urlStr.trim(), { ignoreMixes: $settings.ignoreMixes });
   }
 
   function checkIsChannelUrl(urlStr: string): boolean {
     if (!urlStr.trim()) return false;
-    return checkIsYouTubeUrl(urlStr) && isLikelyChannel(urlStr.trim());
+    return isLikelyChannel(urlStr.trim());
   }
 
   type PlatformIcon =
@@ -151,16 +144,10 @@
 
   // Derived state for current URL detection
   let isYouTubeUrl = $derived(checkIsYouTubeUrl(url));
-  let isLuxUrl = $derived(checkIsLuxUrl(url));
   let isPlaylistUrl = $derived(checkIsPlaylistUrl(url));
   let isChannelUrl = $derived(checkIsChannelUrl(url));
-  let isVideoUrl = $derived(isYouTubeUrl || isLuxUrl);
+  let isVideoUrl = $derived(!!url.trim());
   let platformIcon = $derived(getPlatformIcon(url));
-
-  let activeBackend = $derived.by(() => {
-    if (!url.trim()) return null;
-    return detectBackendForUrl(url);
-  });
 
   $effect(() => {
     const urlParam = $page.url.searchParams.get('url');
@@ -196,14 +183,16 @@
     }
   });
 
-  let canDownload = $derived(isAndroid() ? androidReady : $deps.ytdlp?.installed);
+  let canDownload = $derived(
+    isAndroid() ? androidReady : ($deps.ytdlp?.installed || $deps.lux?.installed)
+  );
 
   let isDownloading = $derived($activeDownloadsCount > 0);
 
-  let generalExpanded = $state(true);
-  let ytdlpExpanded = $state(true);
-  let luxExpanded = $state(false);
-  let advancedExpanded = $state(false);
+  // Collapsible block states - simplified to 3 blocks
+  let downloadOptionsExpanded = $state(true);
+  let mediaSettingsExpanded = $state(false);
+  let downloaderExpanded = $state(false);
 
   let selectedPreset = $state($settings.selectedPreset ?? 'best');
   let videoQuality = $state<VideoQuality>($settings.defaultVideoQuality ?? 'max');
@@ -219,40 +208,48 @@
   let cookiesFromBrowser = $state($settings.cookiesFromBrowser ?? '');
   let customCookies = $state($settings.customCookies ?? '');
   let sponsorBlock = $state($settings.sponsorBlock ?? false);
+  let sponsorBlockSkipSponsors = $state($settings.sponsorBlockSkipSponsors ?? true);
+  let sponsorBlockSkipIntros = $state($settings.sponsorBlockSkipIntros ?? false);
+  let sponsorBlockSkipSelfPromo = $state($settings.sponsorBlockSkipSelfPromo ?? false);
+  let sponsorBlockSkipInteraction = $state($settings.sponsorBlockSkipInteraction ?? false);
   let chapters = $state($settings.chapters ?? true);
   let embedSubtitles = $state($settings.embedSubtitles ?? false);
   let subtitleLanguages = $state($settings.subtitleLanguages ?? 'en,ru');
   let embedThumbnail = $state($settings.embedThumbnail ?? true);
   let downloadSpeedLimit = $state($settings.downloadSpeedLimit ?? 0);
+  let ytdlpAdvanced = $state<YtDlpAdvancedSettingsType>($settings.ytdlpAdvanced ?? { ...defaultYtDlpAdvanced });
 
-  let settingsInitialized = false;
   $effect(() => {
-    if ($settingsReady && $settings && !settingsInitialized) {
-      selectedPreset = $settings.selectedPreset ?? 'best';
-      videoQuality = $settings.defaultVideoQuality ?? 'max';
-      downloadMode = $settings.defaultDownloadMode ?? 'auto';
-      audioQuality = $settings.defaultAudioQuality ?? 'best';
-      convertToMp4 = $settings.convertToMp4 ?? false;
-      remux = $settings.remux ?? true;
-      clearMetadata = $settings.clearMetadata ?? false;
-      dontShowInHistory = $settings.dontShowInHistory ?? false;
-      usePlaylistFolders = $settings.usePlaylistFolders ?? true;
-      useAria2 = $settings.useAria2 ?? false;
-      ignoreMixes = $settings.ignoreMixes ?? true;
-      cookiesFromBrowser = $settings.cookiesFromBrowser ?? '';
-      customCookies = $settings.customCookies ?? '';
-      sponsorBlock = $settings.sponsorBlock ?? false;
-      chapters = $settings.chapters ?? true;
-      embedSubtitles = $settings.embedSubtitles ?? false;
-      subtitleLanguages = $settings.subtitleLanguages ?? 'en,ru';
-      embedThumbnail = $settings.embedThumbnail ?? true;
-      downloadSpeedLimit = $settings.downloadSpeedLimit ?? 0;
-      settingsInitialized = true;
-    }
+    if (!$settingsReady) return;
+
+    selectedPreset = $settings.selectedPreset ?? 'best';
+    videoQuality = $settings.defaultVideoQuality ?? 'max';
+    downloadMode = $settings.defaultDownloadMode ?? 'auto';
+    audioQuality = $settings.defaultAudioQuality ?? 'best';
+    convertToMp4 = $settings.convertToMp4 ?? false;
+    remux = $settings.remux ?? true;
+    clearMetadata = $settings.clearMetadata ?? false;
+    dontShowInHistory = $settings.dontShowInHistory ?? false;
+    usePlaylistFolders = $settings.usePlaylistFolders ?? true;
+    useAria2 = $settings.useAria2 ?? false;
+    ignoreMixes = $settings.ignoreMixes ?? true;
+    cookiesFromBrowser = $settings.cookiesFromBrowser ?? '';
+    customCookies = $settings.customCookies ?? '';
+    sponsorBlock = $settings.sponsorBlock ?? false;
+    sponsorBlockSkipSponsors = $settings.sponsorBlockSkipSponsors ?? true;
+    sponsorBlockSkipIntros = $settings.sponsorBlockSkipIntros ?? false;
+    sponsorBlockSkipSelfPromo = $settings.sponsorBlockSkipSelfPromo ?? false;
+    sponsorBlockSkipInteraction = $settings.sponsorBlockSkipInteraction ?? false;
+    chapters = $settings.chapters ?? true;
+    embedSubtitles = $settings.embedSubtitles ?? false;
+    subtitleLanguages = $settings.subtitleLanguages ?? 'en,ru';
+    embedThumbnail = $settings.embedThumbnail ?? true;
+    downloadSpeedLimit = $settings.downloadSpeedLimit ?? 0;
+    ytdlpAdvanced = $settings.ytdlpAdvanced ?? { ...defaultYtDlpAdvanced };
   });
 
   $effect(() => {
-    if (settingsInitialized && $deps.hasCheckedAll) {
+    if ($settingsReady && $deps.hasCheckedAll) {
       if (!aria2Installed && useAria2) {
         useAria2 = false;
         saveSettings();
@@ -290,11 +287,16 @@
       cookiesFromBrowser,
       customCookies,
       sponsorBlock,
+      sponsorBlockSkipSponsors,
+      sponsorBlockSkipIntros,
+      sponsorBlockSkipSelfPromo,
+      sponsorBlockSkipInteraction,
       chapters,
       embedSubtitles,
       subtitleLanguages,
       embedThumbnail,
       downloadSpeedLimit,
+      ytdlpAdvanced,
     });
   }
 
@@ -321,6 +323,11 @@
     { value: 'safari', label: 'Safari' },
     { value: 'custom', label: $t('download.options.customCookies') },
   ];
+
+  function getBrowserLabel(browser: string): string {
+    const option = browserOptions.find((o) => o.value === browser);
+    return option?.label ?? browser;
+  }
 
   const videoQualityOptions: { value: VideoQuality; label: string }[] = [
     { value: 'max', label: $t('download.quality.max') },
@@ -381,7 +388,15 @@
       sponsorBlock = customPreset.sponsorBlock ?? false;
       chapters = customPreset.chapters ?? true;
       embedSubtitles = customPreset.embedSubtitles ?? false;
+      subtitleLanguages = customPreset.subtitleLanguages ?? 'en,ru';
       embedThumbnail = customPreset.embedThumbnail ?? true;
+      // Restore output template if saved in preset
+      if (customPreset.outputTemplate) {
+        updateSetting('ytdlpAdvanced', {
+          ...($settings.ytdlpAdvanced ?? {}),
+          outputTemplate: customPreset.outputTemplate,
+        });
+      }
       saveSettings();
       return;
     }
@@ -450,7 +465,9 @@
       sponsorBlock,
       chapters,
       embedSubtitles,
+      subtitleLanguages,
       embedThumbnail,
+      outputTemplate: $settings.ytdlpAdvanced?.outputTemplate,
     };
 
     const updatedPresets = [...($settings.customPresets ?? []), newPreset];
@@ -498,6 +515,18 @@
         break;
       case 'sponsorBlock':
         sponsorBlock = value;
+        break;
+      case 'sponsorBlockSkipSponsors':
+        sponsorBlockSkipSponsors = value;
+        break;
+      case 'sponsorBlockSkipIntros':
+        sponsorBlockSkipIntros = value;
+        break;
+      case 'sponsorBlockSkipSelfPromo':
+        sponsorBlockSkipSelfPromo = value;
+        break;
+      case 'sponsorBlockSkipInteraction':
+        sponsorBlockSkipInteraction = value;
         break;
       case 'chapters':
         chapters = value;
@@ -588,6 +617,10 @@
 
     logs.info('download', `Using custom tracks: ${selection.formatString}`);
 
+    // Convert sponsorblock categories array to individual boolean fields
+    const hasSponsorBlock = selection.sponsorblock && selection.sponsorblock.length > 0;
+    const sponsorCategories = selection.sponsorblock ?? [];
+
     const queueId = queue.add(downloadUrl, {
       videoQuality: selection.formatString,
       downloadMode: selection.downloadMode,
@@ -600,12 +633,17 @@
       ignoreMixes,
       cookiesFromBrowser,
       customCookies,
-      sponsorBlock:
-        selection.sponsorblock && selection.sponsorblock.length > 0 ? true : sponsorBlock,
+      sponsorBlock: hasSponsorBlock ? true : sponsorBlock,
+      sponsorBlockSkipSponsors: hasSponsorBlock ? sponsorCategories.includes('sponsor') : sponsorBlockSkipSponsors,
+      sponsorBlockSkipIntros: hasSponsorBlock ? (sponsorCategories.includes('intro') || sponsorCategories.includes('outro')) : sponsorBlockSkipIntros,
+      sponsorBlockSkipSelfPromo: hasSponsorBlock ? sponsorCategories.includes('selfpromo') : sponsorBlockSkipSelfPromo,
+      sponsorBlockSkipInteraction: hasSponsorBlock ? sponsorCategories.includes('interaction') : sponsorBlockSkipInteraction,
       chapters: selection.embedChapters ?? chapters,
       embedSubtitles: selection.embedSubs ?? embedSubtitles,
       subtitleLanguages: selection.subLangs ?? subtitleLanguages,
       embedThumbnail: selection.embedThumbnail ?? embedThumbnail,
+      outputTemplate: selection.outputTemplate,
+      clipRanges: selection.clipRanges,
       prefetchedInfo: {
         title: selection.title,
         author: selection.author,
@@ -657,7 +695,11 @@
       author: e.entry.uploader ?? undefined,
       duration: e.entry.duration ?? undefined,
       downloadMode: e.settings.downloadMode,
-      sponsorBlock: e.settings.skipSponsors,
+      sponsorBlock: e.settings.skipSponsors || e.settings.skipIntros || e.settings.skipSelfPromo || e.settings.skipInteraction,
+      sponsorBlockSkipSponsors: e.settings.skipSponsors,
+      sponsorBlockSkipIntros: e.settings.skipIntros,
+      sponsorBlockSkipSelfPromo: e.settings.skipSelfPromo,
+      sponsorBlockSkipInteraction: e.settings.skipInteraction,
       chapters: e.settings.embedChapters,
       embedSubtitles: e.settings.embedSubs,
       subtitleLanguages: e.settings.subLangs,
@@ -725,7 +767,11 @@
       author: selection.channelInfo.name,
       duration: e.entry.duration ?? undefined,
       downloadMode: e.settings.downloadMode,
-      sponsorBlock: e.settings.skipSponsors,
+      sponsorBlock: e.settings.skipSponsors || e.settings.skipIntros || e.settings.skipSelfPromo || e.settings.skipInteraction,
+      sponsorBlockSkipSponsors: e.settings.skipSponsors,
+      sponsorBlockSkipIntros: e.settings.skipIntros,
+      sponsorBlockSkipSelfPromo: e.settings.skipSelfPromo,
+      sponsorBlockSkipInteraction: e.settings.skipInteraction,
       chapters: e.settings.embedChapters,
       embedSubtitles: e.settings.embedSubs,
       subtitleLanguages: e.settings.subLangs,
@@ -805,16 +851,13 @@
       }
     }
 
-    // Check mediaCache for any prefetched info (from extension, clipboard, etc)
     const cachedPreview = mediaCache.getPreview(downloadUrl);
-    const prefetchedInfo = cachedPreview
-      ? {
-          title: cachedPreview.title,
-          author: cachedPreview.author,
-          thumbnail: cachedPreview.thumbnail,
-          duration: cachedPreview.duration,
-        }
-      : undefined;
+    const prefetchedInfo = cachedPreview ? {
+      title: cachedPreview.title,
+      author: cachedPreview.author,
+      thumbnail: cachedPreview.thumbnail,
+      duration: cachedPreview.duration,
+    } : undefined;
 
     if (prefetchedInfo?.title) {
       logs.debug('download', `Using cached preview info: ${prefetchedInfo.title}`);
@@ -866,7 +909,7 @@
       navigation.openChannel(url.trim());
     } else if (isPlaylistUrl) {
       navigation.openPlaylist(url.trim());
-    } else if (isYouTubeUrl || isLuxUrl) {
+    } else {
       navigation.openVideo(url.trim());
     }
   }
@@ -901,7 +944,6 @@
                       class="input-badge"
                       class:playlist={isPlaylistUrl}
                       class:channel={isChannelUrl}
-                      class:lux={isLuxUrl && !isPlaylistUrl && !isChannelUrl}
                       onclick={openAdvancedView}
                       title={isChannelUrl ? 'Channel' : isPlaylistUrl ? 'Playlist' : 'Video'}
                     >
@@ -945,12 +987,12 @@
 
                 <!-- Settings Blocks -->
                 <div class="settings-blocks">
-                  <!-- General Settings Block -->
+                  <!-- Download Options Block (Presets + Quality + Post-processing) -->
                   <CollapsibleBlock
                     title={$t('download.blocks.general')}
                     icon="settings"
                     description={$t('download.blocks.generalDesc')}
-                    bind:expanded={generalExpanded}
+                    bind:expanded={downloadOptionsExpanded}
                   >
                     <!-- Presets -->
                     <div class="options-group">
@@ -1022,11 +1064,6 @@
                           disabled={!ffmpegInstalled}
                         />
                         <Checkbox
-                          checked={embedThumbnail}
-                          label={$t('download.blocks.embedThumbnail')}
-                          onchange={(val) => handleCheckboxChange('embedThumbnail', val)}
-                        />
-                        <Checkbox
                           checked={clearMetadata}
                           label={$t('download.options.clearMetadata')}
                           onchange={(val) => handleCheckboxChange('clearMetadata', val)}
@@ -1035,132 +1072,131 @@
                     </div>
                   </CollapsibleBlock>
 
-                  <!-- yt-dlp Backend Block -->
+                  <!-- Media Settings Block (SponsorBlock, Embed, Subtitles) -->
                   <CollapsibleBlock
-                    title="yt-dlp"
+                    title={$t('download.blocks.youtubeOptions')}
                     icon="video"
-                    description={$t('download.blocks.ytdlpDesc')}
-                    badge={ytdlpInstalled
-                      ? $t('settings.deps.installed')
-                      : $t('settings.deps.notInstalled')}
-                    badgeType={ytdlpInstalled ? 'success' : 'error'}
-                    disabled={!ytdlpInstalled}
-                    disabledReason={!ytdlpInstalled
-                      ? $t('download.blocks.installFirst')
-                      : undefined}
-                    bind:expanded={ytdlpExpanded}
+                    description="SponsorBlock, chapters, thumbnails, and subtitles"
+                    bind:expanded={mediaSettingsExpanded}
                   >
-                    <!-- Cookies -->
+                    <!-- SponsorBlock -->
                     <div class="options-group">
-                      <span class="group-label">{$t('download.blocks.authentication')}</span>
-                      <div class="options-row">
-                        <SettingButton
-                          label={$t('download.options.cookies')}
-                          value={cookiesFromBrowser
-                            ? getLabel(browserOptions, cookiesFromBrowser)
-                            : $t('download.options.noCookies')}
-                          onclick={() => (cookiesModalOpen = true)}
-                        />
-                      </div>
-                    </div>
-
-                    <!-- YouTube-specific options -->
-                    <div class="options-group">
-                      <span class="group-label">{$t('download.blocks.youtubeOptions')}</span>
-                      <div class="checkbox-grid">
-                        <Checkbox
-                          checked={ignoreMixes}
-                          label={$t('download.options.ignoreMixes')}
-                          onchange={(val) => handleCheckboxChange('ignoreMixes', val)}
-                        />
-                        <Checkbox
+                      <div class="group-header">
+                        <span class="group-label">SponsorBlock</span>
+                        <Toggle
                           checked={sponsorBlock}
-                          label={$t('download.blocks.sponsorBlock')}
                           onchange={(val) => handleCheckboxChange('sponsorBlock', val)}
                         />
-                        <Checkbox
-                          checked={chapters}
-                          label={$t('download.blocks.chapters')}
-                          onchange={(val) => handleCheckboxChange('chapters', val)}
-                        />
-                        <Checkbox
-                          checked={embedSubtitles}
-                          label={$t('download.blocks.embedSubtitles')}
-                          onchange={(val) => handleCheckboxChange('embedSubtitles', val)}
-                        />
                       </div>
-                      {#if embedSubtitles}
-                        <div class="inline-input">
-                          <label for="subtitle-langs"
-                            >{$t('download.blocks.subtitleLanguages')}</label
-                          >
-                          <input
-                            id="subtitle-langs"
-                            type="text"
-                            bind:value={subtitleLanguages}
-                            placeholder="en,ru,es"
-                            class="small-input"
-                            onchange={() => saveSettings()}
+                      {#if sponsorBlock}
+                        <div class="checkbox-grid">
+                          <Checkbox
+                            checked={sponsorBlockSkipSponsors}
+                            label={$t('download.tracks.skipSponsors')}
+                            onchange={(val) => handleCheckboxChange('sponsorBlockSkipSponsors', val)}
+                          />
+                          <Checkbox
+                            checked={sponsorBlockSkipIntros}
+                            label={$t('download.tracks.skipIntros')}
+                            onchange={(val) => handleCheckboxChange('sponsorBlockSkipIntros', val)}
+                          />
+                          <Checkbox
+                            checked={sponsorBlockSkipSelfPromo}
+                            label={$t('download.tracks.skipSelfPromo')}
+                            onchange={(val) => handleCheckboxChange('sponsorBlockSkipSelfPromo', val)}
+                          />
+                          <Checkbox
+                            checked={sponsorBlockSkipInteraction}
+                            label={$t('download.tracks.skipInteraction')}
+                            onchange={(val) => handleCheckboxChange('sponsorBlockSkipInteraction', val)}
                           />
                         </div>
                       {/if}
                     </div>
 
-                    <!-- Downloader options -->
+                    <!-- Embed Options -->
                     <div class="options-group">
-                      <span class="group-label">{$t('download.blocks.downloader')}</span>
+                      <span class="group-label">{$t('download.tracks.embedOptions')}</span>
                       <div class="checkbox-grid">
                         <Checkbox
+                          checked={chapters}
+                          label={$t('download.tracks.embedChapters')}
+                          onchange={(val) => handleCheckboxChange('chapters', val)}
+                        />
+                        <Checkbox
+                          checked={embedThumbnail}
+                          label={$t('download.tracks.embedThumbnail')}
+                          onchange={(val) => handleCheckboxChange('embedThumbnail', val)}
+                        />
+                      </div>
+                    </div>
+
+                    <!-- Subtitles -->
+                    <div class="options-group">
+                      <div class="group-header">
+                        <span class="group-label">{$t('download.tracks.subtitles')}</span>
+                        <Toggle
+                          checked={embedSubtitles}
+                          onchange={(val) => handleCheckboxChange('embedSubtitles', val)}
+                        />
+                      </div>
+                      {#if embedSubtitles}
+                        <div class="subtitle-row">
+                          <span class="subtitle-hint">{$t('download.tracks.subLangsHint')}</span>
+                          <input
+                            type="text"
+                            class="lang-input"
+                            value={subtitleLanguages}
+                            placeholder="en,ru,es"
+                            onchange={(e) => {
+                              subtitleLanguages = (e.target as HTMLInputElement).value;
+                              saveSettings();
+                            }}
+                          />
+                        </div>
+                      {/if}
+                    </div>
+                  </CollapsibleBlock>
+
+                  <!-- Downloader Block (Cookies, aria2, Speed, Playlists) -->
+                  <CollapsibleBlock
+                    title={$t('download.blocks.downloader')}
+                    icon="tuning2"
+                    description={$t('download.blocks.advancedDesc')}
+                    bind:expanded={downloaderExpanded}
+                  >
+                    <!-- Authentication -->
+                    <div class="options-group">
+                      <span class="group-label">{$t('download.blocks.authentication')}</span>
+                      <div class="setting-row">
+                        <span class="setting-desc">{$t('download.blocks.authenticationHint')}</span>
+                        <SettingButton
+                          label={$t('download.options.cookies')}
+                          value={cookiesFromBrowser ? getBrowserLabel(cookiesFromBrowser) : $t('download.options.noCookies')}
+                          onclick={() => (cookiesModalOpen = true)}
+                        />
+                      </div>
+                    </div>
+
+                    <!-- Downloader Choice -->
+                    <div class="options-group">
+                      <div class="group-header">
+                        <span class="group-label">{$t('download.options.useAria2')}</span>
+                        <Toggle
                           checked={useAria2}
-                          label={$t('download.options.useAria2')}
                           onchange={(val) => handleCheckboxChange('useAria2', val)}
                           disabled={!aria2Installed}
                         />
                       </div>
                       {#if !aria2Installed}
-                        <p class="hint-text">{$t('download.blocks.aria2NotInstalled')}</p>
+                        <span class="hint-text">{$t('download.blocks.aria2NotInstalled')}</span>
                       {:else if useAria2}
-                        <p class="hint-text success-hint">
-                          <Icon name="check" size={14} />
-                          {$t('download.blocks.aria2Active')}
-                        </p>
+                        <span class="hint-text success">{$t('download.blocks.aria2Active')}</span>
+                      {:else}
+                        <span class="hint-text">{$t('download.blocks.aria2Hint')}</span>
                       {/if}
                     </div>
-                  </CollapsibleBlock>
 
-                  <!-- Lux Backend Block -->
-                  <CollapsibleBlock
-                    title="Lux"
-                    icon="globe"
-                    description={$t('download.blocks.luxDesc')}
-                    badge={luxInstalled
-                      ? $t('settings.deps.installed')
-                      : $t('settings.deps.notInstalled')}
-                    badgeType={luxInstalled ? 'success' : 'warning'}
-                    disabled={!luxInstalled}
-                    disabledReason={!luxInstalled ? $t('download.blocks.installFirst') : undefined}
-                    bind:expanded={luxExpanded}
-                  >
-                    <div class="lux-info">
-                      <p class="lux-description">{$t('download.blocks.luxInfo')}</p>
-                      <div class="supported-sites">
-                        <span class="site-tag">Bilibili</span>
-                        <span class="site-tag">Douyin</span>
-                        <span class="site-tag">iQIYI</span>
-                        <span class="site-tag">Youku</span>
-                        <span class="site-tag">Tencent Video</span>
-                        <span class="site-tag">+40 more</span>
-                      </div>
-                    </div>
-                  </CollapsibleBlock>
-
-                  <!-- Advanced Block -->
-                  <CollapsibleBlock
-                    title={$t('download.blocks.advanced')}
-                    icon="tuning2"
-                    description={$t('download.blocks.advancedDesc')}
-                    bind:expanded={advancedExpanded}
-                  >
                     <!-- Speed Limit -->
                     <div class="options-group">
                       <span class="group-label">{$t('settings.downloads.downloadSpeedLimit')}</span>
@@ -1213,17 +1249,25 @@
                     </div>
 
                     <!-- Other Options -->
-                    <div class="checkbox-grid">
-                      <Checkbox
-                        checked={usePlaylistFolders}
-                        label={$t('download.options.usePlaylistFolders')}
-                        onchange={(val) => handleCheckboxChange('usePlaylistFolders', val)}
-                      />
-                      <Checkbox
-                        checked={dontShowInHistory}
-                        label={$t('download.options.dontShowInHistory')}
-                        onchange={(val) => handleCheckboxChange('dontShowInHistory', val)}
-                      />
+                    <div class="options-group">
+                      <span class="group-label">{$t('download.options.other')}</span>
+                      <div class="checkbox-grid">
+                        <Checkbox
+                          checked={ignoreMixes}
+                          label={$t('download.options.ignoreMixes')}
+                          onchange={(val) => handleCheckboxChange('ignoreMixes', val)}
+                        />
+                        <Checkbox
+                          checked={usePlaylistFolders}
+                          label={$t('download.options.usePlaylistFolders')}
+                          onchange={(val) => handleCheckboxChange('usePlaylistFolders', val)}
+                        />
+                        <Checkbox
+                          checked={dontShowInHistory}
+                          label={$t('download.options.dontShowInHistory')}
+                          onchange={(val) => handleCheckboxChange('dontShowInHistory', val)}
+                        />
+                      </div>
                     </div>
                   </CollapsibleBlock>
                 </div>
@@ -1240,6 +1284,10 @@
                 {customCookies}
                 defaults={{
                   sponsorBlock,
+                  sponsorBlockSkipSponsors,
+                  sponsorBlockSkipIntros,
+                  sponsorBlockSkipSelfPromo,
+                  sponsorBlockSkipInteraction,
                   chapters,
                   embedSubtitles,
                   subtitleLanguages,
@@ -1262,6 +1310,10 @@
                 defaultDownloadMode={downloadMode}
                 defaults={{
                   sponsorBlock,
+                  sponsorBlockSkipSponsors,
+                  sponsorBlockSkipIntros,
+                  sponsorBlockSkipSelfPromo,
+                  sponsorBlockSkipInteraction,
                   chapters,
                   embedSubtitles,
                   subtitleLanguages,
@@ -1284,6 +1336,10 @@
                 defaults={{
                   downloadMode,
                   sponsorBlock,
+                  sponsorBlockSkipSponsors,
+                  sponsorBlockSkipIntros,
+                  sponsorBlockSkipSelfPromo,
+                  sponsorBlockSkipInteraction,
                   chapters,
                   embedSubtitles,
                   subtitleLanguages,
@@ -1612,6 +1668,67 @@
     letter-spacing: 0.5px;
   }
 
+  .group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .setting-desc {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+    flex: 1;
+    min-width: 150px;
+  }
+
+  .subtitle-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+  }
+
+  .subtitle-hint {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .lang-input {
+    width: 120px;
+    padding: 6px 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    color: white;
+    font-size: 12px;
+    font-family: inherit;
+  }
+
+  .lang-input:focus {
+    outline: none;
+    border-color: var(--accent, #6366f1);
+  }
+
+  .hint-text {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+    margin-top: 4px;
+  }
+
+  .hint-text.success {
+    color: rgb(34, 197, 94);
+  }
+
   .options-row {
     display: flex;
     flex-wrap: wrap;
@@ -1678,90 +1795,6 @@
     .checkbox-grid {
       grid-template-columns: 1fr;
     }
-  }
-
-  .hint-text {
-    font-size: 12px;
-    color: rgba(251, 191, 36, 0.8);
-    margin: 0;
-    padding: 8px 12px;
-    background: rgba(251, 191, 36, 0.1);
-    border-radius: 6px;
-  }
-
-  .hint-text.success-hint {
-    color: rgba(74, 222, 128, 0.9);
-    background: rgba(74, 222, 128, 0.1);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  /* Inline input for subtitle languages etc */
-  .inline-input {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 8px;
-    padding: 8px 12px;
-    background: rgba(255, 255, 255, 0.04);
-    border-radius: 8px;
-  }
-
-  .inline-input label {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.7);
-    white-space: nowrap;
-  }
-
-  .small-input {
-    flex: 1;
-    max-width: 200px;
-    padding: 6px 10px;
-    font-size: 13px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 6px;
-    color: white;
-    outline: none;
-    transition: border-color 0.15s;
-  }
-
-  .small-input:focus {
-    border-color: var(--accent-alpha-hover, rgba(99, 102, 241, 0.5));
-  }
-
-  .small-input::placeholder {
-    color: rgba(255, 255, 255, 0.4);
-  }
-
-  /* Lux block specific */
-  .lux-info {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .lux-description {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.7);
-    margin: 0;
-    line-height: 1.5;
-  }
-
-  .supported-sites {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  .site-tag {
-    padding: 4px 10px;
-    font-size: 11px;
-    font-weight: 500;
-    background: rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
-    color: rgba(255, 255, 255, 0.7);
   }
 
   /* Status */
@@ -1947,15 +1980,6 @@
 
   .input-badge.channel:hover {
     background: rgba(239, 68, 68, 0.25);
-  }
-
-  .input-badge.lux {
-    background: rgba(0, 191, 255, 0.15);
-    color: #00bfff;
-  }
-
-  .input-badge.lux:hover {
-    background: rgba(0, 191, 255, 0.25);
   }
 
   .customize-btn {

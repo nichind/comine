@@ -199,6 +199,9 @@
       "skipIntros": "Skip intros/outros",
       "skipSelfPromo": "Skip self-promo",
       "skipInteraction": "Skip interaction",
+      "clipRange": "Clip",
+      "resetToFull": "Reset to full video",
+      "fullVideo": "Full video",
       "embedSubs": "Embed subtitles",
       "subLangsHint": "Language codes (e.g. en,es,de)",
       "subtitles": "Subtitles",
@@ -211,7 +214,15 @@
       "embedThumbnail": "Thumbnail",
       "embedMetadata": "Metadata",
       "hint": "You can download now with best quality, or wait for formats to load",
-      "title": "Track Selection"
+      "title": "Track Selection",
+      "outputFilename": "Output Filename",
+      "template": "Template",
+      "customName": "Custom",
+      "templateHelp": "Click for template variable reference",
+      "preview": "Preview",
+      "enterFilename": "Enter custom filename",
+      "clickToEdit": "Click to edit filename",
+      "extensionAuto": "Extension is set automatically based on selected format"
     },
     "blocks": {
       "general": "General",
@@ -220,15 +231,19 @@
       "embedThumbnail": "Embed thumbnail",
       "ytdlpDesc": "Universal video downloader for 1000+ sites",
       "installFirst": "Install in Settings",
+      "basicOptions": "Basic Options",
+      "basicOptionsDesc": "Authentication, YouTube features, and downloader",
       "authentication": "Authentication",
+      "authenticationHint": "Use browser cookies for age-restricted or private content",
       "youtubeOptions": "YouTube Options",
       "sponsorBlock": "Skip sponsors (SponsorBlock)",
       "chapters": "Embed chapters",
       "embedSubtitles": "Embed subtitles",
       "subtitleLanguages": "Subtitle languages",
       "downloader": "Downloader",
-      "aria2NotInstalled": "Install aria2 in Settings to enable faster downloads",
-      "aria2Active": "aria2 will be used for faster downloads",
+      "aria2NotInstalled": "Install aria2 in Settings to enable",
+      "aria2Active": "Faster parallel downloads enabled",
+      "aria2Hint": "Use aria2 for faster parallel downloads",
       "luxDesc": "Optimized for Chinese video platforms",
       "luxInfo": "Lux is mainly focused on Chinese video platforms, on big sites like BiliBIli yt-dlp still may perform better.",
       "advanced": "Advanced",
@@ -269,8 +284,10 @@
     },
     "table": {
       "title": "Title",
+      "format": "Format",
       "ext": "Ext",
       "size": "Size",
+      "duration": "Length",
       "length": "Length"
     },
     "dateGroups": {
@@ -284,11 +301,20 @@
       "name": "Sorted by name",
       "size": "Sorted by size"
     },
+    "sortDate": "Date",
+    "sortName": "Name",
+    "sortSize": "Size",
+    "filterAll": "All",
+    "filterVideo": "Video",
+    "filterAudio": "Audio",
+    "filterImage": "Image",
     "sort": {
       "label": "Sort by",
       "date": "Date",
       "name": "Name",
-      "size": "Size"
+      "size": "Size",
+      "ascending": "Ascending",
+      "descending": "Descending"
     },
     "openInApp": "Open in app",
     "openAuthor": "View author",
@@ -377,8 +403,12 @@
     },
     "processing": {
       "title": "Download Backend",
+      "groups": {
+        "backend": "Backend",
+        "youtube": "YouTube"
+      },
       "defaultProcessor": "Default processor",
-      "defaultProcessorDescription": "Choose which tool processes your downloads. Auto mode picks the best one for each URL.",
+      "defaultProcessorDescription": "Which backend to use by default",
       "auto": "Auto (recommended)",
       "autoDescription": "Automatically selects the best processor for each URL. Uses cobalt for supported sites (faster), falls back to yt-dlp for everything else.",
       "youtubePlayerClient": "YouTube player clients",
@@ -572,6 +602,12 @@
     },
     "notifications": {
       "title": "Notifications",
+      "groups": {
+        "general": "General",
+        "layout": "Layout",
+        "style": "Style",
+        "timing": "Timing"
+      },
       "enabled": "Enable popup notifications",
       "enabledTooltip": "Show popup notifications when media URLs are detected in clipboard while the app is minimized",
       "position": "Notification position",
@@ -752,7 +788,9 @@
     "channel": "Channel",
     "youtubeVideo": "YouTube Video",
     "youtubePlaylist": "YouTube Playlist",
-    "youtubeChannel": "YouTube Channel"
+    "youtubeChannel": "YouTube Channel",
+    "enabled": "Enabled",
+    "disabled": "Disabled"
   },
   "window": {
     "minimize": "Minimize",
@@ -903,5 +941,80 @@
     "setupRequired": "Setup required",
     "componentsNeeded": "components needed",
     "installAll": "Install All"
+  },
+  "ytdlp": {
+    "advanced": {
+      "title": "Advanced Settings",
+      "description": "Fine-tune yt-dlp behavior for extraction, download, and post-processing",
+      "enable": "Enable Advanced Mode",
+      "enableHint": "Show advanced yt-dlp configuration options",
+      "youtube": {
+        "title": "YouTube",
+        "description": "YouTube-specific player client settings"
+      },
+      "extraction": {
+        "title": "Extraction",
+        "description": "Control how video information is fetched",
+        "skipWebpage": "Skip webpage fetch",
+        "skipWebpageHint": "Don't download the video webpage (faster, may miss some metadata)",
+        "skipConfigs": "Skip player configs",
+        "skipConfigsHint": "Don't download player configuration files (faster extraction)",
+        "flatPlaylist": "Flat playlist extraction",
+        "flatPlaylistHint": "Extract playlist without downloading video metadata",
+        "noPlaylist": "Single video only",
+        "noPlaylistHint": "Extract only the video, not the entire playlist",
+        "customArgs": "Custom extraction arguments",
+        "customArgsHint": "Additional yt-dlp arguments for info extraction (space-separated)"
+      },
+      "download": {
+        "title": "Download",
+        "description": "Configure download behavior",
+        "noPlaylist": "Download single video",
+        "noPlaylistHint": "Download only the video, ignore playlist",
+        "concurrentFragments": "Concurrent fragments",
+        "concurrentFragmentsHint": "Download multiple fragments simultaneously (for DASH/HLS streams)",
+        "retries": "Retries",
+        "retriesHint": "Number of retries before giving up on a download",
+        "fragmentRetries": "Fragment retries",
+        "fragmentRetriesHint": "Number of retries for each fragment download",
+        "customArgs": "Custom download arguments",
+        "customArgsHint": "Additional yt-dlp arguments for download (space-separated)"
+      },
+      "aria2": {
+        "title": "aria2 Downloader",
+        "description": "Configure aria2 external downloader settings",
+        "notInstalled": "Install aria2 in Settings to configure",
+        "disabled": "Enable aria2 in yt-dlp block to configure",
+        "overrideGlobal": "Override global aria2 settings",
+        "overrideGlobalHint": "Use custom aria2 settings instead of global defaults",
+        "usingGlobal": "Using global aria2 settings from Downloads preferences",
+        "minSplitSize": "Min split size",
+        "customArgs": "Custom aria2 arguments",
+        "customArgsHint": "Additional aria2 arguments (without aria2c: prefix)",
+        "fallbackToNative": "Fallback to native downloader",
+        "fallbackToNativeHint": "Use yt-dlp's built-in downloader if aria2 fails"
+      },
+      "postProcess": {
+        "title": "Post-Processing",
+        "description": "Configure what happens after download",
+        "keepOriginal": "Keep original file",
+        "keepOriginalHint": "Don't delete the original file after conversion/remux",
+        "embedInfoJson": "Embed info.json",
+        "embedInfoJsonHint": "Embed video metadata as info.json in the output file",
+        "customArgs": "Custom post-processing arguments",
+        "customArgsHint": "Additional yt-dlp post-processing arguments"
+      },
+      "output": {
+        "title": "Output",
+        "description": "Configure output filename and format",
+        "template": "Output template",
+        "templateHint": "yt-dlp output filename template",
+        "templateHelp": "Available tokens:",
+        "restrictFilenames": "Restrict filenames",
+        "restrictFilenamesHint": "Use only ASCII characters and avoid special characters",
+        "windowsFilenames": "Windows-safe filenames",
+        "windowsFilenamesHint": "Replace characters not allowed on Windows"
+      }
+    }
   }
 }

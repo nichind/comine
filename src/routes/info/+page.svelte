@@ -201,7 +201,7 @@
 
 <style>
   .page {
-    padding: 0 0 0 16px;
+    padding: 0 0 0 var(--page-padding-inline);
     height: 100%;
     display: flex;
     flex-direction: column;

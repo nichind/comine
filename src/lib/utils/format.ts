@@ -208,7 +208,41 @@ export function isLikelyChannel(urlStr: string): boolean {
         )
       )
         return true;
+
+      return false;
     }
+
+    // Bilibili user pages
+    if (hostname.includes('space.bilibili.com')) return true;
+
+    // TikTok/Douyin profiles
+    if (hostname.includes('tiktok.com') || hostname.includes('douyin.com') || hostname.includes('iesdouyin.com')) {
+      if (pathname.match(/^\/@[\w.-]+\/?$/) && !pathname.includes('/video/')) return true;
+    }
+
+    // Instagram profiles
+    if (hostname.includes('instagram.com')) {
+      if (pathname.match(/^\/[\w.-]+\/?$/) && !pathname.match(/^\/(p|reel|stories|tv)\//)) return true;
+    }
+
+    // Twitter/X profiles
+    if (hostname.includes('twitter.com') || hostname.includes('x.com')) {
+      if (pathname.match(/^\/[\w.-]+\/?$/) && !pathname.includes('/status/')) return true;
+    }
+
+    // Twitch channels (top-level username)
+    if (hostname.includes('twitch.tv')) {
+      if (pathname.match(/^\/[\w-]+\/?$/) && !pathname.match(/^\/(videos|directory|downloads|p|settings)\b/)) return true;
+    }
+
+    // SoundCloud user profile pages
+    if (hostname.includes('soundcloud.com')) {
+      if (pathname.match(/^\/[\w-]+\/?$/) && !pathname.includes('/sets/')) return true;
+    }
+
+    // Generic fallbacks (common patterns)
+    if (/\/(channel|user|profile|creator)\b/i.test(pathname)) return true;
+    if (/^\/@[^/]+/i.test(pathname)) return true;
 
     return false;
   } catch {
@@ -258,6 +292,17 @@ export function isValidMediaUrl(text: string, patterns: string[]): boolean {
       'nicovideo.jp',
     ];
     return commonVideoSites.some((site) => hostname.includes(site));
+  } catch {
+    return false;
+  }
+}
+
+// More permissive than isValidMediaUrl: used for manual/deep-link flows where we want
+// to allow trying any yt-dlp-supported site (or generic extractor) without maintaining a whitelist.
+export function isHttpUrl(text: string): boolean {
+  try {
+    const urlObj = new URL(text);
+    return ['http:', 'https:'].includes(urlObj.protocol);
   } catch {
     return false;
   }
