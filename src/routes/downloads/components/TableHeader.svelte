@@ -2,7 +2,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import Dropdown from '$lib/components/Dropdown.svelte';
   import type { SortType } from '$lib/stores/history';
-  import type { SortDirection } from '../downloads.state.svelte';
+  import type { SortDirection } from '$lib/stores/downloadsState.svelte';
   import { t } from '$lib/i18n';
 
   interface Props {
