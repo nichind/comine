@@ -82,7 +82,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          MKSQUASHFS_ARGS: "-comp gzip"
+          APPIMAGE_COMP: gzip
 
       - name: Verify signatures were generated
         run: |

@@ -230,7 +230,7 @@ jobs:
         env:
           TAURI_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          MKSQUASHFS_ARGS: "-comp gzip"
+          APPIMAGE_COMP: gzip
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
