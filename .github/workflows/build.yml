@@ -194,14 +194,14 @@ jobs:
           path: src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
 
   build-linux:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libfuse2
 
       - uses: pnpm/action-setup@v4
         with:
@@ -230,6 +230,7 @@ jobs:
         env:
           TAURI_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          MKSQUASHFS_ARGS: "-comp gzip"
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
