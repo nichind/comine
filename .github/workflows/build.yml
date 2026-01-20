@@ -194,7 +194,7 @@ jobs:
           path: src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
 
   build-linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
