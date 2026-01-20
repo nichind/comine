@@ -73,8 +73,8 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install experimental Tauri CLI
-        run: cargo install tauri-cli --git https://github.com/tauri-apps/tauri --branch feat/truly-portable-appimage --locked
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.5" --locked
 
       - name: Install frontend dependencies
         run: pnpm install
@@ -85,7 +85,6 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: "true"
 
       - name: Verify signatures were generated
         run: |
@@ -100,15 +99,13 @@ jobs:
         run: |
           echo "=== AppImage bundle files ==="
           ls -la src-tauri/target/release/bundle/appimage/ || true
-          echo "=== Updater bundle files ==="
-          ls -la src-tauri/target/release/bundle/appimage-updater/ || true
 
       - name: Prepare release assets
         run: |
           VERSION=${{ needs.create-release.outputs.version }}
           mkdir -p release-assets
 
-          APPIMAGE=$(ls -1 src-tauri/target/release/bundle/appimage/*.AppImage 2>/dev/null | head -n 1)
+          APPIMAGE=$(ls -1 src-tauri/target/release/bundle/appimage/*.AppImage 2>/dev/null | grep -v '\.tar\.gz' | head -n 1)
           if [ -n "$APPIMAGE" ]; then
             cp "$APPIMAGE" "release-assets/Comine-${VERSION}-Linux-x86_64.AppImage"
           fi
@@ -123,11 +120,12 @@ jobs:
             cp "$RPM" "release-assets/Comine-${VERSION}-Linux-x86_64.rpm"
           fi
 
-          UPDATER_TGZ=$(ls -1 src-tauri/target/release/bundle/appimage-updater/*.AppImage.tar.gz 2>/dev/null | head -n 1)
+          # Standard Tauri updater assets are in the appimage folder
+          UPDATER_TGZ=$(ls -1 src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz 2>/dev/null | head -n 1)
           if [ -n "$UPDATER_TGZ" ]; then
             cp "$UPDATER_TGZ" "release-assets/Comine-${VERSION}-Linux-x86_64-updater.AppImage.tar.gz"
           fi
-          UPDATER_SIG=$(ls -1 src-tauri/target/release/bundle/appimage-updater/*.AppImage.tar.gz.sig 2>/dev/null | head -n 1)
+          UPDATER_SIG=$(ls -1 src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz.sig 2>/dev/null | head -n 1)
           if [ -n "$UPDATER_SIG" ]; then
             cp "$UPDATER_SIG" "release-assets/Comine-${VERSION}-Linux-x86_64-updater.AppImage.tar.gz.sig"
           fi

@@ -220,8 +220,8 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install experimental Tauri CLI
-        run: cargo install tauri-cli --git https://github.com/tauri-apps/tauri --branch feat/truly-portable-appimage --locked
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.5" --locked
 
       - name: Install frontend dependencies
         run: pnpm install
@@ -233,7 +233,6 @@ jobs:
         env:
           TAURI_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: "true"
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
