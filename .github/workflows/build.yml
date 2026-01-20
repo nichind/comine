@@ -201,7 +201,7 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libfuse2
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
       - uses: pnpm/action-setup@v4
         with:
@@ -220,18 +220,20 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Install experimental Tauri CLI
+        run: cargo install tauri-cli --git https://github.com/tauri-apps/tauri --branch feat/truly-portable-appimage --locked
+
       - name: Install frontend dependencies
         run: pnpm install
 
       - name: Build Tauri app
         run: |
           export TAURI_SIGNING_PRIVATE_KEY=$(echo "$TAURI_KEY_RAW" | sed 's/\(untrusted comment: [^R]*\)\(RW\)/\1\n\2/')
-          pnpm tauri build
+          cargo tauri build
         env:
           TAURI_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-          LDAI_COMP: gzip
+          TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: "true"
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
