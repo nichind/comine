@@ -547,6 +547,8 @@
       "sizeUnitDecimal": "Десятичные (кБ, МБ, ГБ)",
       "showHistoryStats": "Показывать статистику загрузок",
       "showHistoryStatsDescription": "Показывать панель статистики внизу страницы загрузок",
+      "gridItemSize": "Размер элементов сетки",
+      "gridItemSizeDescription": "Минимальная ширина элементов в режиме сетки (Ctrl+/- или Ctrl+колесо)",
       "thumbnailTheming": "Цвет из миниатюры",
       "thumbnailThemingDescription": "Использовать цвета миниатюр для прогресс-баров и эффектов наведения",
       "builderThumbnailGlow": "Свечение в окнах просмотра",

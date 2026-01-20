@@ -496,6 +496,8 @@
       "sizeUnitDecimal": "Decimal (kB, MB, GB)",
       "showHistoryStats": "Show download statistics",
       "showHistoryStatsDescription": "Display statistics bar at the bottom of downloads page",
+      "gridItemSize": "Grid item size",
+      "gridItemSizeDescription": "Minimum width of items in grid view (Ctrl+/- or Ctrl+scroll)",
       "thumbnailTheming": "Thumbnail color theming",
       "thumbnailThemingDescription": "Use colors from thumbnails for progress bars and hover effects",
       "builderThumbnailGlow": "Builder view glow effect",

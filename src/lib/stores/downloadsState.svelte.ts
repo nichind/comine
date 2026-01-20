@@ -136,6 +136,7 @@ export class DownloadsState {
   sortType = $state<SortType>('date');
   sortDirection = $state<SortDirection>('desc');
   viewMode = $state<'list' | 'grid'>('list');
+  gridItemSize = $state(200);
   hoveredItemId = $state<string | null>(null);
   containerWidth = $state(800);
   
@@ -175,6 +176,7 @@ export class DownloadsState {
     this.viewMode = currentSettings.downloadsViewMode ?? 'list';
     this.sortType = currentSettings.downloadsSortType ?? 'date';
     this.sortDirection = currentSettings.downloadsSortDirection ?? 'desc';
+    this.gridItemSize = currentSettings.gridItemSize ?? 200;
   }
 
   private setupEffects(): void {
@@ -187,7 +189,8 @@ export class DownloadsState {
         updateSettings({
           downloadsViewMode: this.viewMode,
           downloadsSortType: this.sortType,
-          downloadsSortDirection: this.sortDirection
+          downloadsSortDirection: this.sortDirection,
+          gridItemSize: this.gridItemSize
         }); 
       });
     });
@@ -222,6 +225,18 @@ export class DownloadsState {
 
   setViewMode(mode: 'list' | 'grid'): void {
     this.viewMode = mode;
+  }
+
+  increaseGridSize(): void {
+    this.gridItemSize = Math.min(400, this.gridItemSize + 40);
+  }
+
+  decreaseGridSize(): void {
+    this.gridItemSize = Math.max(120, this.gridItemSize - 40);
+  }
+
+  resetGridSize(): void {
+    this.gridItemSize = 200;
   }
 
   setHoveredItem(id: string | null): void {
@@ -456,7 +471,8 @@ export class DownloadsState {
   }
 
   itemsPerRow = $derived.by(() => {
-    const { minColumnWidth, gap } = GRID_CONFIG;
+    const minColumnWidth = this.gridItemSize;
+    const { gap } = GRID_CONFIG;
     const width = this.containerWidth;
     
     if (!Number.isFinite(width) || width <= 0) return 1;

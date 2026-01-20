@@ -275,6 +275,7 @@ export interface AppSettings {
   downloadsSortType: 'date' | 'name' | 'size' | 'duration' | 'format';
   downloadsSortDirection: 'asc' | 'desc';
   historyViewMode: 'list' | 'grid';
+  gridItemSize: number;
 
   showMobileNavLabels: boolean;
 
@@ -423,6 +424,7 @@ export const defaultSettings: AppSettings = {
   downloadsSortType: 'date',
   downloadsSortDirection: 'desc',
   historyViewMode: 'list',
+  gridItemSize: 200,
 
   showMobileNavLabels: true,
 

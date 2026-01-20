@@ -122,17 +122,14 @@
       }
     })();
 
-    let resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let rafId: number | null = null;
+    
     const resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const newWidth = entry.contentRect.width;
-        if (Math.abs(newWidth - dState.containerWidth) > 2) {
-          if (resizeDebounceTimer) clearTimeout(resizeDebounceTimer);
-          resizeDebounceTimer = setTimeout(() => {
-            dState.containerWidth = newWidth;
-          }, 100);
-        }
-      }
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        dState.containerWidth = entries[0].contentRect.width;
+      });
     });
 
     if (containerEl) {
@@ -141,10 +138,27 @@
     }
 
     return () => {
-      if (resizeDebounceTimer) clearTimeout(resizeDebounceTimer);
+      if (rafId !== null) cancelAnimationFrame(rafId);
       resizeObserver.disconnect();
       dState.destroy();
     };
+  });
+
+  $effect(() => {
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      if (dState.viewMode !== 'grid') return;
+      
+      e.preventDefault();
+      if (e.deltaY < 0) {
+        dState.increaseGridSize();
+      } else if (e.deltaY > 0) {
+        dState.decreaseGridSize();
+      }
+    };
+
+    window.addEventListener('wheel', onWheel, { passive: false });
+    return () => window.removeEventListener('wheel', onWheel);
   });
 
   $effect(() => {
@@ -157,6 +171,24 @@
         searchExpanded = true;
         tick().then(() => searchInputRef?.focus());
         return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && dState.viewMode === 'grid') {
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault();
+          dState.increaseGridSize();
+          return;
+        }
+        if (e.key === '-' || e.key === '_') {
+          e.preventDefault();
+          dState.decreaseGridSize();
+          return;
+        }
+        if (e.key === '0') {
+          e.preventDefault();
+          dState.resetGridSize();
+          return;
+        }
       }
 
       if (e.ctrlKey || e.metaKey || e.altKey) return;
