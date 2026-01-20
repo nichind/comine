@@ -1,7 +1,23 @@
+/**
+ * Search Utilities Module
+ * 
+ * Provides fuzzy search functionality with typo tolerance using Levenshtein distance.
+ * Supports exact matches, substring matches, and word-boundary matching.
+ * 
+ * @module search
+ */
 
 /**
- * Calculates the Levenshtein distance between two strings using the iterative matrix approach.
- * Memory optimized to use only two rows.
+ * Calculates the Levenshtein distance between two strings.
+ * Uses the iterative matrix approach with space optimization (O(min(m,n)) space).
+ * 
+ * @param a - First string
+ * @param b - Second string
+ * @returns The edit distance between the two strings
+ * 
+ * @example
+ * levenshtein('kitten', 'sitting') // returns 3
+ * levenshtein('hello', 'hello')    // returns 0
  */
 export function levenshtein(a: string, b: string): number {
   if (a === b) return 0;
@@ -64,9 +80,25 @@ function fuzzyTokenMatch(token: string, targetWord: string): number {
 }
 
 /**
- * Smart search scoring function.
- * Returns a score > 0 if the query matches the text.
- * Handles exact matches, word starts, and typos.
+ * Smart search scoring function for fuzzy matching.
+ * 
+ * Scoring hierarchy:
+ * - 100: Exact match (normalized strings are identical)
+ * - 50: Query matches start of text
+ * - 40: Query matches at a word boundary
+ * - 30: Query is a substring anywhere in text
+ * - 0.1-0.9: Fuzzy token matching with typo tolerance
+ * - 0: No match found
+ * 
+ * @param text - The text to search within
+ * @param query - The search query
+ * @returns A score > 0 if the query matches, 0 otherwise. Higher scores indicate better matches.
+ * 
+ * @example
+ * calculateMatchScore('Hello World', 'hello')     // returns 50 (starts with)
+ * calculateMatchScore('Hello World', 'world')     // returns 40 (word boundary)
+ * calculateMatchScore('Hello World', 'ello')      // returns 30 (substring)
+ * calculateMatchScore('Hello World', 'xyz')       // returns 0 (no match)
  */
 export function calculateMatchScore(text: string, query: string): number {
   const normText = text.toLowerCase().trim();

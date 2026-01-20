@@ -1,9 +1,19 @@
 /**
  * Generic LRU (Least Recently Used) Cache implementation.
- * Uses Map's insertion order for O(1) operations.
+ * 
+ * Uses Map's insertion order for O(1) get, set, and delete operations.
+ * When the cache exceeds its maximum size, the least recently used entry is evicted.
+ * 
+ * @template K - Key type
+ * @template V - Value type
+ * 
+ * @example
+ * const cache = new LRUCache<string, number>(100);
+ * cache.set('key1', 42);
+ * cache.get('key1'); // returns 42 and moves 'key1' to most recently used
  */
 export class LRUCache<K, V> {
-  private cache = new Map<K, V>();
+  private readonly cache = new Map<K, V>();
   private readonly maxSize: number;
   private onMutate: (() => void) | null = null;
 

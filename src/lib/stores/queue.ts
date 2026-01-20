@@ -25,6 +25,7 @@ import {
   type AndroidYtDlpJobSettings,
 } from '$lib/utils/android';
 import { getVideoInfoBackend } from '$lib/backend/mediaBackend';
+import { formatEta, formatTime } from '$lib/utils/format';
 
 export type DownloadStatus =
   | 'pending'
@@ -247,19 +248,9 @@ function createQueueStore() {
     }
   >();
 
-  function formatTimestamp(seconds: number): string {
-    if (!Number.isFinite(seconds)) return '';
-    const total = Math.max(0, Math.floor(seconds));
-    const hours = Math.floor(total / 3600);
-    const minutes = Math.floor((total % 3600) / 60);
-    const secs = total % 60;
-    if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    return `${minutes}:${String(secs).padStart(2, '0')}`;
-  }
-
   function formatClipRange(start: number, end: number): string {
-    const a = formatTimestamp(start);
-    const b = formatTimestamp(end);
+    const a = formatTime(start);
+    const b = formatTime(end);
     if (!a || !b) return '';
     return `${a}–${b}`;
   }
@@ -398,16 +389,6 @@ function createQueueStore() {
       if (bps >= mb) return `${(bps / mb).toFixed(2)} MiB/s`;
       if (bps >= kb) return `${(bps / kb).toFixed(1)} KiB/s`;
       return `${bps} B/s`;
-    };
-
-    const formatEta = (ms: number | null): string => {
-      if (!ms || !Number.isFinite(ms) || ms <= 0) return '';
-      const totalSec = Math.floor(ms / 1000);
-      const h = Math.floor(totalSec / 3600);
-      const m = Math.floor((totalSec % 3600) / 60);
-      const s = totalSec % 60;
-      if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-      return `${m}:${String(s).padStart(2, '0')}`;
     };
 
     const INVALID_JOB_EVENT_TOAST_DEBOUNCE_MS = 5_000;

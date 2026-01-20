@@ -27,7 +27,7 @@
   highlight={searchQuery}
 >
   <div class="color-picker-group">
-    <div class="color-presets">
+    <div class="color-presets" role="radiogroup" aria-label={$t('settings.app.accentColor')}>
       {#each ['#6366F1', '#8B5CF6', '#EC4899', '#EF4444', '#F97316', '#EAB308', '#22C55E', '#14B8A6', '#0EA5E9', '#3B82F6'] as color}
         <button
           type="button"
@@ -35,7 +35,8 @@
           class:active={$settings.accentColor.toUpperCase() === color.toUpperCase()}
           style="background: {color}"
           onclick={() => handleAccentColorChange(color)}
-          title={color}
+          aria-label={color}
+          aria-pressed={$settings.accentColor.toUpperCase() === color.toUpperCase()}
         ></button>
       {/each}
       <button
@@ -43,7 +44,8 @@
         class="color-swatch rgb-swatch"
         class:active={$settings.accentColor === 'rgb'}
         onclick={() => handleAccentColorChange('rgb')}
-        title={$t('settings.app.rgbColor')}
+        aria-label={$t('settings.app.rgbColor')}
+        aria-pressed={$settings.accentColor === 'rgb'}
       ></button>
     </div>
     <input

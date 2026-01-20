@@ -14,7 +14,7 @@
   import Chip from './Chip.svelte';
   import CollapsibleBlock from './CollapsibleBlock.svelte';
   import ClipRangeSelector from './ClipRangeSelector.svelte';
-  import { formatSize, formatDuration } from '$lib/utils/format';
+  import { formatSize, formatDuration, extractYouTubeVideoId } from '$lib/utils/format';
   import { isAndroid, getVideoInfoOnAndroid, waitForAndroidYtDlp } from '$lib/utils/android';
   import {
     viewStateCache,
@@ -1089,37 +1089,6 @@
   async function processThumbnail(thumbUrl: string) {
     if (!thumbUrl || destroyed) return;
     processedThumbnail = normalizeExternalUrl(thumbUrl);
-  }
-
-  // Extract YouTube video ID from various URL formats
-  function extractYouTubeVideoId(videoUrl: string): string | null {
-    try {
-      const urlObj = new URL(videoUrl);
-      
-      // youtube.com/watch?v=ID
-      if (urlObj.hostname.includes('youtube.com') && urlObj.searchParams.has('v')) {
-        return urlObj.searchParams.get('v');
-      }
-      
-      // youtu.be/ID
-      if (urlObj.hostname === 'youtu.be') {
-        return urlObj.pathname.slice(1).split('?')[0];
-      }
-      
-      // youtube.com/embed/ID or youtube.com/v/ID
-      if (urlObj.hostname.includes('youtube.com')) {
-        const match = urlObj.pathname.match(/\/(embed|v|shorts)\/([^/?]+)/);
-        if (match) return match[2];
-      }
-      
-      // music.youtube.com
-      if (urlObj.hostname === 'music.youtube.com' && urlObj.searchParams.has('v')) {
-        return urlObj.searchParams.get('v');
-      }
-    } catch {
-      return null;
-    }
-    return null;
   }
 
   // Update cached sponsor segments

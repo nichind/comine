@@ -24,7 +24,6 @@
   import HistoryGridItem from './components/HistoryGridItem.svelte';
 
   import Icon from '$lib/components/Icon.svelte';
-  import HighlightText from '$lib/components/HighlightText.svelte';
   import Chip from '$lib/components/Chip.svelte';
   import Select from '$lib/components/Select.svelte';
   import { tooltip } from '$lib/actions/tooltip';
@@ -123,10 +122,15 @@
       }
     })();
 
+    let resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        if (Math.abs(entry.contentRect.width - dState.containerWidth) > 2) {
-            dState.containerWidth = entry.contentRect.width;
+        const newWidth = entry.contentRect.width;
+        if (Math.abs(newWidth - dState.containerWidth) > 2) {
+          if (resizeDebounceTimer) clearTimeout(resizeDebounceTimer);
+          resizeDebounceTimer = setTimeout(() => {
+            dState.containerWidth = newWidth;
+          }, 100);
         }
       }
     });
@@ -137,6 +141,7 @@
     }
 
     return () => {
+      if (resizeDebounceTimer) clearTimeout(resizeDebounceTimer);
       resizeObserver.disconnect();
       dState.destroy();
     };
@@ -145,10 +150,7 @@
   $effect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (isTypingTarget(document.activeElement)) return;
-
-      if (e.key === ' ' || e.code === 'Space' || e.key === 'Spacebar') return;
 
       if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
         e.preventDefault();
@@ -156,6 +158,10 @@
         tick().then(() => searchInputRef?.focus());
         return;
       }
+
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      if (e.key === ' ' || e.code === 'Space' || e.key === 'Spacebar') return;
 
       if (e.key === 'Escape') {
         if (dState.searchQuery.trim() || searchExpanded) {
@@ -198,7 +204,9 @@
     try {
       const len = dState.searchQuery.length;
       searchInputRef?.setSelectionRange(len, len);
-    } catch { }
+    } catch {
+      // setSelectionRange may not be supported on all input types
+    }
   }
 
   function collapseSearchIfEmpty() {
@@ -241,28 +249,19 @@
           onfocus={() => (searchExpanded = true)}
           onblur={collapseSearchIfEmpty}
         />
-        {#if dState.searchQuery.trim()}
-          <button
-            type="button"
-            class="search-clear"
-            onclick={(e) => {
-              e.stopPropagation();
-              dState.searchQuery = '';
-              searchInputRef?.focus();
-            }}
-            aria-label={$t('common.clear')}
-          >
-            <Icon name="cross" size={14} />
-          </button>
-        {/if}
         <button
           type="button"
           class="search-close"
-          onclick={() => {
-            dState.searchQuery = '';
-            searchExpanded = false;
+          onclick={(e) => {
+            e.stopPropagation();
+            if (dState.searchQuery.trim()) {
+              dState.searchQuery = '';
+              searchInputRef?.focus();
+            } else {
+              searchExpanded = false;
+            }
           }}
-          aria-label={$t('common.close')}
+          aria-label={dState.searchQuery.trim() ? $t('common.clear') : $t('common.close')}
         >
           <Icon name="cross" size={16} />
         </button>
@@ -367,10 +366,10 @@
       <div class="selection-toolbar" transition:fly={{ y: -10, duration: 200 }}>
         <div class="selection-count">
              <span class="count-badge">{dState.selectedItemIds.size}</span>
-             <span class="count-label">Selected</span>
+             <span class="count-label">{$t('downloads.selected')}</span>
         </div>
         <div class="selection-actions">
-           <button class="toolbar-btn" onclick={() => dState.clearSelection()} use:tooltip={'Clear selection'}>
+           <button class="toolbar-btn" onclick={() => dState.clearSelection()} use:tooltip={$t('downloads.clearSelection')}>
                <Icon name="cross" size={18} />
            </button>
         </div>

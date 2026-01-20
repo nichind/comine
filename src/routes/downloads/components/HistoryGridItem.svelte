@@ -33,7 +33,7 @@
   let isFailed = $derived(item.status === 'failed');
 
   function handleImageLoad() {
-    dState.extractItemColor(item.id, cardState.thumbnailSrc);
+    dState.extractItemColor(cardState.thumbnailSrc);
     if (!item.isActive && item.filePath) {
       dState.checkFileExists(item.id, item.filePath);
     }
@@ -44,7 +44,6 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="grid-card"
   class:file-missing={cardState.fileMissing}
@@ -52,8 +51,11 @@
   class:paused={isPaused}
   class:failed={isFailed}
   style="{cardState.colorStyle} --progress: {displayProgress}%;"
+  role="button"
+  tabindex="0"
   onmouseenter={() => dState.setHoveredItem(item.id)}
   onmouseleave={() => dState.setHoveredItem(null)}
+  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!item.isActive) ctx.openItem(item as any); } }}
 >
   {#if isActiveDownload && !isFailed}
     <div class="progress-bg"></div>
@@ -144,13 +146,18 @@
   </div>
   
   <div class="card-info">
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="card-title clickable" onclick={(e) => { e.stopPropagation(); if (!item.isActive) ctx.openItem(item as any); }} title={item.isActive ? '' : $t('downloads.openInApp')}>
+    <button 
+      type="button"
+      class="card-title clickable" 
+      onclick={(e) => { e.stopPropagation(); if (!item.isActive) ctx.openItem(item as any); }} 
+      use:tooltip={item.isActive ? '' : $t('downloads.openInApp')}
+      disabled={item.isActive}
+    >
       <HighlightText text={item.title} highlight={dState.searchQuery} />
-    </div>
+    </button>
     <div class="card-meta">
       {#if isFailed && item.error}
-        <span class="card-error" title={item.error}>
+        <span class="card-error" use:tooltip={item.error}>
           <Icon name="warning" size={10} />
           Error
         </span>
@@ -159,10 +166,15 @@
           {isPaused ? $t('downloads.queue.paused') : $t('downloads.queue.waiting')}
         </span>
       {:else}
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <span class="card-author clickable" onclick={(e) => { e.stopPropagation(); if (!item.isActive) ctx.openAuthor(item as any); }} title={item.isActive ? '' : $t('downloads.openAuthor')}>
+        <button 
+          type="button"
+          class="card-author clickable" 
+          onclick={(e) => { e.stopPropagation(); if (!item.isActive) ctx.openAuthor(item as any); }} 
+          use:tooltip={item.isActive ? '' : $t('downloads.openAuthor')}
+          disabled={item.isActive}
+        >
           <HighlightText text={item.author} highlight={dState.searchQuery} />
-        </span>
+        </button>
       {/if}
       <span class="card-size">{dState.getItemSizeDisplay(item)}</span>
     </div>
@@ -216,8 +228,7 @@
   .grid-card:hover {
     background: var(--item-color-hover, rgba(255, 255, 255, 0.06));
     border-color: rgba(255, 255, 255, 0.1);
-    transform: translateY(-1 px);
-    /* box-shadow: 0 8px 24px rgba(0,0,0,0.25); */
+    transform: translateY(-1px);
     z-index: 1;
   }
 
@@ -362,6 +373,16 @@
     overflow: hidden;
     text-overflow: ellipsis;
     line-height: 1.3;
+    background: none;
+    border: none;
+    padding: 0;
+    text-align: left;
+    width: 100%;
+    cursor: pointer;
+  }
+  
+  .card-title:disabled {
+    cursor: default;
   }
   
   .card-meta {
@@ -379,6 +400,15 @@
     text-overflow: ellipsis;
     flex: 1;
     min-width: 0;
+    background: none;
+    border: none;
+    padding: 0;
+    text-align: left;
+    cursor: pointer;
+  }
+  
+  .card-author:disabled {
+    cursor: default;
   }
 
   .card-status {

@@ -64,7 +64,7 @@
   }
 
   function handleImageLoad() {
-    dState.extractItemColor(item.id, rowState.thumbnailSrc);
+    dState.extractItemColor(rowState.thumbnailSrc);
     if (!item.isActive && item.filePath) {
       dState.checkFileExists(item.id, item.filePath);
     }
@@ -140,14 +140,14 @@
   </div>
   
   <div class="col-metadata">
-    <span class="item-title" title={item.title}>
+    <span class="item-title" use:tooltip={item.title}>
       <HighlightText text={item.title} highlight={dState.searchQuery} />
     </span>
     <span 
       class="item-subtitle"
       class:status={subtitle.type === 'status'}
       class:error={subtitle.type === 'error'}
-      title={subtitle.type === 'error' ? item.error : item.author}
+      use:tooltip={subtitle.type === 'error' ? item.error : item.author}
     >
       {#if subtitle.type === 'error'}
         <Icon name="warning" size={10} />
@@ -380,6 +380,12 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+
+  .item-title:hover {
+    color: var(--item-color, var(--accent, #6366f1));
   }
 
   .item-subtitle {
@@ -400,15 +406,6 @@
 
   .item-subtitle.error {
     color: #f87171;
-  }
-
-  .item-title {
-    cursor: pointer;
-    transition: color 0.15s;
-  }
-
-  .item-title:hover {
-    color: var(--item-color, var(--accent, #6366f1));
   }
 
   /* Inline Actions Column */

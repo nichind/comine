@@ -130,16 +130,16 @@
   }
 
   .toast-container.bottom {
-    bottom: 24px;
+    bottom: 16px;
   }
   .toast-container.top {
-    top: 24px;
+    top: 16px;
   }
   .toast-container.right {
-    right: 24px;
+    right: 16px;
   }
   .toast-container.left {
-    left: 24px;
+    left: 16px;
   }
   .toast-container.center {
     left: 50%;
@@ -147,7 +147,15 @@
   }
 
   @media (max-width: 480px) {
-    .toast-container {
+    .toast-container.right {
+      right: 12px;
+      left: unset;
+    }
+    .toast-container.left {
+      left: 12px;
+      right: unset;
+    }
+    .toast-container.center {
       left: 12px;
       right: 12px;
       transform: none;

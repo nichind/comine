@@ -1,10 +1,7 @@
 import { writable, get } from 'svelte/store';
 import { load, type Store } from '@tauri-apps/plugin-store';
 import { logs } from './logs';
-
-function checkIsAndroid(): boolean {
-  return typeof window !== 'undefined' && 'AndroidYtDlp' in window;
-}
+import { isAndroid } from '$lib/utils/android';
 
 export type VideoQuality = 'max' | '4k' | '1440p' | '1080p' | '720p' | '480p' | '360p' | '240p';
 export type DownloadMode = 'auto' | 'audio' | 'mute';
@@ -458,7 +455,7 @@ export async function initSettings(): Promise<void> {
       }
     });
 
-    if (checkIsAndroid()) {
+    if (isAndroid()) {
       if (
         values[keys.indexOf('toastPosition')] === null ||
         values[keys.indexOf('toastPosition')] === undefined

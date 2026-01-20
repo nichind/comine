@@ -74,7 +74,6 @@
     return SUBSECTION_TITLES[key];
   }
 
-  // Define component methods interface for strict typing
   interface ScrollAreaInstance {
     restoreScroll(position: number): void;
     getScroll(): number;
@@ -82,7 +81,7 @@
   }
 
   let activeSection = $state('general');
-  let sectionTransitionDir = $state(1); // 1 = forward, -1 = back
+  let sectionTransitionDir = $state(1);
   let searchQuery = $state('');
   let searchExpanded = $state(false);
   let onDesktop = $state(true);
@@ -92,15 +91,15 @@
   let searchInputRef: HTMLInputElement | null = $state(null);
   let initialScrollTop: number | undefined = $state(undefined);
 
-  // In-memory cache for scroll positions to prevent frequent JSON parsing
   let scrollCache: Record<string, number> = {};
 
-  // Synchronous initialization to prevent render-jank and ensure ScrollArea receives correct initial props
-  if (typeof window !== 'undefined') {
-    onDesktop = isDesktop();
+  const initializeState = (() => {
+    if (typeof window === 'undefined') return;
     
-    // Initialize platform
-    if (onDesktop && typeof navigator !== 'undefined') {
+    const desktop = isDesktop();
+    onDesktop = desktop;
+    
+    if (desktop && typeof navigator !== 'undefined') {
       const userAgent = navigator.userAgent.toLowerCase();
       if (userAgent.includes('mac')) platform = 'macos';
       else if (userAgent.includes('linux') && !userAgent.includes('android')) platform = 'linux';
@@ -109,34 +108,30 @@
       platform = 'android';
     }
 
-    // Load scroll cache once
     try {
       const raw = sessionStorage.getItem(SCROLL_STORAGE_KEY);
       if (raw) scrollCache = JSON.parse(raw);
     } catch { /* ignore */ }
 
-    // Initialize active section
     const initial = getHashSection() ?? getSavedSection();
-    if (onDesktop) {
-      activeSection = initial ?? 'general';
-      if (!getHashSection()) setHashSection(activeSection);
-    } else {
-      activeSection = initial ?? '';
+    const section = desktop ? (initial ?? 'general') : (initial ?? '');
+    activeSection = section;
+    
+    if (desktop && !getHashSection()) {
+      setHashSection(section);
     }
 
-    // Initialize scroll position from memory cache
-    if (activeSection) {
-      saveActiveSection(activeSection);
-      initialScrollTop = scrollCache[activeSection] || 0;
+    if (section) {
+      saveActiveSection(section);
+      initialScrollTop = scrollCache[section] || 0;
     }
-  }
+  })();
 
   let scrollSaveTimer: ReturnType<typeof setTimeout> | null = null;
   function handleScrollChange(position: number) {
     if (!activeSection) return;
     scrollCache[activeSection] = position;
     
-    // Debounce storage write
     if (scrollSaveTimer) clearTimeout(scrollSaveTimer);
     scrollSaveTimer = setTimeout(() => {
       try {
@@ -259,18 +254,18 @@
     const onKeyDown = (e: KeyboardEvent) => {
       if (!onDesktop) return;
       if (e.defaultPrevented) return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (isTypingTarget(document.activeElement)) return;
 
-      if (e.key === ' ' || e.code === 'Space' || e.key === 'Spacebar') return;
-
-      // Ctrl+F / Cmd+F to search
       if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
         e.preventDefault();
         searchExpanded = true;
         tick().then(() => searchInputRef?.focus());
         return;
       }
+
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      if (e.key === ' ' || e.code === 'Space' || e.key === 'Spacebar') return;
 
       if (e.key === 'Escape') {
         if (searchQuery.trim() || searchExpanded) {
@@ -342,20 +337,16 @@
         const desc = def.descriptionKey ? $t(def.descriptionKey) : '';
         const keywords = ('keywords' in def && def.keywords) ? def.keywords.join(' ') : '';
         
-        // Check base visibility first
         if ('platforms' in def && !isVisibleOnPlatform(def.platforms, platform)) return false;
         if (def.visible && !def.visible($settings)) return false;
 
-        // Calculate scores
         const titleScore = calculateMatchScore(title, query);
-        const descScore = calculateMatchScore(desc, query) * 0.5; // Description matches count less
+        const descScore = calculateMatchScore(desc, query) * 0.5;
         const keywordScore = calculateMatchScore(keywords, query) * 0.8;
         
-        // Keep if any part matches well enough
         return Math.max(titleScore, descScore, keywordScore) > 0;
       }
 
-      // Default non-search visibility logic
       if (def.section !== activeSection) return false;
       if ('platforms' in def && !isVisibleOnPlatform(def.platforms, platform)) return false;
       if (def.visible && !def.visible($settings)) return false;
@@ -450,8 +441,10 @@
   }
 
   onDestroy(() => {
+    if (scrollSaveTimer) clearTimeout(scrollSaveTimer);
     if (sliderDebounceTimer) clearTimeout(sliderDebounceTimer);
     if (pendingSliderUpdates.size > 0) flushSliderUpdates();
+    if (sidebarIndicatorRaf !== null) cancelAnimationFrame(sidebarIndicatorRaf);
   });
 
   function handleSettingChange(def: SettingDef, value: any) {

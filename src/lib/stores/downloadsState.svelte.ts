@@ -37,7 +37,6 @@ export interface UnifiedDownloadItem {
   playlistId?: string;
   playlistTitle?: string;
   playlistIndex?: number;
-  
   isActive: boolean;
   status?: 'pending' | 'paused' | 'fetching-info' | 'downloading' | 'processing' | 'completed' | 'failed';
   progress?: number;
@@ -126,7 +125,7 @@ const GRID_CONFIG = {
 
 export const VIRTUALIZATION_HEIGHTS = {
   listItem: 56,
-  gridRow: 232, // 220 + 12px gap
+  gridRow: 232,
   dateHeader: 40,
   playlistHeader: 60,
 } as const;
@@ -197,6 +196,8 @@ export class DownloadsState {
   destroy(): void {
     this.cleanupEffects?.();
     this.cleanupEffects = null;
+    if (this.fileCheckDebounceTimer) clearTimeout(this.fileCheckDebounceTimer);
+    this.pendingFileChecks.clear();
     this.colorCache.clear();
     this.thumbnailSrcCache.clear();
     this.playlistThumbCache.clear();
@@ -302,17 +303,36 @@ export class DownloadsState {
     }
   }
 
+  private pendingFileChecks = new Set<string>();
+  private fileCheckDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
   async checkFileExists(id: string, filePath: string | undefined): Promise<void> {
     if (!filePath) return;
+    if (this.missingFiles.has(id) || this.pendingFileChecks.has(id)) return;
     
-    try {
-      await stat(filePath);
-      if (this.missingFiles.has(id)) {
-        this.updateSet('missingFiles', id, 'delete');
+    this.pendingFileChecks.add(id);
+    
+    if (this.fileCheckDebounceTimer) clearTimeout(this.fileCheckDebounceTimer);
+    this.fileCheckDebounceTimer = setTimeout(async () => {
+      const checksToRun = [...this.pendingFileChecks];
+      this.pendingFileChecks.clear();
+      
+      const BATCH_SIZE = 10;
+      for (let i = 0; i < checksToRun.length; i += BATCH_SIZE) {
+        const batch = checksToRun.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async (checkId) => {
+          // Find the item's file path from history
+          const item = this.unifiedItems.find(u => u.id === checkId);
+          if (!item?.filePath) return;
+          
+          try {
+            await stat(item.filePath);
+          } catch {
+            this.updateSet('missingFiles', checkId, 'add');
+          }
+        }));
       }
-    } catch {
-      this.updateSet('missingFiles', id, 'add');
-    }
+    }, 150);
   }
 
   isFileMissing(id: string): boolean {
@@ -353,7 +373,7 @@ export class DownloadsState {
     return thumbs;
   }
 
-  async extractItemColor(_id: string, thumbnailUrl: string | undefined): Promise<void> {
+  async extractItemColor(thumbnailUrl: string | undefined): Promise<void> {
     const currentSettings = get(settings);
     if (!currentSettings.thumbnailTheming || !thumbnailUrl) return;
     if (this.colorCache.has(thumbnailUrl)) return;

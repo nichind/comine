@@ -23,8 +23,8 @@
   // Local state for color (helper from state) is needed for items
   // Queue items are transient, maybe we don't cache their colors heavily or use the same state cache
   
-  function handleImageLoad(id: string, src: string) {
-       state.extractItemColor(id, src);
+  function handleImageLoad(src: string) {
+       state.extractItemColor(src);
   }
   
   function getThumb(url: string) {
@@ -163,7 +163,7 @@
                                               src={thumbSrc} 
                                               alt="" 
                                               loading="lazy"
-                                              onload={() => handleImageLoad(item.id, thumbSrc || '')}
+                                              onload={() => handleImageLoad(thumbSrc || '')}
                                               onerror={() => state.markThumbnailFailed(item.id)}
                                            />
                                         {:else}
@@ -185,9 +185,7 @@
                                       </div>
                                       
                                       <div class="item-info">
-                                         <!-- svelte-ignore a11y_click_events_have_key_events -->
-                                         <!-- svelte-ignore a11y_no_static_element_interactions -->
-                                         <div class="item-title clickable" onclick={() => handleOpenQueueItem(item)}><HighlightText text={item.title} highlight={state.searchQuery} /></div>
+                                         <button type="button" class="item-title clickable" onclick={() => handleOpenQueueItem(item)}><HighlightText text={item.title} highlight={state.searchQuery} /></button>
                                          <div class="item-status">
                                             {#if item.status === 'paused'}
                                                 <span class="status-paused">{$t('downloads.queue.paused')}</span>
@@ -259,7 +257,7 @@
                               src={thumbSrc} 
                               alt=""
                               loading="lazy" 
-                              onload={() => handleImageLoad(item.id, thumbSrc || '')}
+                              onload={() => handleImageLoad(thumbSrc || '')}
                               onerror={() => state.markThumbnailFailed(item.id)}
                            />
                         {:else}
@@ -281,9 +279,7 @@
                       </div>
                       
                       <div class="item-info">
-                         <!-- svelte-ignore a11y_click_events_have_key_events -->
-                         <!-- svelte-ignore a11y_no_static_element_interactions -->
-                         <div class="item-title clickable" onclick={() => handleOpenQueueItem(item)}><HighlightText text={item.title} highlight={state.searchQuery} /></div>
+                         <button type="button" class="item-title clickable" onclick={() => handleOpenQueueItem(item)}><HighlightText text={item.title} highlight={state.searchQuery} /></button>
                          <div class="item-status">
                             {#if item.status === 'paused'}
                                 <span class="status-paused">{$t('downloads.queue.paused')}</span>
@@ -563,6 +559,11 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    background: none;
+    border: none;
+    padding: 0;
+    text-align: left;
+    width: 100%;
   }
   
   .item-title.clickable {

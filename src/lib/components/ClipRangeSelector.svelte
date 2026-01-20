@@ -1,6 +1,7 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
   import Icon from './Icon.svelte';
+  import { formatTime, parseTimeString } from '$lib/utils/format';
 
   interface ClipRange {
     id: string;
@@ -168,40 +169,6 @@
       displayHeight: Math.round(cellHeight * scale),
     };
   }
-  
-  function formatTime(seconds: number): string {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-    if (h > 0) {
-      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-    }
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  }
-
-  // Parse time string like "1:23", "01:23:45", "90" (seconds) into seconds
-  function parseTime(input: string): number | null {
-    const trimmed = input.trim();
-    if (!trimmed) return null;
-    
-    // Try parsing as plain number (seconds)
-    if (/^\d+(\.\d+)?$/.test(trimmed)) {
-      return parseFloat(trimmed);
-    }
-    
-    // Try parsing as M:SS or H:MM:SS
-    const parts = trimmed.split(':').map(p => parseFloat(p.trim()));
-    if (parts.some(p => isNaN(p))) return null;
-    
-    if (parts.length === 2) {
-      // M:SS
-      return parts[0] * 60 + parts[1];
-    } else if (parts.length === 3) {
-      // H:MM:SS
-      return parts[0] * 3600 + parts[1] * 60 + parts[2];
-    }
-    return null;
-  }
 
   function startTimeEdit(rangeId: string, handle: 'start' | 'end') {
     const range = ranges.find(r => r.id === rangeId);
@@ -217,7 +184,7 @@
   function applyTimeEdit() {
     if (!editingTime) return;
     
-    const parsed = parseTime(timeInputValue);
+    const parsed = parseTimeString(timeInputValue);
     if (parsed === null || parsed < 0 || parsed > duration) {
       editingTime = null;
       return;

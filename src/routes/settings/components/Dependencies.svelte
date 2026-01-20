@@ -10,311 +10,128 @@
 
   let { searchQuery }: Props = $props();
 
-  async function installDepWithToast(
-    dep: DependencyName,
-    installer: () => Promise<unknown>,
-    componentLabel: string
-  ) {
-    toast.info($t('deps.installing', { component: componentLabel }));
+  /** Dependency configuration for rendering */
+  interface DepConfig {
+    name: DependencyName;
+    label: string;
+    descriptionKey: string;
+    badge?: 'required' | 'optional';
+    installer: () => Promise<unknown>;
+    uninstaller: () => void;
+  }
+
+  const DEPENDENCIES: DepConfig[] = [
+    {
+      name: 'ytdlp',
+      label: 'yt-dlp',
+      descriptionKey: 'settings.deps.ytdlpDescription',
+      badge: 'required',
+      installer: () => deps.installYtdlp(),
+      uninstaller: () => deps.uninstallYtdlp(),
+    },
+    {
+      name: 'ffmpeg',
+      label: 'ffmpeg',
+      descriptionKey: 'settings.deps.ffmpegDescription',
+      installer: () => deps.installFfmpeg(),
+      uninstaller: () => deps.uninstallFfmpeg(),
+    },
+    {
+      name: 'aria2',
+      label: 'aria2',
+      descriptionKey: 'settings.deps.aria2Description',
+      installer: () => deps.installAria2(),
+      uninstaller: () => deps.uninstallAria2(),
+    },
+    {
+      name: 'deno',
+      label: 'deno',
+      descriptionKey: 'settings.deps.denoDescription',
+      installer: () => deps.installDeno(),
+      uninstaller: () => deps.uninstallDeno(),
+    },
+    {
+      name: 'quickjs',
+      label: 'quickjs',
+      descriptionKey: 'settings.deps.quickjsDescription',
+      installer: () => deps.installQuickjs(),
+      uninstaller: () => deps.uninstallQuickjs(),
+    },
+    {
+      name: 'lux',
+      label: 'lux',
+      descriptionKey: 'settings.deps.luxDescription',
+      badge: 'optional',
+      installer: () => deps.installLux(),
+      uninstaller: () => deps.uninstallLux(),
+    },
+  ];
+
+  async function installDepWithToast(dep: DepConfig) {
+    toast.info($t('deps.installing', { component: dep.label }));
     try {
-      await installer();
-      toast.success($t('deps.installed', { component: componentLabel }));
+      await dep.installer();
+      toast.success($t('deps.installed', { component: dep.label }));
     } catch (err) {
-      console.error(`Failed to install dependency: ${dep}`, err);
-      toast.error($t('deps.installFailed', { component: componentLabel }));
+      console.error(`Failed to install dependency: ${dep.name}`, err);
+      toast.error($t('deps.installFailed', { component: dep.label }));
     }
+  }
+
+  function getDepInfo(name: DependencyName) {
+    return $deps[name];
   }
 </script>
 
-<!-- yt-dlp -->
-<SettingItem title="yt-dlp" description={$t('settings.deps.ytdlpDescription')} highlight={searchQuery}>
-  <div class="dep-item">
-    <div class="dep-info">
-      <span class="dep-badge required">{$t('settings.deps.required')}</span>
-      {#if $deps.checking === 'ytdlp'}
-        <span class="dep-status checking">{$t('settings.deps.checking')}</span>
-      {:else if $deps.ytdlp?.installed}
-        <span class="dep-status installed">v{$deps.ytdlp.version}</span>
-      {:else}
-        <span class="dep-status not-installed">{$t('settings.deps.notInstalled')}</span>
-      {/if}
-    </div>
-    <div class="dep-actions">
-      {#if $deps.installingDeps.has('ytdlp')}
-        <button class="dep-btn" disabled>
-          <span class="btn-spinner"></span>
-          {$t('settings.deps.installing')}
-        </button>
-      {:else if $deps.ytdlp?.installed}
-        <button class="dep-btn danger" onclick={() => deps.uninstallYtdlp()}>
-          {$t('settings.deps.uninstall')}
-        </button>
-        <button
-          class="dep-btn"
-          onclick={() => installDepWithToast('ytdlp', () => deps.installYtdlp(), 'yt-dlp')}
-        >
-          {$t('settings.deps.reinstall')}
-        </button>
-      {:else}
-        <button
-          class="dep-btn primary"
-          onclick={() => installDepWithToast('ytdlp', () => deps.installYtdlp(), 'yt-dlp')}
-        >
-          {$t('settings.deps.install')}
-        </button>
-      {/if}
-    </div>
-  </div>
-  {#if $deps.installingDeps.has('ytdlp') && $deps.installProgressMap.get('ytdlp')}
-    <div class="dep-progress">
-      <div
-        class="dep-progress-bar"
-        style="width: {$deps.installProgressMap.get('ytdlp')?.progress ?? 0}%"
-      ></div>
-    </div>
-  {/if}
-</SettingItem>
+{#each DEPENDENCIES as dep (dep.name)}
+  {@const info = getDepInfo(dep.name)}
+  {@const isChecking = $deps.checking === dep.name}
+  {@const isInstalling = $deps.installingDeps.has(dep.name)}
+  {@const progress = $deps.installProgressMap.get(dep.name)}
 
-<!-- ffmpeg -->
-<SettingItem title="ffmpeg" description={$t('settings.deps.ffmpegDescription')} highlight={searchQuery}>
-  <div class="dep-item">
-    <div class="dep-info">
-      {#if $deps.checking === 'ffmpeg'}
-        <span class="dep-status checking">{$t('settings.deps.checking')}</span>
-      {:else if $deps.ffmpeg?.installed}
-        <span class="dep-status installed">v{$deps.ffmpeg.version}</span>
-      {:else}
-        <span class="dep-status not-installed">{$t('settings.deps.notInstalled')}</span>
-      {/if}
+  <SettingItem title={dep.label} description={$t(dep.descriptionKey)} highlight={searchQuery}>
+    <div class="dep-item">
+      <div class="dep-info">
+        {#if dep.badge}
+          <span class="dep-badge {dep.badge}">{$t(`settings.deps.${dep.badge}`)}</span>
+        {/if}
+        {#if isChecking}
+          <span class="dep-status checking">{$t('settings.deps.checking')}</span>
+        {:else if info?.installed}
+          <span class="dep-status installed">
+            {info.version ? `v${info.version}` : $t('settings.deps.installed')}
+          </span>
+        {:else}
+          <span class="dep-status not-installed">{$t('settings.deps.notInstalled')}</span>
+        {/if}
+      </div>
+      <div class="dep-actions">
+        {#if isInstalling}
+          <button class="dep-btn" disabled>
+            <span class="btn-spinner"></span>
+            {$t('settings.deps.installing')}
+          </button>
+        {:else if info?.installed}
+          <button class="dep-btn danger" onclick={() => dep.uninstaller()}>
+            {$t('settings.deps.uninstall')}
+          </button>
+          <button class="dep-btn" onclick={() => installDepWithToast(dep)}>
+            {$t('settings.deps.reinstall')}
+          </button>
+        {:else}
+          <button class="dep-btn primary" onclick={() => installDepWithToast(dep)}>
+            {$t('settings.deps.install')}
+          </button>
+        {/if}
+      </div>
     </div>
-    <div class="dep-actions">
-      {#if $deps.installingDeps.has('ffmpeg')}
-        <button class="dep-btn" disabled>
-          <span class="btn-spinner"></span>
-          {$t('settings.deps.installing')}
-        </button>
-      {:else if $deps.ffmpeg?.installed}
-        <button class="dep-btn danger" onclick={() => deps.uninstallFfmpeg()}>
-          {$t('settings.deps.uninstall')}
-        </button>
-        <button
-          class="dep-btn"
-          onclick={() => installDepWithToast('ffmpeg', () => deps.installFfmpeg(), 'ffmpeg')}
-        >
-          {$t('settings.deps.reinstall')}
-        </button>
-      {:else}
-        <button
-          class="dep-btn primary"
-          onclick={() => installDepWithToast('ffmpeg', () => deps.installFfmpeg(), 'ffmpeg')}
-        >
-          {$t('settings.deps.install')}
-        </button>
-      {/if}
-    </div>
-  </div>
-  {#if $deps.installingDeps.has('ffmpeg') && $deps.installProgressMap.get('ffmpeg')}
-    <div class="dep-progress">
-      <div
-        class="dep-progress-bar"
-        style="width: {$deps.installProgressMap.get('ffmpeg')?.progress ?? 0}%"
-      ></div>
-    </div>
-  {/if}
-</SettingItem>
-
-<!-- aria2 -->
-<SettingItem title="aria2" description={$t('settings.deps.aria2Description')} highlight={searchQuery}>
-  <div class="dep-item">
-    <div class="dep-info">
-      {#if $deps.checking === 'aria2'}
-        <span class="dep-status checking">{$t('settings.deps.checking')}</span>
-      {:else if $deps.aria2?.installed}
-        <span class="dep-status installed">v{$deps.aria2.version}</span>
-      {:else}
-        <span class="dep-status not-installed">{$t('settings.deps.notInstalled')}</span>
-      {/if}
-    </div>
-    <div class="dep-actions">
-      {#if $deps.installingDeps.has('aria2')}
-        <button class="dep-btn" disabled>
-          <span class="btn-spinner"></span>
-          {$t('settings.deps.installing')}
-        </button>
-      {:else if $deps.aria2?.installed}
-        <button class="dep-btn danger" onclick={() => deps.uninstallAria2()}>
-          {$t('settings.deps.uninstall')}
-        </button>
-        <button
-          class="dep-btn"
-          onclick={() => installDepWithToast('aria2', () => deps.installAria2(), 'aria2')}
-        >
-          {$t('settings.deps.reinstall')}
-        </button>
-      {:else}
-        <button
-          class="dep-btn primary"
-          onclick={() => installDepWithToast('aria2', () => deps.installAria2(), 'aria2')}
-        >
-          {$t('settings.deps.install')}
-        </button>
-      {/if}
-    </div>
-  </div>
-  {#if $deps.installingDeps.has('aria2') && $deps.installProgressMap.get('aria2')}
-    <div class="dep-progress">
-      <div
-        class="dep-progress-bar"
-        style="width: {$deps.installProgressMap.get('aria2')?.progress ?? 0}%"
-      ></div>
-    </div>
-  {/if}
-</SettingItem>
-
-<!-- deno -->
-<SettingItem title="deno" description={$t('settings.deps.denoDescription')} highlight={searchQuery}>
-  <div class="dep-item">
-    <div class="dep-info">
-      {#if $deps.checking === 'deno'}
-        <span class="dep-status checking">{$t('settings.deps.checking')}</span>
-      {:else if $deps.deno?.installed}
-        <span class="dep-status installed">v{$deps.deno.version}</span>
-      {:else}
-        <span class="dep-status not-installed">{$t('settings.deps.notInstalled')}</span>
-      {/if}
-    </div>
-    <div class="dep-actions">
-      {#if $deps.installingDeps.has('deno')}
-        <button class="dep-btn" disabled>
-          <span class="btn-spinner"></span>
-          {$t('settings.deps.installing')}
-        </button>
-      {:else if $deps.deno?.installed}
-        <button class="dep-btn danger" onclick={() => deps.uninstallDeno()}>
-          {$t('settings.deps.uninstall')}
-        </button>
-        <button
-          class="dep-btn"
-          onclick={() => installDepWithToast('deno', () => deps.installDeno(), 'deno')}
-        >
-          {$t('settings.deps.reinstall')}
-        </button>
-      {:else}
-        <button
-          class="dep-btn primary"
-          onclick={() => installDepWithToast('deno', () => deps.installDeno(), 'deno')}
-        >
-          {$t('settings.deps.install')}
-        </button>
-      {/if}
-    </div>
-  </div>
-  {#if $deps.installingDeps.has('deno') && $deps.installProgressMap.get('deno')}
-    <div class="dep-progress">
-      <div
-        class="dep-progress-bar"
-        style="width: {$deps.installProgressMap.get('deno')?.progress ?? 0}%"
-      ></div>
-    </div>
-  {/if}
-</SettingItem>
-
-<!-- quickjs -->
-<SettingItem title="quickjs" description={$t('settings.deps.quickjsDescription')} highlight={searchQuery}>
-  <div class="dep-item">
-    <div class="dep-info">
-      {#if $deps.checking === 'quickjs'}
-        <span class="dep-status checking">{$t('settings.deps.checking')}</span>
-      {:else if $deps.quickjs?.installed}
-        <span class="dep-status installed">{$t('settings.deps.installed')}</span>
-      {:else}
-        <span class="dep-status not-installed">{$t('settings.deps.notInstalled')}</span>
-      {/if}
-    </div>
-    <div class="dep-actions">
-      {#if $deps.installingDeps.has('quickjs')}
-        <button class="dep-btn" disabled>
-          <span class="btn-spinner"></span>
-          {$t('settings.deps.installing')}
-        </button>
-      {:else if $deps.quickjs?.installed}
-        <button class="dep-btn danger" onclick={() => deps.uninstallQuickjs()}>
-          {$t('settings.deps.uninstall')}
-        </button>
-        <button
-          class="dep-btn"
-          onclick={() => installDepWithToast('quickjs', () => deps.installQuickjs(), 'quickjs')}
-        >
-          {$t('settings.deps.reinstall')}
-        </button>
-      {:else}
-        <button
-          class="dep-btn primary"
-          onclick={() => installDepWithToast('quickjs', () => deps.installQuickjs(), 'quickjs')}
-        >
-          {$t('settings.deps.install')}
-        </button>
-      {/if}
-    </div>
-  </div>
-  {#if $deps.installingDeps.has('quickjs') && $deps.installProgressMap.get('quickjs')}
-    <div class="dep-progress">
-      <div
-        class="dep-progress-bar"
-        style="width: {$deps.installProgressMap.get('quickjs')?.progress ?? 0}%"
-      ></div>
-    </div>
-  {/if}
-</SettingItem>
-
-<!-- lux -->
-<SettingItem title="lux" description={$t('settings.deps.luxDescription')} highlight={searchQuery}>
-  <div class="dep-item">
-    <div class="dep-info">
-      <span class="dep-badge optional">{$t('settings.deps.optional')}</span>
-      {#if $deps.checking === 'lux'}
-        <span class="dep-status checking">{$t('settings.deps.checking')}</span>
-      {:else if $deps.lux?.installed}
-        <span class="dep-status installed">v{$deps.lux.version}</span>
-      {:else}
-        <span class="dep-status not-installed">{$t('settings.deps.notInstalled')}</span>
-      {/if}
-    </div>
-    <div class="dep-actions">
-      {#if $deps.installingDeps.has('lux')}
-        <button class="dep-btn" disabled>
-          <span class="btn-spinner"></span>
-          {$t('settings.deps.installing')}
-        </button>
-      {:else if $deps.lux?.installed}
-        <button class="dep-btn danger" onclick={() => deps.uninstallLux()}>
-          {$t('settings.deps.uninstall')}
-        </button>
-        <button
-          class="dep-btn"
-          onclick={() => installDepWithToast('lux', () => deps.installLux(), 'lux')}
-        >
-          {$t('settings.deps.reinstall')}
-        </button>
-      {:else}
-        <button
-          class="dep-btn primary"
-          onclick={() => installDepWithToast('lux', () => deps.installLux(), 'lux')}
-        >
-          {$t('settings.deps.install')}
-        </button>
-      {/if}
-    </div>
-  </div>
-  {#if $deps.installingDeps.has('lux') && $deps.installProgressMap.get('lux')}
-    <div class="dep-progress">
-      <div
-        class="dep-progress-bar"
-        style="width: {$deps.installProgressMap.get('lux')?.progress ?? 0}%"
-      ></div>
-    </div>
-  {/if}
-</SettingItem>
+    {#if isInstalling && progress}
+      <div class="dep-progress">
+        <div class="dep-progress-bar" style="width: {progress.progress ?? 0}%"></div>
+      </div>
+    {/if}
+  </SettingItem>
+{/each}
 
 {#if $deps.error}
   <p class="dep-error">{$deps.error}</p>

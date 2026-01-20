@@ -19,12 +19,13 @@
   onReset={() => updateSetting('accentStyle', defaultSettings.accentStyle)}
   highlight={searchQuery}
 >
-  <div class="accent-style-options">
+  <div class="accent-style-options" role="radiogroup" aria-label={$t('settings.app.accentStyle')}>
     <button
       type="button"
       class="accent-style-btn"
       class:active={$settings.accentStyle === 'solid'}
       onclick={() => updateSetting('accentStyle', 'solid')}
+      aria-pressed={$settings.accentStyle === 'solid'}
     >
       {$t('settings.app.accentStyleSolid')}
     </button>
@@ -33,6 +34,7 @@
       class="accent-style-btn"
       class:active={$settings.accentStyle === 'gradient'}
       onclick={() => updateSetting('accentStyle', 'gradient')}
+      aria-pressed={$settings.accentStyle === 'gradient'}
     >
       {$t('settings.app.accentStyleGradient')}
     </button>
@@ -41,6 +43,7 @@
       class="accent-style-btn"
       class:active={$settings.accentStyle === 'glow'}
       onclick={() => updateSetting('accentStyle', 'glow')}
+      aria-pressed={$settings.accentStyle === 'glow'}
     >
       {$t('settings.app.accentStyleGlow')}
     </button>

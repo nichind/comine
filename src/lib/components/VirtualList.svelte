@@ -44,6 +44,7 @@
 
   let prefixSums: number[] = [];
   let prefixSumsValid = false;
+  let dirtyRangeStart = 0;
 
   function getItemKey(item: T, index: number): string | number {
     if (getKey) return getKey(item, index);
@@ -67,12 +68,21 @@
 
   function rebuildPrefixSums(): void {
     const n = items.length;
-    prefixSums = new Array(n + 1);
-    prefixSums[0] = 0;
-    for (let i = 0; i < n; i++) {
-      prefixSums[i + 1] = prefixSums[i] + getItemHeight(i);
+    
+    if (!prefixSums.length || prefixSums.length !== n + 1) {
+      prefixSums = new Array(n + 1);
+      prefixSums[0] = 0;
+      for (let i = 0; i < n; i++) {
+        prefixSums[i + 1] = prefixSums[i] + getItemHeight(i);
+      }
+    } else {
+      for (let i = dirtyRangeStart; i < n; i++) {
+        prefixSums[i + 1] = prefixSums[i] + getItemHeight(i);
+      }
     }
+    
     prefixSumsValid = true;
+    dirtyRangeStart = n;
   }
 
   function ensurePrefixSums(): void {
@@ -123,8 +133,9 @@
     return { start, end };
   }
 
-  function invalidatePrefixSums(): void {
+  function invalidatePrefixSums(fromIndex: number = 0): void {
     prefixSumsValid = false;
+    dirtyRangeStart = Math.min(dirtyRangeStart, fromIndex);
   }
 
   let visibleRange = $derived.by(() => {
@@ -168,19 +179,8 @@
     const { scrollTop: st, scrollHeight, clientHeight } = container;
     const maxScroll = scrollHeight - clientHeight;
     
-    // Top fade logic
-    if (st > 0) {
-      topMaskHeight = Math.min(st, MASK_SIZE);
-    } else {
-      topMaskHeight = 0;
-    }
-
-    // Bottom fade logic
-    if (maxScroll > 0 && st < maxScroll) {
-       bottomMaskHeight = Math.min(maxScroll - st, MASK_SIZE);
-    } else {
-       bottomMaskHeight = 0;
-    }
+    topMaskHeight = st > 0 ? Math.min(st, MASK_SIZE) : 0;
+    bottomMaskHeight = (maxScroll > 0 && st < maxScroll) ? Math.min(maxScroll - st, MASK_SIZE) : 0;
   }
 
   function handleScroll() {

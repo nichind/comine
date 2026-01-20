@@ -11,6 +11,7 @@
   import Button from '$lib/components/Button.svelte';
   import { saveScrollPosition, getScrollPosition } from '$lib/stores/scroll';
   import VirtualList from '$lib/components/VirtualList.svelte';
+  import { formatSize } from '$lib/utils/format';
 
   const ROUTE_PATH = '/logs';
   const ESTIMATED_HEIGHT_DESKTOP = 28;
@@ -93,14 +94,6 @@
 
   function clearLogs() {
     logs.clear();
-  }
-
-  function formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 
   async function promptCopyLogs() {
@@ -365,7 +358,7 @@
     <p class="copy-warning-text">{$t('logs.copyConfirmMessage')}</p>
     <div class="copy-size-info">
       <span class="size-label">{$t('logs.contentSize')}:</span>
-      <span class="size-value">{formatBytes(copyContentLength)}</span>
+      <span class="size-value">{formatSize(copyContentLength)}</span>
       <span class="size-chars">({copyContentLength.toLocaleString()} {$t('logs.characters')})</span>
     </div>
     <p class="copy-hint">{$t('logs.copyHint')}</p>

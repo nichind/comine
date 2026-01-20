@@ -1,6 +1,6 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
-  import { settings, defaultSettings, updateSetting, resetSettings } from '$lib/stores/settings';
+  import { settings, updateSetting, resetSettings } from '$lib/stores/settings';
   import { history, type HistoryItem } from '$lib/stores/history';
   import { save, open } from '@tauri-apps/plugin-dialog';
   import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
