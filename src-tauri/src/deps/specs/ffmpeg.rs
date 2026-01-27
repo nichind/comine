@@ -154,7 +154,7 @@ pub async fn install_ffmpeg(
 	#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 	{
 		let ffmpeg_path = get_ffmpeg_path(&app)?;
-		let _ffprobe_path = get_ffprobe_path(&app)?;
+		let ffprobe_path = get_ffprobe_path(&app)?;
 		let bin_dir = get_bin_dir(&app)?;
 
 		tokio::fs::create_dir_all(&bin_dir)
