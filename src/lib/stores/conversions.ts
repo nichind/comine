@@ -85,16 +85,18 @@ export async function startConversion(
     hwAccel: appSettings.ffmpeg.hwAccel,
   };
 
-  const durationToBigInt = (durationSeconds: number): bigint => {
-    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return 0n;
-    return BigInt(Math.floor(durationSeconds));
+  const durationToSerializableSeconds = (durationSeconds: number): number | null => {
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return null;
+    return Math.floor(durationSeconds);
   };
 
-  const bigintToNumber = (value: bigint): number => {
+  const toNumber = (value: bigint | number): number => {
     const n = Number(value);
     if (!Number.isFinite(n)) return 0;
     return n;
   };
+
+  const durationSeconds = durationToSerializableSeconds(item.duration);
 
   const request: ConvertRequest = {
     jobId: id,
@@ -109,7 +111,7 @@ export async function startConversion(
       title: item.title,
       author: item.author,
       thumbnail: item.thumbnail ?? '',
-      duration: durationToBigInt(item.duration),
+      duration: durationSeconds as unknown as bigint | null,
       url: item.url,
     },
   };
@@ -134,10 +136,10 @@ export async function startConversion(
       statusMessage: 'Finished',
       filePath: result.outputPath,
       extension: result.extension,
-      filesize: bigintToNumber(result.filesize),
+      filesize: toNumber(result.filesize),
     });
 
-    const resultDurationSeconds = result.duration != null ? bigintToNumber(result.duration) : null;
+    const resultDurationSeconds = result.duration != null ? toNumber(result.duration) : null;
 
     await history.add({
       url: item.url || `file://${result.outputPath}`,
@@ -145,7 +147,7 @@ export async function startConversion(
       author: item.author,
       thumbnail: item.thumbnail ?? '',
       extension: result.extension,
-      size: bigintToNumber(result.filesize),
+      size: toNumber(result.filesize),
       duration: resultDurationSeconds ?? item.duration,
       convertedFormat: item.extension.toUpperCase(),
       filePath: result.outputPath,
