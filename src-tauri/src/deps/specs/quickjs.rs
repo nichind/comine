@@ -118,6 +118,18 @@ fn build_download_url(version: &str) -> String {
 		version
 	);
 
+	#[cfg(not(any(
+		target_os = "windows",
+		target_os = "macos",
+		all(target_os = "linux", target_arch = "x86_64"),
+		all(target_os = "linux", target_arch = "x86"),
+		all(target_os = "linux", target_arch = "aarch64")
+	)))]
+	let url = format!(
+		"https://bellard.org/quickjs/binary_releases/quickjs-cosmo-{}.zip",
+		version
+	);
+
 	url
 }
 
