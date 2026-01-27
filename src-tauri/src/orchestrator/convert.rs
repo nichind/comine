@@ -91,19 +91,24 @@ pub struct ConvertProgress {
 }
 
 async fn get_media_duration(ffprobe_path: &Path, file_path: &str) -> Option<f64> {
-    let output = tokio::process::Command::new(ffprobe_path)
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            file_path,
-        ])
-        .output()
-        .await
-        .ok()?;
+    let mut cmd = tokio::process::Command::new(ffprobe_path);
+    cmd.args([
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        file_path,
+    ]);
+
+    #[cfg(target_os = "windows")]
+    {
+        use crate::utils::CommandHideConsole;
+        cmd.hide_console();
+    }
+
+    let output = cmd.output().await.ok()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     stdout.trim().parse().ok()

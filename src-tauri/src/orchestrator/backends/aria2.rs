@@ -86,6 +86,12 @@ impl Aria2Backend {
         let mut cmd = Command::new(&self.binary_path);
         let req = &job.request;
 
+        #[cfg(target_os = "windows")]
+        {
+            use crate::utils::CommandHideConsole;
+            cmd.hide_console();
+        }
+
         // Output directory
         cmd.args(["-d", &req.output.directory]);
 
@@ -324,10 +330,16 @@ async fn graceful_shutdown_aria2(child: &mut tokio::process::Child) {
 
     #[cfg(windows)]
     {
-        let taskkill = tokio::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T"])
-            .output()
-            .await;
+        let mut taskkill = tokio::process::Command::new("taskkill");
+        taskkill.args(["/PID", &pid.to_string(), "/T"]);
+
+        #[cfg(target_os = "windows")]
+        {
+            use crate::utils::CommandHideConsole;
+            taskkill.hide_console();
+        }
+
+        let taskkill = taskkill.output().await;
 
         if taskkill.is_ok() {
             for _ in 0..20 {

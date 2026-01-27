@@ -337,10 +337,16 @@ async fn graceful_shutdown(child: &mut Child) {
 
     #[cfg(windows)]
     {
-        let taskkill = tokio::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T"])
-            .output()
-            .await;
+        let mut taskkill = tokio::process::Command::new("taskkill");
+        taskkill.args(["/PID", &pid.to_string(), "/T"]);
+
+        #[cfg(target_os = "windows")]
+        {
+            use crate::utils::CommandHideConsole;
+            taskkill.hide_console();
+        }
+
+        let taskkill = taskkill.output().await;
 
         if taskkill.is_ok() {
             info!(target: "ytdlp", "Sent taskkill to yt-dlp process {}, waiting for exit...", pid);
@@ -380,6 +386,12 @@ impl YtdlpBackend {
     #[cfg(not(target_os = "android"))]
     fn build_resolve_command(&self, url: &str, settings: &ResolveSettings) -> Command {
         let mut cmd = Command::new(&self.binary_path);
+
+        #[cfg(target_os = "windows")]
+        {
+            use crate::utils::CommandHideConsole;
+            cmd.hide_console();
+        }
 
         #[cfg(target_os = "windows")]
         cmd.env("PYTHONIOENCODING", "utf-8");
@@ -427,6 +439,12 @@ impl YtdlpBackend {
     #[cfg(not(target_os = "android"))]
     fn build_download_command(&self, job: &Job, effective_speed_limit: Option<u64>) -> Command {
         let mut cmd = Command::new(&self.binary_path);
+
+        #[cfg(target_os = "windows")]
+        {
+            use crate::utils::CommandHideConsole;
+            cmd.hide_console();
+        }
 
         #[cfg(target_os = "windows")]
         cmd.env("PYTHONIOENCODING", "utf-8");

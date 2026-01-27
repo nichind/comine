@@ -114,8 +114,10 @@ pub async fn open_logs_folder(app: AppHandle) -> Result<(), String> {
 
         #[cfg(target_os = "windows")]
         {
+            use crate::utils::StdCommandHideConsole;
             std::process::Command::new("explorer")
                 .arg(&logs_dir)
+                .hide_console()
                 .spawn()
                 .map_err(|e| format!("Failed to open folder: {}", e))?;
         }
