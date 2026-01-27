@@ -708,7 +708,8 @@
       "missingYtdlp": "yt-dlp is not installed. Please install it from Settings → Dependencies.",
       "missingFfmpeg": "ffmpeg is not installed. Please install it from Settings → Dependencies.",
       "missingBoth": "yt-dlp and ffmpeg are not installed. Please install them from Settings → Dependencies.",
-      "goToSettings": "Go to Settings"
+      "goToSettings": "Go to Settings",
+      "cancel": "Cancel"
     },
     "data": {
       "title": "Data",
@@ -1067,6 +1068,9 @@
     "installing": "Installing {component}...",
     "installed": "{component} installed successfully",
     "installFailed": "Failed to install {component}",
+    "uninstalling": "Uninstalling {component}...",
+    "uninstalled": "{component} uninstalled successfully",
+    "uninstallFailed": "Failed to uninstall {component}",
     "installingBundle": "Installing components...",
     "bundleComplete": "All components installed!",
     "bundlePartial": "{success} installed, {failed} failed",

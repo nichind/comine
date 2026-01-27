@@ -209,7 +209,11 @@ fn handle_request(app: &AppHandle, mut request: Request) {
     let cors_headers = vec![
         Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap(),
         Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, OPTIONS").unwrap(),
-        Header::from_bytes("Access-Control-Allow-Headers", "Content-Type, X-Comine-Token").unwrap(),
+        Header::from_bytes(
+            "Access-Control-Allow-Headers",
+            "Content-Type, X-Comine-Token",
+        )
+        .unwrap(),
         Header::from_bytes("Content-Type", "application/json").unwrap(),
     ];
 

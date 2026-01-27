@@ -83,6 +83,16 @@
         </defs>
       </svg>
     </div>
+    <script>
+      (function () {
+        try {
+          if (window.location.pathname.startsWith('/notification')) {
+            const splash = document.getElementById('splash-screen');
+            if (splash) splash.remove();
+          }
+        } catch (e) {}
+      })();
+    </script>
     <div style="display: contents; height: 100%;">%sveltekit.body%</div>
   </body>
 </html>

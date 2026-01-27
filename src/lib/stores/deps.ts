@@ -3,12 +3,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { logs } from './logs';
 import { getProxyConfig } from './settings';
+import { toast, updateToast, dismissToast } from '$lib/components/Toast.svelte';
 
 export interface DependencyStatus {
   installed: boolean;
   version: string | null;
   path: string | null;
   updateAvailable: string | null;
+  diskSize?: number | null;
 }
 
 export interface InstallProgress {
@@ -104,8 +106,36 @@ const DEP_CONFIG: Record<
   },
 };
 
+const installToastIds = new Map<DependencyName, number>();
+const lastToastUpdateAt = new Map<DependencyName, number>();
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const exp = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / Math.pow(1024, exp);
+  const decimals = value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(decimals)} ${units[exp]}`;
+}
+
+function formatSpeed(bytesPerSec: number): string {
+  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return '0 B/s';
+  return `${formatBytes(bytesPerSec)}/s`;
+}
+
 function createDepsStore() {
   const { subscribe, set, update } = writable<DepsState>(initialState);
+
+  async function cancelInstall(dep: DependencyName): Promise<boolean> {
+    try {
+      logs.info('deps', `Cancelling ${dep} install...`);
+      await invoke('cancel_dep_install', { dep });
+      return true;
+    } catch (err) {
+      logs.error('deps', `Failed to cancel ${dep}: ${err}`);
+      return false;
+    }
+  }
 
   async function checkDep(
     dep: DependencyName,
@@ -130,6 +160,9 @@ function createDepsStore() {
   async function installDep(dep: DependencyName, version?: string): Promise<boolean> {
     const config = DEP_CONFIG[dep];
     logs.info('deps', `Installing ${dep}${version ? ` version ${version}` : ''}...`);
+
+    const toastId = toast.progress(`Installing ${dep}...`, 0, 'Starting…');
+    installToastIds.set(dep, toastId);
 
     update((s) => {
       const newInstallingDeps = new Set(s.installingDeps);
@@ -158,6 +191,30 @@ function createDepsStore() {
           installProgress: dep === 'ytdlp' ? event.payload : s.installProgress,
         };
       });
+
+      const now = Date.now();
+      const last = lastToastUpdateAt.get(dep) ?? 0;
+      if (now - last < 200) return;
+      lastToastUpdateAt.set(dep, now);
+
+      const id = installToastIds.get(dep);
+      if (!id) return;
+
+      const downloaded = event.payload.downloaded ?? 0;
+      const total = event.payload.total ?? 0;
+      const speed = event.payload.speed ?? 0;
+
+      const subParts: string[] = [];
+      if (event.payload.stage) subParts.push(event.payload.stage);
+      if (speed > 0) subParts.push(formatSpeed(speed));
+      if (total > 0) subParts.push(`${formatBytes(downloaded)} / ${formatBytes(total)}`);
+      else if (downloaded > 0) subParts.push(formatBytes(downloaded));
+
+      updateToast(id, {
+        message: event.payload.message || `Installing ${dep}...`,
+        progress: event.payload.progress ?? 0,
+        subMessage: subParts.join(' • '),
+      });
     });
 
     try {
@@ -168,6 +225,20 @@ function createDepsStore() {
       });
       logs.info('deps', `${dep} installed successfully: ${result}`);
       const status = await invoke<DependencyStatus>(config.checkCommand);
+
+      const id = installToastIds.get(dep);
+      if (id) {
+        updateToast(id, {
+          type: 'success',
+          message: `Installed ${dep}`,
+          progress: 100,
+          subMessage: status.version ? `${status.version}` : undefined,
+          actionLabel: undefined,
+          action: undefined,
+        });
+        setTimeout(() => dismissToast(id), 2500);
+        installToastIds.delete(dep);
+      }
 
       update((s) => {
         const newInstallingDeps = new Set(s.installingDeps);
@@ -186,6 +257,20 @@ function createDepsStore() {
       return true;
     } catch (err) {
       logs.error('deps', `Failed to install ${dep}: ${err}`);
+
+      const id = installToastIds.get(dep);
+      if (id) {
+        updateToast(id, {
+          type: 'error',
+          message: `Failed to install ${dep}`,
+          subMessage: String(err),
+          actionLabel: undefined,
+          action: undefined,
+        });
+        setTimeout(() => dismissToast(id), 6000);
+        installToastIds.delete(dep);
+      }
+
       update((s) => {
         const newInstallingDeps = new Set(s.installingDeps);
         newInstallingDeps.delete(dep);
@@ -231,6 +316,8 @@ function createDepsStore() {
     install: installDep,
     uninstall: uninstallDep,
 
+    cancelInstall,
+
     async checkYtdlp(checkUpdates: boolean = false) {
       return checkDep('ytdlp', checkUpdates);
     },
@@ -259,7 +346,8 @@ function createDepsStore() {
 
     async fetchReleases() {
       try {
-        const releases = await invoke<ReleaseInfo[]>('get_ytdlp_releases');
+        const proxyConfig = getProxyConfig();
+        const releases = await invoke<ReleaseInfo[]>('get_ytdlp_releases', { proxyConfig });
         update((s) => ({ ...s, releases }));
         return releases;
       } catch (err) {

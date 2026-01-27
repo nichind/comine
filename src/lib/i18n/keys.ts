@@ -110,6 +110,9 @@ export type TranslationKeys =
   | 'deps.installing'
   | 'deps.installingBundle'
   | 'deps.setupRequired'
+  | 'deps.uninstallFailed'
+  | 'deps.uninstalled'
+  | 'deps.uninstalling'
 
   // Disk
   | 'disk.available'
@@ -755,6 +758,7 @@ export type TranslationKeys =
   | 'settings.data.resetSettingsDescription'
   | 'settings.data.title'
   | 'settings.deps.aria2Description'
+  | 'settings.deps.cancel'
   | 'settings.deps.checkSettings'
   | 'settings.deps.checking'
   | 'settings.deps.components'

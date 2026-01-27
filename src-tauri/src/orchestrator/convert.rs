@@ -163,7 +163,7 @@ async fn convert_local_file_desktop(
     // Determine ffprobe path (same directory as ffmpeg)
     let ffprobe_path = ffmpeg_path
         .parent()
-        .map(|p| {
+        .map(|p: &std::path::Path| {
             #[cfg(target_os = "windows")]
             {
                 p.join("ffprobe.exe")
@@ -440,7 +440,7 @@ async fn convert_local_file_desktop(
             // Emit progress when we have time info
             if current_time_ms > 0 {
                 let time_secs = current_time_ms as f64 / 1_000_000.0;
-                let progress = if let Some(total) = total_duration {
+                let progress: f64 = if let Some(total) = total_duration {
                     ((time_secs / total) * 100.0).min(100.0)
                 } else {
                     0.0

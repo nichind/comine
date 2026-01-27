@@ -75,6 +75,7 @@ pub struct DependencyStatus {
     pub version: Option<String>,
     pub path: Option<String>,
     pub update_available: Option<String>,
+    pub disk_size: Option<u64>,
 }
 
 impl DependencyStatus {
@@ -88,6 +89,7 @@ impl DependencyStatus {
             version: Some("embedded".to_string()),
             path: Some(description.to_string()),
             update_available: None,
+            disk_size: None,
         }
     }
 
@@ -97,11 +99,17 @@ impl DependencyStatus {
             version: Some(version),
             path: Some(path),
             update_available: None,
+            disk_size: None,
         }
     }
 
     pub fn with_update(mut self, update_version: Option<String>) -> Self {
         self.update_available = update_version;
+        self
+    }
+
+    pub fn with_disk_size(mut self, disk_size: Option<u64>) -> Self {
+        self.disk_size = disk_size;
         self
     }
 }

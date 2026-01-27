@@ -781,7 +781,8 @@
       "missingYtdlp": "yt-dlp не установлен. Установите его в Настройки → Зависимости.",
       "missingFfmpeg": "ffmpeg не установлен. Установите его в Настройки → Зависимости.",
       "missingBoth": "yt-dlp и ffmpeg не установлены. Установите их в Настройки → Зависимости.",
-      "goToSettings": "Перейти в Настройки"
+      "goToSettings": "Перейти в Настройки",
+      "cancel": "Отмена"
     },
     "data": {
       "title": "Данные",
@@ -1092,6 +1093,9 @@
     "installing": "Установка {component}...",
     "installed": "{component} успешно установлен",
     "installFailed": "Ошибка установки {component}",
+    "uninstalling": "Удаление {component}...",
+    "uninstalled": "{component} успешно удалён",
+    "uninstallFailed": "Ошибка удаления {component}",
     "installingBundle": "Установка компонентов...",
     "bundleComplete": "Все компоненты установлены!",
     "bundlePartial": "{success} установлено, {failed} с ошибкой",

@@ -392,14 +392,20 @@
   }
 
   onMount(() => {
-    if (window.location.pathname.startsWith('/notification')) {
-      return;
-    }
+    const isNotificationRoute = window.location.pathname.startsWith('/notification');
 
     const splash = document.getElementById('splash-screen');
     if (splash) {
-      splash.classList.add('fade-out');
-      setTimeout(() => splash.remove(), 400);
+      if (isNotificationRoute) {
+        splash.remove();
+      } else {
+        splash.classList.add('fade-out');
+        setTimeout(() => splash.remove(), 400);
+      }
+    }
+
+    if (isNotificationRoute) {
+      return;
     }
 
     appWindow = getCurrentWindow();

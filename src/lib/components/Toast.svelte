@@ -10,6 +10,8 @@
     duration: number;
     progress?: number;
     subMessage?: string;
+    actionLabel?: string;
+    action?: () => void;
   }
 
   let idCounter = 0;
@@ -32,7 +34,9 @@
 
   export function updateToast(
     id: number,
-    updates: Partial<Pick<Toast, 'message' | 'progress' | 'type' | 'subMessage'>>
+    updates: Partial<
+      Pick<Toast, 'message' | 'progress' | 'type' | 'subMessage' | 'actionLabel' | 'action'>
+    >
   ) {
     toasts.update((t) => t.map((toast) => (toast.id === id ? { ...toast, ...updates } : toast)));
   }
@@ -105,6 +109,9 @@
             <span class="sub-message">{t.subMessage}</span>
           {/if}
         </div>
+        {#if t.actionLabel && t.action}
+          <button class="action" onclick={t.action}>{t.actionLabel}</button>
+        {/if}
         <button class="dismiss" onclick={() => dismissToast(t.id)} aria-label="Dismiss">
           <Icon name="cross" size={12} />
         </button>
@@ -253,9 +260,8 @@
     font-size: 12px;
     font-weight: 400;
     color: var(--surface-text-muted, rgba(255, 255, 255, 0.5));
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    line-height: 1.35;
+    word-break: break-word;
   }
 
   .dismiss {
@@ -272,6 +278,29 @@
     cursor: pointer;
     transition: all 0.15s ease;
     flex-shrink: 0;
+  }
+
+  .action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 22px;
+    padding: 0 10px;
+    margin: -2px 0;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-sm, 6px);
+    color: var(--surface-text, rgba(255, 255, 255, 0.8));
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .action:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.14);
   }
 
   .dismiss:hover {

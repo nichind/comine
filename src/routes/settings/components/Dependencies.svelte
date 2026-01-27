@@ -2,7 +2,8 @@
   import { t } from '$lib/i18n';
   import { deps, type DependencyName } from '$lib/stores/deps';
   import { toast } from '$lib/components/Toast.svelte';
-  import SettingItem from '$lib/components/SettingItem.svelte';
+  import Icon from '$lib/components/Icon.svelte';
+  import { tooltip } from '$lib/actions/tooltip';
 
   interface Props {
     searchQuery: string;
@@ -15,8 +16,8 @@
     label: string;
     descriptionKey: string;
     badge?: 'required' | 'optional';
-    installer: () => Promise<unknown>;
-    uninstaller: () => void;
+    installer: () => Promise<boolean>;
+    uninstaller: () => Promise<boolean>;
   }
 
   const DEPENDENCIES: DepConfig[] = [
@@ -66,19 +67,32 @@
     },
   ];
 
-  async function installDepWithToast(dep: DepConfig) {
-    toast.info($t('deps.installing', { component: dep.label }));
-    try {
-      await dep.installer();
-      toast.success($t('deps.installed', { component: dep.label }));
-    } catch (err) {
-      console.error(`Failed to install dependency: ${dep.name}`, err);
-      toast.error($t('deps.installFailed', { component: dep.label }));
+  async function uninstallDepWithToast(dep: DepConfig) {
+    toast.info($t('deps.uninstalling', { component: dep.label }));
+    const ok = await dep.uninstaller();
+    if (ok) {
+      toast.success($t('deps.uninstalled', { component: dep.label }));
+    } else {
+      console.error(`Failed to uninstall dependency: ${dep.name}`, $deps.error);
+      toast.error(
+        $deps.error && $deps.error.trim().length > 0
+          ? $deps.error
+          : $t('deps.uninstallFailed', { component: dep.label })
+      );
     }
   }
 
   function getDepInfo(name: DependencyName) {
     return $deps[name];
+  }
+
+  function formatBytes(bytes: number | null | undefined): string {
+    if (!bytes || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const exp = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+    const value = bytes / Math.pow(1024, exp);
+    const decimals = value >= 100 ? 0 : value >= 10 ? 1 : 2;
+    return `${value.toFixed(decimals)} ${units[exp]}`;
   }
 </script>
 
@@ -86,50 +100,67 @@
   {@const info = getDepInfo(dep.name)}
   {@const isChecking = $deps.checking === dep.name}
   {@const isInstalling = $deps.installingDeps.has(dep.name)}
-  {@const progress = $deps.installProgressMap.get(dep.name)}
 
-  <SettingItem title={dep.label} description={$t(dep.descriptionKey)} highlight={searchQuery}>
-    <div class="dep-item">
-      <div class="dep-info">
+  <div class="dep-row">
+    <div class="dep-main">
+      <div class="dep-header">
+        <span class="dep-name">{dep.label}</span>
         {#if dep.badge}
           <span class="dep-badge {dep.badge}">{$t(`settings.deps.${dep.badge}`)}</span>
         {/if}
         {#if isChecking}
-          <span class="dep-status checking">{$t('settings.deps.checking')}</span>
+          <span class="dep-version checking">
+            <Icon name="spinner" size={12} />
+          </span>
         {:else if info?.installed}
-          <span class="dep-status installed">
-            {info.version ? `v${info.version}` : $t('settings.deps.installed')}
+          <span class="dep-version installed">
+            {info.version ?? ''}
+            {#if info.diskSize}
+              <span class="dep-size">({formatBytes(info.diskSize)})</span>
+            {/if}
           </span>
         {:else}
-          <span class="dep-status not-installed">{$t('settings.deps.notInstalled')}</span>
+          <span class="dep-version missing">{$t('settings.deps.notInstalled')}</span>
         {/if}
       </div>
-      <div class="dep-actions">
-        {#if isInstalling}
-          <button class="dep-btn" disabled>
-            <span class="btn-spinner"></span>
-            {$t('settings.deps.installing')}
-          </button>
-        {:else if info?.installed}
-          <button class="dep-btn danger" onclick={() => dep.uninstaller()}>
-            {$t('settings.deps.uninstall')}
-          </button>
-          <button class="dep-btn" onclick={() => installDepWithToast(dep)}>
-            {$t('settings.deps.reinstall')}
-          </button>
-        {:else}
-          <button class="dep-btn primary" onclick={() => installDepWithToast(dep)}>
-            {$t('settings.deps.install')}
-          </button>
-        {/if}
-      </div>
+      <div class="dep-desc">{$t(dep.descriptionKey)}</div>
     </div>
-    {#if isInstalling && progress}
-      <div class="dep-progress">
-        <div class="dep-progress-bar" style="width: {progress.progress ?? 0}%"></div>
-      </div>
-    {/if}
-  </SettingItem>
+
+    <div class="dep-actions">
+      {#if isInstalling}
+        <button
+          class="action-btn cancel"
+          onclick={() => deps.cancelInstall(dep.name)}
+          use:tooltip={$t('settings.deps.cancel') || 'Cancel'}
+        >
+          <Icon name="cross" size={18} />
+        </button>
+      {:else if info?.installed}
+        <button
+          class="action-btn reinstall"
+          onclick={() => dep.installer()}
+          use:tooltip={$t('settings.deps.reinstall')}
+        >
+          <Icon name="refresh" size={18} />
+        </button>
+        <button
+          class="action-btn uninstall"
+          onclick={() => uninstallDepWithToast(dep)}
+          use:tooltip={$t('settings.deps.uninstall')}
+        >
+          <Icon name="trash" size={18} />
+        </button>
+      {:else}
+        <button
+          class="action-btn install"
+          onclick={() => dep.installer()}
+          use:tooltip={$t('settings.deps.install')}
+        >
+          <Icon name="download" size={18} />
+        </button>
+      {/if}
+    </div>
+  </div>
 {/each}
 
 {#if $deps.error}
@@ -137,139 +168,157 @@
 {/if}
 
 <style>
-  .dep-item {
-    width: 100%;
+  .dep-row {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: var(--radius-lg, 12px);
   }
 
-  .dep-info {
+  .dep-main {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .dep-header {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .dep-name {
+    font-size: 14px;
+    font-weight: 550;
+    color: rgba(255, 255, 255, 0.92);
   }
 
   .dep-badge {
-    font-size: 10px;
-    font-weight: 600;
-    padding: 2px 6px;
-    border-radius: var(--radius-sm, 4px);
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 5px;
+    border-radius: 4px;
     text-transform: uppercase;
+    letter-spacing: 0.02em;
   }
 
   .dep-badge.required {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
+    background: rgba(239, 68, 68, 0.18);
+    color: #f87171;
   }
 
   .dep-badge.optional {
-    background: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.6);
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.5);
   }
 
-  .dep-status {
-    font-size: var(--text-sm, 12px);
+  .dep-version {
+    font-size: 12px;
     font-weight: 500;
-    padding: 2px 8px;
-    border-radius: var(--radius-sm, 6px);
+    color: rgba(255, 255, 255, 0.5);
   }
 
-  .dep-status.checking {
-    background: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.7);
+  .dep-version.installed {
+    color: #4ade80;
   }
 
-  .dep-status.installed {
-    background: rgba(34, 197, 94, 0.15);
-    color: #22c55e;
+  .dep-version.missing {
+    color: rgba(255, 255, 255, 0.35);
+    font-style: italic;
   }
 
-  .dep-status.not-installed {
-    background: rgba(255, 255, 255, 0.05);
+  .dep-version.checking {
+    display: inline-flex;
+    align-items: center;
+    color: rgba(255, 255, 255, 0.5);
+    animation: spin 0.8s linear infinite;
+  }
+
+  .dep-size {
+    margin-left: 4px;
     color: rgba(255, 255, 255, 0.4);
+  }
+
+  .dep-desc {
+    font-size: 12px;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.45);
+    line-height: 1.4;
   }
 
   .dep-actions {
     display: flex;
-    gap: 8px;
+    gap: 6px;
+    flex-shrink: 0;
   }
 
-  .dep-btn {
+  .action-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    border-radius: var(--radius, 8px);
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    color: white;
-    font-size: var(--text-base, 13px);
-    font-weight: 500;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: var(--radius, 10px);
+    border: 1px solid transparent;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.15s ease;
   }
 
-  .dep-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.12);
+  .action-btn.install {
+    background: var(--accent, #6366f1);
+    color: white;
   }
 
-  .dep-btn.primary {
-    background: #6366f1;
-    border-color: #6366f1;
+  .action-btn.install:hover {
+    background: var(--accent-hover, #4f46e5);
+    transform: scale(1.04);
   }
 
-  .dep-btn.primary:hover:not(:disabled) {
-    background: #4f46e5;
+  .action-btn.reinstall {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.7);
   }
 
-  .dep-btn.danger {
-    background: rgba(239, 68, 68, 0.1);
-    border-color: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
+  .action-btn.reinstall:hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: white;
   }
 
-  .dep-btn.danger:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.2);
+  .action-btn.uninstall {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.15);
+    color: #f87171;
   }
 
-  .dep-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
+  .action-btn.uninstall:hover {
+    background: rgba(239, 68, 68, 0.22);
   }
 
-  .dep-progress {
-    width: 100%;
-    height: 4px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 2px;
-    overflow: hidden;
-    margin-top: 8px;
+  .action-btn.cancel {
+    background: rgba(251, 191, 36, 0.15);
+    border-color: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
   }
 
-  .dep-progress-bar {
-    height: 100%;
-    background: #6366f1;
-    transition: width 0.2s;
-  }
-
-  .btn-spinner {
-    width: 14px;
-    height: 14px;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-top-color: white;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
+  .action-btn.cancel:hover {
+    background: rgba(251, 191, 36, 0.25);
   }
 
   .dep-error {
     margin-top: 10px;
-    padding: 10px;
+    padding: 10px 12px;
     background: rgba(239, 68, 68, 0.1);
     border: 1px solid rgba(239, 68, 68, 0.2);
     border-radius: var(--radius, 8px);
-    color: #ef4444;
-    font-size: var(--text-base, 13px);
+    color: #f87171;
+    font-size: 13px;
   }
 
   @keyframes spin {
