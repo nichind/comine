@@ -1938,20 +1938,12 @@ pub async fn check_quickjs(app: AppHandle) -> Result<DependencyStatus, String> {
     let quickjs_path = get_quickjs_path(&app)?;
 
     if quickjs_path.exists() {
-        let mut cmd = tokio::process::Command::new(&quickjs_path);
-        cmd.args(["--std", "-e", "console.log('ok')"]);
-
-        #[cfg(target_os = "windows")]
-        cmd.hide_console();
-
-        let output = cmd.output().await;
-
-        match output {
-            Ok(output) if output.status.success() => Ok(DependencyStatus::installed(
+        match verify_quickjs(&quickjs_path).await {
+            Ok(()) => Ok(DependencyStatus::installed(
                 "installed".to_string(),
                 quickjs_path.to_string_lossy().to_string(),
             )),
-            _ => Ok(DependencyStatus::not_installed()),
+            Err(_) => Ok(DependencyStatus::not_installed()),
         }
     } else {
         Ok(DependencyStatus::not_installed())
@@ -2108,24 +2100,11 @@ pub async fn install_quickjs(
             },
         );
 
-        let mut test_cmd = tokio::process::Command::new(&quickjs_path);
-        test_cmd.args(["--std", "-e", "console.log('ok')"]);
+        verify_quickjs(&quickjs_path).await.map_err(|e| {
+            format!("QuickJS verification failed: {}", e)
+        })?;
 
-        #[cfg(target_os = "windows")]
-        test_cmd.hide_console();
-
-        match test_cmd.output().await {
-            Ok(output) if output.status.success() => {
-                info!("QuickJS installed successfully");
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(format!("QuickJS verification failed: {}", stderr));
-            }
-            Err(e) => {
-                return Err(format!("Failed to run QuickJS: {}", e));
-            }
-        }
+        info!("QuickJS installed successfully");
 
         let _ = window.emit(
             EVENT_QUICKJS_PROGRESS,
@@ -2141,6 +2120,54 @@ pub async fn install_quickjs(
 
         Ok(quickjs_path.to_string_lossy().to_string())
     }
+}
+
+#[cfg(not(target_os = "android"))]
+async fn verify_quickjs(quickjs_path: &Path) -> Result<(), String> {
+    let attempts: &[(&str, &[&str])] = &[
+        ("std_print", &["--std", "-e", "print('ok')"]),
+        ("print", &["-e", "print('ok')"]),
+    ];
+
+    let mut errors: Vec<String> = Vec::new();
+
+    for (label, args) in attempts {
+        let mut cmd = tokio::process::Command::new(quickjs_path);
+        cmd.args(*args);
+
+        #[cfg(target_os = "windows")]
+        cmd.hide_console();
+
+        match cmd.output().await {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if stdout.contains("ok") {
+                    return Ok(());
+                }
+                errors.push(format!(
+                    "attempt={} exit={:?} stdout_missing_ok stdout={} stderr={}",
+                    label,
+                    output.status.code(),
+                    stdout.trim(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+            Ok(output) => {
+                errors.push(format!(
+                    "attempt={} exit={:?} stdout={} stderr={}",
+                    label,
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stdout).trim(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+            Err(e) => {
+                errors.push(format!("attempt={} spawn_error={}", label, e));
+            }
+        }
+    }
+
+    Err(errors.join(" | "))
 }
 
 #[cfg(not(target_os = "android"))]
