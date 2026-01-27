@@ -396,6 +396,12 @@
       return;
     }
 
+    const splash = document.getElementById('splash-screen');
+    if (splash) {
+      splash.classList.add('fade-out');
+      setTimeout(() => splash.remove(), 400);
+    }
+
     appWindow = getCurrentWindow();
 
     initSettings();

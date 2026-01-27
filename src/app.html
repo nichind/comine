@@ -27,10 +27,62 @@
         font-style: normal;
         font-display: swap;
       }
+
+      #splash-screen {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 99999;
+        pointer-events: none;
+        opacity: 1;
+        transition: opacity 0.4s ease-out;
+      }
+      #splash-screen.fade-out {
+        opacity: 0;
+      }
+      #splash-icon {
+        width: 120px;
+        height: 120px;
+        display: block;
+        animation: splash-zoom 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+      @keyframes splash-zoom {
+        0% {
+          transform: scale(0.5);
+          opacity: 0;
+        }
+        100% {
+          transform: scale(1);
+          opacity: 1;
+        }
+      }
     </style>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover" style="background: transparent; margin: 0; padding: 0; overflow: hidden; height: 100%; width: 100%;">
+    <div id="splash-screen">
+      <svg id="splash-icon" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M300.29 223.05L612.418 0L844 298.937L799.054 760.396L472.441 1024L158 592.095L300.29 223.05ZM754.854 722.285C700.283 629.788 671.5 524.355 671.5 416.959V323.5L464.5 633.5L754.854 722.285Z" fill="url(#splash_g0)"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M300.29 223.05L612.418 0L844 298.937L799.054 760.396L472.441 1024L158 592.095L300.29 223.05ZM754.854 722.285C700.283 629.788 671.5 524.355 671.5 416.959V323.5L464.5 633.5L754.854 722.285Z" fill="url(#splash_g1)"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M300.29 223.05L612.418 0L844 298.937L799.054 760.396L472.441 1024L158 592.095L300.29 223.05ZM754.854 722.285C700.283 629.788 671.5 524.355 671.5 416.959V323.5L464.5 633.5L754.854 722.285Z" fill="url(#splash_g2)"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M300.29 223.05L612.418 0L844 298.937L799.054 760.396L472.441 1024L158 592.095L300.29 223.05ZM754.854 722.285C700.283 629.788 671.5 524.355 671.5 416.959V323.5L464.5 633.5L754.854 722.285Z" fill="url(#splash_g3)"/>
+        <defs>
+          <linearGradient id="splash_g0" x1="512" y1="0" x2="512" y2="1024" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#B499D5"/><stop offset="1" stop-color="#0EA5E9"/>
+          </linearGradient>
+          <radialGradient id="splash_g1" cx="0" cy="0" r="1" gradientTransform="matrix(96 -686 440.1 -99.3 725.5 836.5)" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#5894E5"/><stop offset="1" stop-color="#5894E5" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="splash_g2" cx="0" cy="0" r="1" gradientTransform="matrix(-1450.5 0 -333.6 -883.9 1309.5 723)" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#14B8A6"/><stop offset="1" stop-color="#14B8A6" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="splash_g3" cx="0" cy="0" r="1" gradientTransform="matrix(715 -496.5 467 321.5 106.5 647)" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#6366F1"/><stop offset="1" stop-color="#5894E5" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+      </svg>
+    </div>
     <div style="display: contents; height: 100%;">%sveltekit.body%</div>
   </body>
 </html>
