@@ -85,6 +85,17 @@ export async function startConversion(
     hwAccel: appSettings.ffmpeg.hwAccel,
   };
 
+  const durationToBigInt = (durationSeconds: number): bigint => {
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return 0n;
+    return BigInt(Math.floor(durationSeconds));
+  };
+
+  const bigintToNumber = (value: bigint): number => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    return n;
+  };
+
   const request: ConvertRequest = {
     jobId: id,
     sourcePath: item.filePath,
@@ -98,7 +109,7 @@ export async function startConversion(
       title: item.title,
       author: item.author,
       thumbnail: item.thumbnail ?? '',
-      duration: item.duration,
+      duration: durationToBigInt(item.duration),
       url: item.url,
     },
   };
@@ -117,25 +128,25 @@ export async function startConversion(
   try {
     const result = await invoke<ConvertResult>('convert_local_file', { request });
 
-    // Mark as completed
     queue.updateConversion(id, {
       progress: 100,
       status: 'completed',
       statusMessage: 'Finished',
       filePath: result.outputPath,
       extension: result.extension,
-      filesize: result.filesize,
+      filesize: bigintToNumber(result.filesize),
     });
 
-    // Add to history
+    const resultDurationSeconds = result.duration != null ? bigintToNumber(result.duration) : null;
+
     await history.add({
       url: item.url || `file://${result.outputPath}`,
       title: item.title,
       author: item.author,
       thumbnail: item.thumbnail ?? '',
       extension: result.extension,
-      size: result.filesize,
-      duration: result.duration ?? item.duration,
+      size: bigintToNumber(result.filesize),
+      duration: resultDurationSeconds ?? item.duration,
       convertedFormat: item.extension.toUpperCase(),
       filePath: result.outputPath,
       type: audioOnly ? 'audio' : item.type,
@@ -144,7 +155,6 @@ export async function startConversion(
 
     toast.success(`Converted to ${targetFormat.toUpperCase()}`);
 
-    // Remove from queue after a delay
     setTimeout(() => {
       queue.removeConversion(id);
     }, 2000);
@@ -153,7 +163,6 @@ export async function startConversion(
   } catch (err) {
     console.error('Conversion failed:', err);
 
-    // Mark as failed
     queue.updateConversion(id, {
       status: 'failed',
       statusMessage: 'Failed',
@@ -162,7 +171,6 @@ export async function startConversion(
 
     toast.error(`Conversion failed: ${err}`);
 
-    // Remove from queue after showing error
     setTimeout(() => {
       queue.removeConversion(id);
     }, 5000);
@@ -171,7 +179,6 @@ export async function startConversion(
   }
 }
 
-// Legacy conversions store object for backwards compatibility
 export const conversions = {
   init: initConversions,
   cleanup: cleanupConversions,
