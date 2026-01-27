@@ -3,10 +3,7 @@ export type DebouncedFn<T extends (...args: any[]) => any> = ((...args: Paramete
   flush: () => void;
 };
 
-export function debounce<T extends (...args: any[]) => any>(
-  fn: T,
-  waitMs = 0
-): DebouncedFn<T> {
+export function debounce<T extends (...args: any[]) => any>(fn: T, waitMs = 0): DebouncedFn<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let lastArgs: Parameters<T> | null = null;
 

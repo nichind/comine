@@ -114,12 +114,10 @@
         if (color && !destroyed) {
           glowColor = color;
         }
-        // Always mark as processed to prevent retry loops
         currentUrl = url;
       }
     } catch (e) {
       console.warn('[ThumbnailGlow] Color extraction failed:', e);
-      // Mark as processed even on error to prevent retry loops
       currentUrl = url;
     } finally {
       if (!destroyed) {

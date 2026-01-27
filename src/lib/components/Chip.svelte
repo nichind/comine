@@ -30,11 +30,11 @@
     gap: 6px;
     height: 36px;
     padding: 0 14px;
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     font-weight: 500;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
+    border-radius: var(--radius, 10px);
     color: rgba(255, 255, 255, 0.7);
     cursor: pointer;
     transition: all 0.15s;

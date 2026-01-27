@@ -1,7 +1,12 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
   import { settings, updateSetting, defaultSettings } from '$lib/stores/settings';
-  import { updateState, checkForUpdates, downloadAndInstall, getCurrentVersion } from '$lib/stores/updates';
+  import {
+    updateState,
+    checkForUpdates,
+    downloadAndInstall,
+    getCurrentVersion,
+  } from '$lib/stores/updates';
   import SettingItem from '$lib/components/SettingItem.svelte';
   import Toggle from '$lib/components/Toggle.svelte';
   import Icon from '$lib/components/Icon.svelte';
@@ -15,12 +20,12 @@
   let checkingUpdate = $state(false);
 
   async function handleCheckForUpdates() {
-     checkingUpdate = true;
-     try {
-       await checkForUpdates(true);
-     } finally {
-       checkingUpdate = false;
-     }
+    checkingUpdate = true;
+    try {
+      await checkForUpdates(true);
+    } finally {
+      checkingUpdate = false;
+    }
   }
 </script>
 
@@ -49,10 +54,7 @@
   onReset={() => updateSetting('autoUpdate', defaultSettings.autoUpdate)}
   highlight={searchQuery}
 >
-  <Toggle 
-    checked={$settings.autoUpdate} 
-    onchange={(v) => updateSetting('autoUpdate', v)} 
-  />
+  <Toggle checked={$settings.autoUpdate} onchange={(v) => updateSetting('autoUpdate', v)} />
 </SettingItem>
 
 {#if $updateState.available && $updateState.info}
@@ -108,17 +110,26 @@
     border: none;
     color: white;
     padding: 6px 12px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     cursor: pointer;
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     display: flex;
     align-items: center;
     gap: 8px;
   }
-  .dep-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.15); }
-  .dep-btn:disabled { opacity: 0.5; cursor: default; }
-  .dep-btn.primary { background: var(--accent-color, #6366f1); }
-  .dep-btn.primary:hover:not(:disabled) { opacity: 0.9; }
+  .dep-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.15);
+  }
+  .dep-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .dep-btn.primary {
+    background: var(--accent-color, #6366f1);
+  }
+  .dep-btn.primary:hover:not(:disabled) {
+    opacity: 0.9;
+  }
 
   .btn-spinner {
     width: 14px;
@@ -128,22 +139,26 @@
     border-radius: 50%;
     animation: spin 1s linear infinite;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
 
   .setting-sub-row {
     margin-left: 36px;
     margin-top: 8px;
     background: rgba(255, 255, 255, 0.03);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     padding: 12px;
   }
-  
+
   .update-available {
     display: flex;
     align-items: center;
     justify-content: space-between;
   }
-  
+
   .update-info {
     display: flex;
     align-items: center;
@@ -151,22 +166,51 @@
     font-size: 14px;
     font-weight: 500;
   }
-  
+
   .update-badge {
     font-size: 10px;
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     text-transform: uppercase;
     font-weight: 700;
     letter-spacing: 0.5px;
   }
-  .update-badge.pre { background: #eab308; color: black; }
+  .update-badge.pre {
+    background: #eab308;
+    color: black;
+  }
 
-  .update-progress { padding: 0 12px 12px 12px; margin-top: 0; }
-  .update-progress-bar { height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden; }
-  .update-progress-fill { height: 100%; background: var(--accent-color, #6366f1); transition: width 0.2s; }
-  
-  .update-notes { margin-top: 4px; font-size: 13px; }
-  .update-notes-label { font-weight: 600; display: block; margin-bottom: 4px; opacity: 0.8; }
-  .update-notes-text { opacity: 0.7; line-height: 1.4; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
+  .update-progress {
+    padding: 0 12px 12px 12px;
+    margin-top: 0;
+  }
+  .update-progress-bar {
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .update-progress-fill {
+    height: 100%;
+    background: var(--accent-color, #6366f1);
+    transition: width 0.2s;
+  }
+
+  .update-notes {
+    margin-top: 4px;
+    font-size: 13px;
+  }
+  .update-notes-label {
+    font-weight: 600;
+    display: block;
+    margin-bottom: 4px;
+    opacity: 0.8;
+  }
+  .update-notes-text {
+    opacity: 0.7;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+  }
 </style>

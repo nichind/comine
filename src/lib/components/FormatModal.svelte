@@ -7,32 +7,14 @@
   import Modal from './Modal.svelte';
   import Icon from './Icon.svelte';
   import { formatSize, formatDuration } from '$lib/utils/format';
-  import { getVideoFormatsBackend } from '$lib/backend/mediaBackend';
-
-  interface VideoFormat {
-    format_id: string;
-    ext: string;
-    resolution?: string | null;
-    fps?: number | null;
-    vcodec?: string | null;
-    acodec?: string | null;
-    filesize?: number | null;
-    filesize_approx?: number | null;
-    tbr?: number | null;
-    vbr?: number | null;
-    abr?: number | null;
-    asr?: number | null;
-    format_note?: string | null;
-    has_video: boolean;
-    has_audio: boolean;
-    quality?: number | null;
-  }
+  import { resolveUrl, convertProxyConfig } from '$lib/backend/mediaBackend';
+  import type { VideoFormat } from '$lib/bindings';
 
   interface VideoFormats {
     title: string;
-    author?: string | null;
-    thumbnail?: string | null;
-    duration?: number | null;
+    author: string | null;
+    thumbnail: string | null;
+    duration: number | null;
     formats: VideoFormat[];
   }
 
@@ -56,18 +38,15 @@
   let error = $state<string | null>(null);
   let formats = $state<VideoFormats | null>(null);
 
-  // For track builder: null means "No video" / "No audio"
   let selectedVideoFormat = $state<string | null>(null);
   let selectedAudioFormat = $state<string | null>(null);
-  // For combined/audio tabs
   let selectedFormat = $state<string | null>(null);
 
   let viewMode = $state<'builder' | 'combined' | 'audio'>('builder');
 
-  // Filter formats
   let videoOnlyFormats = $derived(
     formats?.formats
-      .filter((f) => f.has_video && !f.has_audio)
+      .filter((f) => f.hasVideo && !f.hasAudio)
       .sort((a, b) => {
         const aHeight = parseInt(a.resolution?.split('x')[1] || '0') || 0;
         const bHeight = parseInt(b.resolution?.split('x')[1] || '0') || 0;
@@ -77,7 +56,7 @@
 
   let audioOnlyFormats = $derived(
     formats?.formats
-      .filter((f) => f.has_audio && !f.has_video)
+      .filter((f) => f.hasAudio && !f.hasVideo)
       .sort((a, b) => {
         return (b.abr ?? 0) - (a.abr ?? 0);
       }) ?? []
@@ -85,7 +64,7 @@
 
   let combinedFormats = $derived(
     formats?.formats
-      .filter((f) => f.has_video && f.has_audio)
+      .filter((f) => f.hasVideo && f.hasAudio)
       .sort((a, b) => {
         const aHeight = parseInt(a.resolution?.split('x')[1] || '0') || 0;
         const bHeight = parseInt(b.resolution?.split('x')[1] || '0') || 0;
@@ -93,7 +72,6 @@
       }) ?? []
   );
 
-  // Load formats when modal opens
   $effect(() => {
     if (open && url) {
       loadFormats();
@@ -112,32 +90,30 @@
       logs.info('formats', `Fetching formats for: ${url}`);
 
       const currentSettings = getSettings();
-      const backendFormats = await getVideoFormatsBackend({
-        url,
-        cookiesFromBrowser: cookiesFromBrowser || '',
-        customCookies: customCookies || '',
-        proxyConfig: getProxyConfig(),
-        youtubePlayerClient: currentSettings.usePlayerClientForExtraction
+      const { info } = await resolveUrl(url, {
+        cookies_from_browser: cookiesFromBrowser || null,
+        custom_cookies: customCookies || null,
+        proxy: convertProxyConfig(getProxyConfig()),
+        youtube_player_client: currentSettings.usePlayerClientForExtraction
           ? currentSettings.youtubePlayerClient
           : null,
       });
 
       formats = {
-        title: backendFormats.title || url,
-        author: backendFormats.author ?? null,
-        thumbnail: backendFormats.thumbnail ?? null,
-        duration: backendFormats.duration ?? null,
-        formats: (backendFormats.formats ?? []) as VideoFormat[],
+        title: info.title || url,
+        author: info.channel ?? info.uploader ?? null,
+        thumbnail: info.thumbnail ?? null,
+        duration: info.duration ? Number(info.duration) : null,
+        formats: (info.formats ?? []) as VideoFormat[],
       };
 
       logs.info('formats', `Got ${formats.formats.length} formats`);
 
-      // Auto-select best video and audio for builder
       if (videoOnlyFormats.length > 0) {
-        selectedVideoFormat = videoOnlyFormats[0].format_id;
+        selectedVideoFormat = videoOnlyFormats[0].formatId;
       }
       if (audioOnlyFormats.length > 0) {
-        selectedAudioFormat = audioOnlyFormats[0].format_id;
+        selectedAudioFormat = audioOnlyFormats[0].formatId;
       }
     } catch (e) {
       error = String(e);
@@ -148,9 +124,9 @@
   }
 
   function getFormatSize(f: VideoFormat): string {
-    const size = f.filesize ?? f.filesize_approx;
+    const size = f.filesize ?? f.filesizeApprox;
     if (size) {
-      return formatSize(size);
+      return formatSize(Number(size));
     }
     if (f.tbr) {
       return `~${Math.round(f.tbr)} kbps`;
@@ -184,16 +160,13 @@
     let downloadMode: 'auto' | 'audio' | 'mute' = 'auto';
 
     if (viewMode === 'builder') {
-      // Track builder - combine selected video and audio
       if (selectedVideoFormat && selectedAudioFormat) {
         formatString = `${selectedVideoFormat}+${selectedAudioFormat}`;
         downloadMode = 'auto';
       } else if (selectedVideoFormat) {
-        // Video only (no audio)
         formatString = selectedVideoFormat;
         downloadMode = 'mute';
       } else if (selectedAudioFormat) {
-        // Audio only (no video)
         formatString = selectedAudioFormat;
         downloadMode = 'audio';
       } else {
@@ -219,8 +192,6 @@
     }
 
     logs.info('formats', `Downloading with format: ${formatString}, mode: ${downloadMode}`);
-
-    // Add to queue with specific format ID
     queue.add(url, {
       videoQuality: formatString,
       downloadMode: downloadMode,
@@ -261,7 +232,6 @@
         </button>
       </div>
     {:else if formats}
-      <!-- Header with video info -->
       <div class="video-info">
         {#if formats.thumbnail}
           <img src={formats.thumbnail} alt="" class="thumbnail" />
@@ -274,7 +244,6 @@
         </div>
       </div>
 
-      <!-- View mode tabs -->
       <div class="tabs">
         <button
           class="tab"
@@ -302,15 +271,12 @@
         </button>
       </div>
 
-      <!-- Format lists -->
       <div class="formats-container">
         {#if viewMode === 'builder'}
-          <!-- Track Builder - select video + audio separately -->
           <div class="split-view">
             <div class="split-column">
               <h4>{$t('download.formats.videoTrack')}</h4>
               <div class="format-list">
-                <!-- No Video option -->
                 <button
                   class="format-item no-track"
                   class:selected={selectedVideoFormat === null}
@@ -324,8 +290,8 @@
                 {#each videoOnlyFormats as fmt}
                   <button
                     class="format-item"
-                    class:selected={selectedVideoFormat === fmt.format_id}
-                    onclick={() => (selectedVideoFormat = fmt.format_id)}
+                    class:selected={selectedVideoFormat === fmt.formatId}
+                    onclick={() => (selectedVideoFormat = fmt.formatId)}
                   >
                     <div class="format-main">
                       <span class="format-resolution">{fmt.resolution || '—'}</span>
@@ -345,7 +311,6 @@
             <div class="split-column">
               <h4>{$t('download.formats.audioTrack')}</h4>
               <div class="format-list">
-                <!-- No Audio option -->
                 <button
                   class="format-item no-track"
                   class:selected={selectedAudioFormat === null}
@@ -359,8 +324,8 @@
                 {#each audioOnlyFormats as fmt}
                   <button
                     class="format-item"
-                    class:selected={selectedAudioFormat === fmt.format_id}
-                    onclick={() => (selectedAudioFormat = fmt.format_id)}
+                    class:selected={selectedAudioFormat === fmt.formatId}
+                    onclick={() => (selectedAudioFormat = fmt.formatId)}
                   >
                     <div class="format-main">
                       <span class="format-resolution"
@@ -381,13 +346,12 @@
             </div>
           </div>
         {:else if viewMode === 'combined'}
-          <!-- Combined video+audio formats -->
           <div class="format-list scrollable-list">
             {#each combinedFormats as fmt}
               <button
                 class="format-item"
-                class:selected={selectedFormat === fmt.format_id}
-                onclick={() => (selectedFormat = fmt.format_id)}
+                class:selected={selectedFormat === fmt.formatId}
+                onclick={() => (selectedFormat = fmt.formatId)}
               >
                 <div class="format-main">
                   <span class="format-resolution">{fmt.resolution || '—'}</span>
@@ -400,8 +364,8 @@
                   <span class="format-codec">{getCodecDisplay(fmt)}</span>
                   <span class="format-size">{getFormatSize(fmt)}</span>
                 </div>
-                {#if fmt.format_note}
-                  <span class="format-note">{fmt.format_note}</span>
+                {#if fmt.formatNote}
+                  <span class="format-note">{fmt.formatNote}</span>
                 {/if}
               </button>
             {/each}
@@ -410,13 +374,12 @@
             {/if}
           </div>
         {:else if viewMode === 'audio'}
-          <!-- Audio-only formats -->
           <div class="format-list scrollable-list">
             {#each audioOnlyFormats as fmt}
               <button
                 class="format-item"
-                class:selected={selectedFormat === fmt.format_id}
-                onclick={() => (selectedFormat = fmt.format_id)}
+                class:selected={selectedFormat === fmt.formatId}
+                onclick={() => (selectedFormat = fmt.formatId)}
               >
                 <div class="format-main">
                   <span class="format-resolution"
@@ -506,7 +469,7 @@
     padding: 8px 16px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: rgba(255, 255, 255, 0.8);
     cursor: pointer;
     margin-top: 8px;
@@ -522,7 +485,7 @@
     gap: 12px;
     padding: 10px 12px;
     background: rgba(0, 0, 0, 0.2);
-    border-radius: 10px;
+    border-radius: var(--radius, 10px);
     margin-bottom: 12px;
   }
 
@@ -530,7 +493,7 @@
     width: 64px;
     height: 36px;
     object-fit: cover;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     flex-shrink: 0;
   }
 
@@ -564,7 +527,7 @@
     gap: 4px;
     padding: 4px;
     background: rgba(255, 255, 255, 0.05);
-    border-radius: 10px;
+    border-radius: var(--radius, 10px);
     margin-bottom: 16px;
   }
 
@@ -577,7 +540,7 @@
     padding: 10px 12px;
     background: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: rgba(255, 255, 255, 0.6);
     font-size: 13px;
     cursor: pointer;
@@ -611,7 +574,6 @@
     flex-direction: column;
   }
 
-  /* Mobile: stack columns vertically */
   @media (max-width: 600px) {
     .format-modal-content {
       width: 100%;
@@ -676,7 +638,7 @@
     padding: 10px 12px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid transparent;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     cursor: pointer;
     transition: all 0.15s;
     text-align: left;
@@ -726,7 +688,7 @@
     color: rgba(255, 255, 255, 0.5);
     padding: 2px 6px;
     background: rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
   }
 
   .format-ext {
@@ -735,7 +697,7 @@
     text-transform: uppercase;
     padding: 2px 6px;
     background: rgba(255, 255, 255, 0.06);
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
   }
 
   .format-details {
@@ -766,7 +728,7 @@
     font-weight: 500;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: rgba(255, 255, 255, 0.8);
     cursor: pointer;
     transition: all 0.15s;

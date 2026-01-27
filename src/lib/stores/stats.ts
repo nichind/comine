@@ -14,6 +14,11 @@ export interface AppStats {
   lastSync: string | null;
 }
 
+export interface HistoryBackfillInput {
+  totalSuccessfulDownloads: number;
+  totalSizeBytes: number;
+}
+
 interface StatsState {
   stats: AppStats;
 }
@@ -63,7 +68,6 @@ function createStatsStore() {
 
   const { subscribe, set, update } = writable<StatsState>(initial);
 
-  // Save to localStorage on change
   if (browser) {
     subscribe((state) => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -75,7 +79,6 @@ function createStatsStore() {
     set,
     update,
 
-    // Track a completed download
     trackDownload(sizeMb: number, success: boolean) {
       update((state) => ({
         ...state,
@@ -89,7 +92,28 @@ function createStatsStore() {
       }));
     },
 
-    // Update last sync time
+    // Backfill stats from legacy history.
+    mergeFromHistory(input: HistoryBackfillInput) {
+      const historyDownloads = Math.max(0, Math.floor(input.totalSuccessfulDownloads || 0));
+      const historySizeMb = Math.max(0, (input.totalSizeBytes || 0) / (1024 * 1024));
+
+      update((state) => {
+        const nextSuccessful = Math.max(state.stats.successfulDownloads, historyDownloads);
+        const nextTotal = Math.max(state.stats.totalDownloads, historyDownloads);
+        const nextTotalSizeMb = Math.max(state.stats.totalSizeMb, historySizeMb);
+
+        return {
+          ...state,
+          stats: {
+            ...state.stats,
+            successfulDownloads: nextSuccessful,
+            totalDownloads: nextTotal,
+            totalSizeMb: nextTotalSizeMb,
+          },
+        };
+      });
+    },
+
     markSynced() {
       update((state) => ({
         ...state,
@@ -100,7 +124,6 @@ function createStatsStore() {
       }));
     },
 
-    // Get data that would be sent
     getPayload() {
       const state = get({ subscribe });
       const settingsState = get(settings);

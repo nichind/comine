@@ -64,7 +64,6 @@
   </div>
 
   <div class="components-grid">
-    <!-- Buttons Section -->
     <section class="component-section">
       <h2>Buttons</h2>
 
@@ -114,7 +113,6 @@
       </div>
     </section>
 
-    <!-- Inputs Section -->
     <section class="component-section">
       <h2>Inputs</h2>
 
@@ -153,7 +151,6 @@
       </div>
     </section>
 
-    <!-- Notifications Section -->
     <section class="component-section">
       <h2>OS Notifications</h2>
 
@@ -179,7 +176,6 @@
       </div>
     </section>
 
-    <!-- Checkboxes Section -->
     <section class="component-section">
       <h2>Checkboxes</h2>
 
@@ -193,7 +189,6 @@
       </div>
     </section>
 
-    <!-- Toggles Section -->
     <section class="component-section">
       <h2>Toggles</h2>
 
@@ -207,7 +202,6 @@
       </div>
     </section>
 
-    <!-- Select Section -->
     <section class="component-section">
       <h2>Select</h2>
 
@@ -223,7 +217,6 @@
       </div>
     </section>
 
-    <!-- Modal Section -->
     <section class="component-section">
       <h2>Modals</h2>
 
@@ -238,7 +231,6 @@
       </div>
     </section>
 
-    <!-- Toast Section -->
     <section class="component-section">
       <h2>Toasts</h2>
 
@@ -274,7 +266,6 @@
       </div>
     </section>
 
-    <!-- Icons Section -->
     <section class="component-section">
       <h2>Icons</h2>
 
@@ -390,7 +381,7 @@
   .component-section {
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
+    border-radius: var(--radius-lg, 12px);
     padding: 24px;
   }
 
@@ -443,7 +434,7 @@
     gap: 8px;
     padding: 16px;
     background: rgba(255, 255, 255, 0.05);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     transition: background 0.2s;
   }
 

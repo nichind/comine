@@ -2,38 +2,11 @@
   import { t } from '$lib/i18n';
   import Icon from './Icon.svelte';
   import { formatTime, parseTimeString } from '$lib/utils/format';
-
-  interface ClipRange {
-    id: string;
-    start: number; // seconds
-    end: number; // seconds
-  }
-
-  interface Storyboard {
-    url: string;
-    width: number;
-    height: number;
-    cols: number;
-    rows: number;
-    fragment_count: number;
-    fragment_duration: number;
-  }
-
-  interface Chapter {
-    title: string;
-    start_time: number;
-    end_time: number;
-  }
-
-  interface SponsorBlockSegment {
-    category: string;
-    segment: [number, number]; // [start, end] in seconds
-    UUID?: string;
-    actionType?: string;
-  }
+  import type { ClipRange, Storyboard, Chapter } from '$lib/bindings';
+  import type { SponsorBlockSegment } from '$lib/stores/mediaCache';
 
   interface Props {
-    duration: number; // total video duration in seconds
+    duration: number;
     ranges?: ClipRange[];
     onchange?: (ranges: ClipRange[]) => void;
     disabled?: boolean;
@@ -42,15 +15,20 @@
     sponsorSegments?: SponsorBlockSegment[] | null;
   }
 
-  let { duration, ranges = $bindable([]), onchange, disabled = false, storyboard = null, chapters = null, sponsorSegments = null }: Props = $props();
+  let {
+    duration,
+    ranges = $bindable([]),
+    onchange,
+    disabled = false,
+    storyboard = null,
+    chapters = null,
+    sponsorSegments = null,
+  }: Props = $props();
 
-  // Track if chapters are expanded
   let chaptersExpanded = $state(false);
-  
-  // Hovered chapter for tooltip
+
   let hoveredChapterId = $state<number | null>(null);
-  
-  // Hovered SponsorBlock segment for tooltip
+
   let hoveredSegmentId = $state<number | null>(null);
 
   function formatCategory(category: string): string {
@@ -72,13 +50,14 @@
 
   function createId(): string {
     try {
-      return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      return (
+        globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
+      );
     } catch {
       return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     }
   }
 
-  // Initialize with full range if empty
   $effect(() => {
     if (ranges.length === 0 && duration > 0) {
       ranges = [{ id: createId(), start: 0, end: duration }];
@@ -86,68 +65,62 @@
   });
 
   let trackRef: HTMLDivElement | undefined = $state();
-  // Dragging state: 'start'/'end' for handle resize, 'move' for moving entire range
-  let dragging = $state<{ rangeId: string; handle: 'start' | 'end' | 'move'; startOffset?: number } | null>(null);
+  let dragging = $state<{
+    rangeId: string;
+    handle: 'start' | 'end' | 'move';
+    startOffset?: number;
+  } | null>(null);
   let selectedRangeId = $state<string | null>(null);
   let hoveredRangeId = $state<string | null>(null);
-  
-  // Two-click range creation mode
+
   let pendingRangeStart = $state<number | null>(null);
   let hoverPosition = $state<number | null>(null);
-  
-  // Storyboard preview state
+
   let previewPosition = $state<{ x: number; time: number } | null>(null);
 
-  // Time input state for double-click editing
   let editingTime = $state<{ rangeId: string; handle: 'start' | 'end' } | null>(null);
   let timeInputValue = $state('');
   let timeInputRef: HTMLInputElement | undefined = $state();
 
-  // Derived: is full video selected (single range from 0 to duration)
   let isFullVideo = $derived(
-    ranges.length === 1 && 
-    ranges[0].start <= 0.5 && 
-    ranges[0].end >= duration - 0.5
+    ranges.length === 1 && ranges[0].start <= 0.5 && ranges[0].end >= duration - 0.5
   );
 
-  // Derived: total selected duration
-  let totalSelected = $derived(
-    ranges.reduce((sum, r) => sum + (r.end - r.start), 0)
-  );
-  
-  // Calculate storyboard sprite position for a given time
-  // YouTube storyboards: each fragment has multiple frames arranged in a grid
-  // fragment_duration = total duration covered by ONE fragment image
-  // Each cell = fragment_duration / (cols * rows)
-  function getStoryboardPosition(time: number): { url: string; x: number; y: number; width: number; height: number; displayWidth: number; displayHeight: number } | null {
+  let totalSelected = $derived(ranges.reduce((sum, r) => sum + (r.end - r.start), 0));
+
+  function getStoryboardPosition(time: number): {
+    url: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    displayWidth: number;
+    displayHeight: number;
+  } | null {
     if (!storyboard || !duration || duration <= 0) {
       return null;
     }
-    
+
     const cellsPerFragment = storyboard.cols * storyboard.rows;
-    // Each cell represents this much time
-    const cellDuration = storyboard.fragment_duration / cellsPerFragment;
-    
-    // Which cell overall?
-    const cellIndex = Math.min(Math.floor(time / cellDuration), storyboard.fragment_count * cellsPerFragment - 1);
-    
-    // Which fragment (sprite sheet)?
+    const cellDuration = storyboard.fragmentDuration / cellsPerFragment;
+
+    const cellIndex = Math.min(
+      Math.floor(time / cellDuration),
+      storyboard.fragmentCount * cellsPerFragment - 1
+    );
+
     const fragmentIndex = Math.floor(cellIndex / cellsPerFragment);
     const cellInFragment = cellIndex % cellsPerFragment;
-    
-    // Position within the sprite sheet
+
     const col = cellInFragment % storyboard.cols;
     const row = Math.floor(cellInFragment / storyboard.cols);
-    
-    // Cell dimensions - YouTube provides per-cell dimensions
+
     const cellWidth = storyboard.width;
     const cellHeight = storyboard.height;
-    
-    // Scale for display (target ~200px width, but allow larger for high-res storyboards)
+
     const targetDisplayWidth = 200;
     const scale = Math.max(1, targetDisplayWidth / cellWidth);
-    
-    // Build URL - replace $M placeholder with fragment index
+
     let url = storyboard.url;
     // Android blocks cleartext by default; protocol-relative URLs would inherit the app scheme.
     if (url.startsWith('//')) {
@@ -158,7 +131,7 @@
     if (url.includes('$M')) {
       url = url.replace(/\$M/g, String(fragmentIndex));
     }
-    
+
     return {
       url,
       x: col * cellWidth,
@@ -171,29 +144,28 @@
   }
 
   function startTimeEdit(rangeId: string, handle: 'start' | 'end') {
-    const range = ranges.find(r => r.id === rangeId);
+    const range = ranges.find((r) => r.id === rangeId);
     if (!range) return;
-    
+
     editingTime = { rangeId, handle };
     timeInputValue = formatTime(handle === 'start' ? range.start : range.end);
-    
-    // Focus input on next tick
+
     setTimeout(() => timeInputRef?.focus(), 0);
   }
 
   function applyTimeEdit() {
     if (!editingTime) return;
-    
+
     const parsed = parseTimeString(timeInputValue);
     if (parsed === null || parsed < 0 || parsed > duration) {
       editingTime = null;
       return;
     }
-    
+
     const { rangeId, handle } = editingTime;
-    const newRanges = ranges.map(r => {
+    const newRanges = ranges.map((r) => {
       if (r.id !== rangeId) return r;
-      
+
       if (handle === 'start') {
         const newStart = Math.min(parsed, r.end - 1);
         return { ...r, start: Math.max(0, newStart) };
@@ -202,7 +174,7 @@
         return { ...r, end: Math.min(duration, newEnd) };
       }
     });
-    
+
     updateRanges(newRanges);
     editingTime = null;
   }
@@ -235,27 +207,25 @@
   }
 
   function snapToGrid(time: number, shiftKey: boolean): number {
-    if (shiftKey) return Math.round(time * 10) / 10; // 0.1s precision
-    return Math.round(time); // Snap to 1s intervals
+    if (shiftKey) return Math.round(time * 10) / 10;
+    return Math.round(time);
   }
 
   function sortAndMergeRanges(inputRanges: ClipRange[]): ClipRange[] {
     if (inputRanges.length <= 1) return inputRanges;
-    
-    // Sort by start time
+
     const sorted = [...inputRanges].sort((a, b) => a.start - b.start);
     const merged: ClipRange[] = [];
-    
+
     for (const range of sorted) {
       const last = merged[merged.length - 1];
-      // If overlapping or touching (within 0.5s), merge
       if (last && range.start <= last.end + 0.5) {
         last.end = Math.max(last.end, range.end);
       } else {
         merged.push({ ...range });
       }
     }
-    
+
     return merged;
   }
 
@@ -267,31 +237,27 @@
 
   function handleTrackClick(e: MouseEvent) {
     if (disabled || dragging) return;
-    
+
     const clickTime = snapToGrid(getPositionFromEvent(e), e.shiftKey);
-    
-    // Check if clicking inside an existing range - don't start creation mode
-    const clickedRange = ranges.find(r => clickTime >= r.start && clickTime <= r.end);
+
+    const clickedRange = ranges.find((r) => clickTime >= r.start && clickTime <= r.end);
     if (clickedRange) {
       selectedRangeId = clickedRange.id;
       pendingRangeStart = null;
       return;
     }
-    
-    // Two-click range creation mode
+
     if (pendingRangeStart === null) {
-      // First click - set the start point
       pendingRangeStart = clickTime;
     } else {
-      // Second click - create the range
       const start = Math.min(pendingRangeStart, clickTime);
       const end = Math.max(pendingRangeStart, clickTime);
-      
-      if (end - start >= 1) { // Minimum 1 second range
+
+      if (end - start >= 1) {
         const newRange: ClipRange = {
           id: createId(),
           start,
-          end
+          end,
         };
         updateRanges([...ranges, newRange]);
         selectedRangeId = newRange.id;
@@ -302,27 +268,25 @@
 
   function handleMouseMove(e: MouseEvent) {
     if (disabled) return;
-    
+
     if (dragging) {
       const time = getPositionFromEvent(e);
       const snappedTime = snapToGrid(time, e.shiftKey);
       const currentDrag = dragging;
-      const rangeIndex = ranges.findIndex(r => r.id === currentDrag.rangeId);
+      const rangeIndex = ranges.findIndex((r) => r.id === currentDrag.rangeId);
       if (rangeIndex === -1) return;
-      
+
       const newRanges = [...ranges];
       const range = { ...newRanges[rangeIndex] };
-      
+
       if (currentDrag.handle === 'move') {
-        // Move entire range
         const rangeDuration = range.end - range.start;
         const offset = currentDrag.startOffset ?? 0;
         let newStart = snappedTime - offset;
-        
-        // Clamp to bounds
+
         if (newStart < 0) newStart = 0;
         if (newStart + rangeDuration > duration) newStart = duration - rangeDuration;
-        
+
         range.start = newStart;
         range.end = newStart + rangeDuration;
       } else if (currentDrag.handle === 'start') {
@@ -344,18 +308,15 @@
           range.end = newEnd;
         }
       }
-      
+
       newRanges[rangeIndex] = range;
-      // Skip merge during drag for smoother UX, merge on mouse up
       updateRanges(newRanges, true);
     } else {
-      // Track hover position for preview
       const pos = getPositionFromEvent(e);
-      const inRange = ranges.some(r => pos >= r.start && pos <= r.end);
+      const inRange = ranges.some((r) => pos >= r.start && pos <= r.end);
       hoverPosition = inRange ? null : pos;
     }
-    
-    // Update storyboard preview position
+
     if (trackRef && storyboard) {
       const rect = trackRef.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -366,25 +327,24 @@
 
   function handleTouchMove(e: TouchEvent) {
     if (disabled || !dragging) return;
-    // Prevent scrolling via CSS touch-action instead of preventDefault (touch listeners can be passive).
-    
+
     const time = getPositionFromTouchEvent(e);
     const snappedTime = snapToGrid(time, false);
     const currentDrag = dragging;
-    const rangeIndex = ranges.findIndex(r => r.id === currentDrag.rangeId);
+    const rangeIndex = ranges.findIndex((r) => r.id === currentDrag.rangeId);
     if (rangeIndex === -1) return;
-    
+
     const newRanges = [...ranges];
     const range = { ...newRanges[rangeIndex] };
-    
+
     if (currentDrag.handle === 'move') {
       const rangeDuration = range.end - range.start;
       const offset = currentDrag.startOffset ?? 0;
       let newStart = snappedTime - offset;
-      
+
       if (newStart < 0) newStart = 0;
       if (newStart + rangeDuration > duration) newStart = duration - rangeDuration;
-      
+
       range.start = newStart;
       range.end = newStart + rangeDuration;
     } else if (currentDrag.handle === 'start') {
@@ -406,11 +366,10 @@
         range.end = newEnd;
       }
     }
-    
+
     newRanges[rangeIndex] = range;
     updateRanges(newRanges, true);
 
-    // Keep storyboard preview updated while dragging on touch devices.
     if (trackRef && storyboard) {
       const touch = e.touches[0];
       if (touch) {
@@ -429,7 +388,6 @@
 
     const time = getPositionFromTouchEvent(e);
 
-    // Keep hover marker behavior aligned with mouse.
     const inRange = ranges.some((r) => time >= r.start && time <= r.end);
     hoverPosition = inRange ? null : time;
 
@@ -451,14 +409,12 @@
     }
     dragging = null;
 
-    // Clear any lingering preview state.
     hoverPosition = null;
     previewPosition = null;
   }
 
   function handleMouseUp() {
     if (dragging) {
-      // Merge ranges after drag ends
       updateRanges(ranges);
     }
     dragging = null;
@@ -473,13 +429,13 @@
     if (disabled) return;
     e.stopPropagation();
     e.preventDefault();
-    
-    const range = ranges.find(r => r.id === rangeId);
+
+    const range = ranges.find((r) => r.id === rangeId);
     if (!range) return;
-    
+
     const clickTime = getPositionFromEvent(e);
     const startOffset = clickTime - range.start;
-    
+
     dragging = { rangeId, handle, startOffset };
     selectedRangeId = rangeId;
     pendingRangeStart = null;
@@ -488,13 +444,13 @@
   function startTouchDrag(e: TouchEvent, rangeId: string, handle: 'start' | 'end' | 'move') {
     if (disabled) return;
     e.stopPropagation();
-    
-    const range = ranges.find(r => r.id === rangeId);
+
+    const range = ranges.find((r) => r.id === rangeId);
     if (!range) return;
-    
+
     const touchTime = getPositionFromTouchEvent(e);
     const startOffset = touchTime - range.start;
-    
+
     dragging = { rangeId, handle, startOffset };
     selectedRangeId = rangeId;
     pendingRangeStart = null;
@@ -505,7 +461,7 @@
       resetToFull();
       return;
     }
-    updateRanges(ranges.filter(r => r.id !== rangeId));
+    updateRanges(ranges.filter((r) => r.id !== rangeId));
     if (selectedRangeId === rangeId) {
       selectedRangeId = null;
     }
@@ -520,13 +476,12 @@
 
   function selectChapter(chapter: Chapter) {
     if (disabled) return;
-    // Create a new range from the chapter boundaries
     const newRange: ClipRange = {
       id: createId(),
-      start: chapter.start_time,
-      end: chapter.end_time
+      start: chapter.startTime,
+      end: chapter.endTime,
     };
-    updateRanges([...ranges.filter(r => !(r.start <= 0.5 && r.end >= duration - 0.5)), newRange]);
+    updateRanges([...ranges.filter((r) => !(r.start <= 0.5 && r.end >= duration - 0.5)), newRange]);
     selectedRangeId = newRange.id;
     pendingRangeStart = null;
   }
@@ -548,22 +503,22 @@
         return;
       }
     }
-    
+
     if (!selectedRangeId || disabled) return;
-    
-    const rangeIndex = ranges.findIndex(r => r.id === selectedRangeId);
+
+    const rangeIndex = ranges.findIndex((r) => r.id === selectedRangeId);
     if (rangeIndex === -1) return;
-    
+
     const delta = e.shiftKey ? 0.1 : 1;
     const newRanges = [...ranges];
     const range = { ...newRanges[rangeIndex] };
-    
+
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
       deleteRange(selectedRangeId);
       return;
     }
-    
+
     if (e.key === 'ArrowLeft') {
       e.preventDefault();
       range.start = Math.max(0, range.start - delta);
@@ -573,7 +528,7 @@
       range.end = Math.min(duration, range.end + delta);
       range.start = Math.min(range.end - 1, range.start + delta);
     }
-    
+
     newRanges[rangeIndex] = range;
     updateRanges(newRanges);
   }
@@ -583,7 +538,7 @@
   }
 </script>
 
-<svelte:window 
+<svelte:window
   onmouseup={handleMouseUp}
   onmousemove={dragging ? handleMouseMove : undefined}
   ontouchend={handleTouchEnd}
@@ -593,7 +548,7 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<div 
+<div
   class="clip-selector"
   class:disabled
   class:creating={pendingRangeStart !== null}
@@ -618,7 +573,7 @@
     </div>
   </div>
 
-  <div 
+  <div
     class="timeline-track"
     bind:this={trackRef}
     onclick={handleTrackClick}
@@ -630,87 +585,104 @@
     onmouseleave={handleMouseLeave}
     role="presentation"
   >
-    <!-- Background track -->
     <div class="track-bg"></div>
-    
-    <!-- Chapter markers (shown as subtle dividers on the timeline) -->
+
     {#if chapters && chapters.length > 0}
       {#each chapters as chapter, i}
-        {#if chapter.start_time > 0}
-          <div 
+        {#if chapter.startTime > 0}
+          <div
             class="chapter-marker"
             class:hovered={hoveredChapterId === i}
-            style="left: {toPercent(chapter.start_time)}%"
+            style="left: {toPercent(chapter.startTime)}%"
             title={chapter.title}
           ></div>
         {/if}
       {/each}
-      
-      <!-- Chapter section highlight when hovering in list -->
+
       {#if hoveredChapterId !== null && chapters[hoveredChapterId]}
         {@const hoverChapter = chapters[hoveredChapterId]}
-        <div 
+        <div
           class="chapter-section-highlight"
-          style="left: {toPercent(hoverChapter.start_time)}%; width: {toPercent(hoverChapter.end_time - hoverChapter.start_time)}%"
+          style="left: {toPercent(hoverChapter.startTime)}%; width: {toPercent(
+            hoverChapter.endTime - hoverChapter.startTime
+          )}%"
         ></div>
       {/if}
     {/if}
-    
-    <!-- SponsorBlock segments (shown as colored sections on the timeline) -->
+
     {#if sponsorSegments && sponsorSegments.length > 0}
       {#each sponsorSegments as segment, i}
         {@const startTime = segment.segment[0]}
         {@const endTime = segment.segment[1]}
         {@const color = colorForCategory(segment.category)}
-        <div 
+        <div
           class="sponsorblock-segment"
           class:hovered={hoveredSegmentId === i}
-          style="left: {toPercent(startTime)}%; width: {toPercent(endTime - startTime)}%; --sb-color: {color}"
-          title="{formatCategory(segment.category)} ({formatTime(startTime)} - {formatTime(endTime)})"
-          onmouseenter={() => hoveredSegmentId = i}
-          onmouseleave={() => hoveredSegmentId = null}
+          style="left: {toPercent(startTime)}%; width: {toPercent(
+            endTime - startTime
+          )}%; --sb-color: {color}"
+          title="{formatCategory(segment.category)} ({formatTime(startTime)} - {formatTime(
+            endTime
+          )})"
+          onmouseenter={() => (hoveredSegmentId = i)}
+          onmouseleave={() => (hoveredSegmentId = null)}
           role="img"
-          aria-label="{formatCategory(segment.category)} segment from {formatTime(startTime)} to {formatTime(endTime)}"
+          aria-label="{formatCategory(segment.category)} segment from {formatTime(
+            startTime
+          )} to {formatTime(endTime)}"
         ></div>
       {/each}
     {/if}
-    
-    <!-- Range blocks -->
+
     {#each ranges as range (range.id)}
       {@const startPct = toPercent(range.start)}
       {@const widthPct = toPercent(range.end - range.start)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div 
+      <div
         class="range-block"
         class:selected={selectedRangeId === range.id}
         class:hovered={hoveredRangeId === range.id}
         style="left: {startPct}%; width: {widthPct}%"
-        onclick={(e) => { e.stopPropagation(); selectedRangeId = range.id; pendingRangeStart = null; }}
-        onmousedown={(e) => { 
-          // Only start move drag if not clicking on handles
+        onclick={(e) => {
+          e.stopPropagation();
+          selectedRangeId = range.id;
+          pendingRangeStart = null;
+        }}
+        onmousedown={(e) => {
           const target = e.target as HTMLElement;
           if (!target.closest('.handle')) {
             startDrag(e, range.id, 'move');
           }
         }}
         ontouchstart={(e) => {
-          // Only start move drag if not touching handles
           const target = e.target as HTMLElement;
           if (!target.closest('.handle')) {
             startTouchDrag(e, range.id, 'move');
           }
         }}
-        onmouseenter={() => { hoveredRangeId = range.id; }}
-        onmouseleave={() => { hoveredRangeId = null; }}
-        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); selectedRangeId = range.id; } }}
+        onmouseenter={() => {
+          hoveredRangeId = range.id;
+        }}
+        onmouseleave={() => {
+          hoveredRangeId = null;
+        }}
+        onkeydown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.stopPropagation();
+            selectedRangeId = range.id;
+          }
+        }}
         role="button"
         tabindex="0"
       >
-        <div 
+        <div
           class="handle start"
           onmousedown={(e) => startDrag(e, range.id, 'start')}
           ontouchstart={(e) => startTouchDrag(e, range.id, 'start')}
-          ondblclick={(e) => { e.stopPropagation(); startTimeEdit(range.id, 'start'); }}
+          ondblclick={(e) => {
+            e.stopPropagation();
+            startTimeEdit(range.id, 'start');
+          }}
           role="presentation"
         >
           <div class="handle-grip"></div>
@@ -728,11 +700,14 @@
             </div>
           {/if}
         </div>
-        <div 
+        <div
           class="handle end"
           onmousedown={(e) => startDrag(e, range.id, 'end')}
           ontouchstart={(e) => startTouchDrag(e, range.id, 'end')}
-          ondblclick={(e) => { e.stopPropagation(); startTimeEdit(range.id, 'end'); }}
+          ondblclick={(e) => {
+            e.stopPropagation();
+            startTimeEdit(range.id, 'end');
+          }}
           role="presentation"
         >
           <div class="handle-grip"></div>
@@ -750,11 +725,13 @@
             </div>
           {/if}
         </div>
-        <!-- Show delete button on hover when there are multiple ranges -->
         {#if ranges.length > 1}
-          <button 
+          <button
             class="delete-btn"
-            onclick={(e) => { e.stopPropagation(); deleteRange(range.id); }}
+            onclick={(e) => {
+              e.stopPropagation();
+              deleteRange(range.id);
+            }}
             onmousedown={(e) => e.stopPropagation()}
             title={$t('common.delete')}
           >
@@ -764,46 +741,42 @@
       </div>
     {/each}
 
-    <!-- Pending range start marker -->
     {#if pendingRangeStart !== null}
-      <div 
-        class="pending-marker"
-        style="left: {toPercent(pendingRangeStart)}%"
-      ></div>
-      <!-- Preview of range being created -->
+      <div class="pending-marker" style="left: {toPercent(pendingRangeStart)}%"></div>
       {#if hoverPosition !== null}
         {@const previewStart = Math.min(pendingRangeStart, hoverPosition)}
         {@const previewEnd = Math.max(pendingRangeStart, hoverPosition)}
-        <div 
+        <div
           class="pending-preview"
           style="left: {toPercent(previewStart)}%; width: {toPercent(previewEnd - previewStart)}%"
         ></div>
       {/if}
     {/if}
 
-    <!-- Hover marker when not creating -->
     {#if hoverPosition !== null && pendingRangeStart === null}
-      <div 
-        class="hover-marker"
-        style="left: {toPercent(hoverPosition)}%"
-      ></div>
+      <div class="hover-marker" style="left: {toPercent(hoverPosition)}%"></div>
     {/if}
 
-    <!-- Storyboard preview tooltip -->
     {#if previewPosition && storyboard}
       {@const spritePos = getStoryboardPosition(previewPosition.time)}
       {#if spritePos}
-        {@const clampedX = Math.max(spritePos.displayWidth / 2 + 8, Math.min(previewPosition.x, (trackRef?.clientWidth ?? 400) - spritePos.displayWidth / 2 - 8))}
-        <div 
-          class="storyboard-preview"
-          style="left: {clampedX}px"
-        >
-          <div 
+        {@const clampedX = Math.max(
+          spritePos.displayWidth / 2 + 8,
+          Math.min(
+            previewPosition.x,
+            (trackRef?.clientWidth ?? 400) - spritePos.displayWidth / 2 - 8
+          )
+        )}
+        <div class="storyboard-preview" style="left: {clampedX}px">
+          <div
             class="preview-image"
             style="
               background-image: url('{spritePos.url}');
-              background-position: -{spritePos.x * (spritePos.displayWidth / spritePos.width)}px -{spritePos.y * (spritePos.displayHeight / spritePos.height)}px;
-              background-size: {storyboard.cols * spritePos.displayWidth}px {storyboard.rows * spritePos.displayHeight}px;
+              background-position: -{spritePos.x *
+              (spritePos.displayWidth / spritePos.width)}px -{spritePos.y *
+              (spritePos.displayHeight / spritePos.height)}px;
+              background-size: {storyboard.cols * spritePos.displayWidth}px {storyboard.rows *
+              spritePos.displayHeight}px;
               width: {spritePos.displayWidth}px;
               height: {spritePos.displayHeight}px;
             "
@@ -828,19 +801,18 @@
     <span class="time-end">{formatTime(duration)}</span>
   </div>
 
-  <!-- Chapters list (collapsible) -->
   {#if chapters && chapters.length > 0}
     <div class="chapters-section">
-      <button 
+      <button
         class="chapters-toggle"
-        onclick={() => chaptersExpanded = !chaptersExpanded}
+        onclick={() => (chaptersExpanded = !chaptersExpanded)}
         type="button"
       >
         <Icon name="playlist" size={12} />
         <span>{chapters.length}</span>
         <Icon name={chaptersExpanded ? 'chevron_up' : 'chevron_down'} size={12} />
       </button>
-      
+
       {#if chaptersExpanded}
         <div class="chapters-list">
           {#each chapters as chapter, i}
@@ -848,13 +820,14 @@
               class="chapter-item"
               class:hovered={hoveredChapterId === i}
               onclick={() => selectChapter(chapter)}
-              onmouseenter={() => hoveredChapterId = i}
-              onmouseleave={() => hoveredChapterId = null}
+              onmouseenter={() => (hoveredChapterId = i)}
+              onmouseleave={() => (hoveredChapterId = null)}
               type="button"
             >
-              <span class="chapter-time">{formatTime(chapter.start_time)}</span>
+              <span class="chapter-time">{formatTime(chapter.startTime)}</span>
               <span class="chapter-title">{chapter.title}</span>
-              <span class="chapter-duration">{formatTime(chapter.end_time - chapter.start_time)}</span>
+              <span class="chapter-duration">{formatTime(chapter.endTime - chapter.startTime)}</span
+              >
             </button>
           {/each}
         </div>
@@ -862,9 +835,8 @@
     </div>
   {/if}
 
-  <!-- SponsorBlock legend (shown when segments are present) -->
   {#if sponsorSegments && sponsorSegments.length > 0}
-    {@const uniqueCategories = [...new Set(sponsorSegments.map(s => s.category))]}
+    {@const uniqueCategories = [...new Set(sponsorSegments.map((s) => s.category))]}
     <div class="sponsorblock-legend">
       {#each uniqueCategories as category}
         <span class="legend-item" style="--sb-color: {colorForCategory(category)}">
@@ -917,7 +889,7 @@
     padding: 4px;
     background: rgba(255, 255, 255, 0.06);
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     color: rgba(255, 255, 255, 0.5);
     cursor: pointer;
     transition: all 0.15s;
@@ -955,7 +927,7 @@
     position: absolute;
     inset: 0;
     background: rgba(255, 255, 255, 0.06);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
   }
 
   .range-block {
@@ -963,7 +935,7 @@
     top: 0;
     height: 100%;
     background: var(--accent-alpha, rgba(99, 102, 241, 0.3));
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     transition: background 0.15s;
     min-width: 8px;
     cursor: grab;
@@ -994,7 +966,7 @@
     align-items: center;
     justify-content: center;
     z-index: 2;
-    touch-action: none; /* Prevent browser handling of touch gestures */
+    touch-action: none;
   }
 
   .handle.start {
@@ -1027,7 +999,6 @@
     opacity: 1;
   }
 
-  /* Mobile touch targets - make handles much larger */
   @media (pointer: coarse) {
     .handle {
       width: 44px;
@@ -1046,7 +1017,7 @@
     .handle-grip {
       width: 6px;
       height: 28px;
-      opacity: 1; /* Always show on touch devices */
+      opacity: 1;
     }
 
     .timeline-track {
@@ -1054,7 +1025,6 @@
     }
   }
 
-  /* Time input popup for double-click editing */
   .time-input-popup {
     position: absolute;
     top: -40px;
@@ -1068,7 +1038,7 @@
     padding: 6px 8px;
     background: rgba(30, 30, 35, 0.98);
     border: 1px solid var(--accent, #3b82f6);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: white;
     font-size: 12px;
     font-family: inherit;
@@ -1083,7 +1053,9 @@
 
   .time-input:focus {
     border-color: var(--accent, #3b82f6);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), 0 0 0 2px rgba(59, 130, 246, 0.3);
+    box-shadow:
+      0 4px 12px rgba(0, 0, 0, 0.4),
+      0 0 0 2px rgba(59, 130, 246, 0.3);
   }
 
   .delete-btn {
@@ -1129,8 +1101,13 @@
   }
 
   @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
   }
 
   .pending-preview {
@@ -1138,7 +1115,7 @@
     top: 0;
     height: 100%;
     background: var(--accent-alpha, rgba(99, 102, 241, 0.2));
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     pointer-events: none;
     border: 1px dashed var(--accent, #6366f1);
   }
@@ -1170,7 +1147,6 @@
     color: var(--accent, #6366f1);
   }
 
-  /* Storyboard preview */
   .storyboard-preview {
     position: absolute;
     bottom: calc(100% + 12px);
@@ -1184,8 +1160,10 @@
   }
 
   .preview-image {
-    border-radius: 6px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-sm, 6px);
+    box-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.5),
+      0 0 0 1px rgba(255, 255, 255, 0.1);
     background-color: #000;
     background-repeat: no-repeat;
   }
@@ -1196,11 +1174,10 @@
     color: white;
     background: rgba(0, 0, 0, 0.85);
     padding: 3px 8px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     font-weight: 500;
   }
 
-  /* Chapter markers on timeline */
   .chapter-marker {
     position: absolute;
     top: 2px;
@@ -1209,7 +1186,9 @@
     background: rgba(255, 255, 255, 0.25);
     pointer-events: none;
     z-index: 1;
-    transition: background 0.15s ease, width 0.15s ease;
+    transition:
+      background 0.15s ease,
+      width 0.15s ease;
   }
 
   .chapter-marker.hovered {
@@ -1218,7 +1197,6 @@
     box-shadow: 0 0 6px var(--accent, #3b82f6);
   }
 
-  /* Chapter section highlight on timeline when hovering in list */
   .chapter-section-highlight {
     position: absolute;
     top: 0;
@@ -1230,7 +1208,6 @@
     z-index: 0;
   }
 
-  /* SponsorBlock segments on timeline */
   .sponsorblock-segment {
     position: absolute;
     top: 0;
@@ -1250,7 +1227,6 @@
     z-index: 0;
   }
 
-  /* Chapters section */
   .chapters-section {
     margin-top: 4px;
   }
@@ -1262,7 +1238,7 @@
     padding: 4px 8px;
     background: rgba(255, 255, 255, 0.04);
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     color: rgba(255, 255, 255, 0.5);
     font-size: 11px;
     cursor: pointer;
@@ -1297,7 +1273,7 @@
     padding: 6px 8px;
     background: rgba(255, 255, 255, 0.03);
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     color: rgba(255, 255, 255, 0.7);
     font-size: 11px;
     cursor: pointer;
@@ -1352,7 +1328,6 @@
     background: rgba(255, 255, 255, 0.2);
   }
 
-  /* SponsorBlock legend */
   .sponsorblock-legend {
     display: flex;
     flex-wrap: wrap;
@@ -1361,7 +1336,7 @@
     margin-top: 6px;
     padding: 6px 8px;
     background: rgba(255, 255, 255, 0.03);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     font-size: 10px;
     color: rgba(255, 255, 255, 0.5);
   }

@@ -1,7 +1,3 @@
-/**
- * Color extraction utility for thumbnail-based theming
- */
-
 import { invoke } from '@tauri-apps/api/core';
 
 import { LRUCache } from '$lib/utils/LRUCache';
@@ -91,8 +87,22 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
       setCacheEntry(imageUrl, color);
       return color;
     }
-  } catch {
-    /* continue with JS extraction */
+  } catch {}
+
+  // Local file paths (e.g. generated thumbnails from downloaded files).
+  // Canvas extraction can fail/taint in some cases, so prefer the backend.
+  const isLocalPath = /^[A-Z]:\\/i.test(imageUrl) || imageUrl.startsWith('/');
+  if (isLocalPath) {
+    try {
+      const rustColor = await invoke<[number, number, number]>('extract_local_thumbnail_color', {
+        path: imageUrl,
+      });
+      const color: RGB = { r: rustColor[0], g: rustColor[1], b: rustColor[2] };
+      setCacheEntry(imageUrl, color);
+      return color;
+    } catch {
+      // Fall back to canvas below.
+    }
   }
 
   const isYouTubeThumbnail =
@@ -110,12 +120,9 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
         setCacheEntry(imageUrl, color);
         return color;
       }
-    } catch {
-      /* extraction failed */
-    }
+    } catch {}
     return null;
   }
-
 
   return new Promise((resolve) => {
     const img = new Image();

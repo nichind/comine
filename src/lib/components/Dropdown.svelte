@@ -27,7 +27,6 @@
     if (open && anchorEl) {
       positionDropdown();
       addScrollListener();
-      // Delay adding click listener to avoid immediate close
       requestAnimationFrame(() => {
         document.addEventListener('click', handleClickOutside, true);
       });
@@ -35,7 +34,7 @@
       removeScrollListener();
       document.removeEventListener('click', handleClickOutside, true);
     }
-    
+
     return () => {
       removeScrollListener();
       document.removeEventListener('click', handleClickOutside, true);
@@ -47,7 +46,7 @@
     const rect = anchorEl.getBoundingClientRect();
 
     const dropdownWidth = Math.max(minWidth, rect.width);
-    const estimatedHeight = 120; // Rough estimate for 2-3 options
+    const estimatedHeight = 120;
 
     const spaceBelow = window.innerHeight - rect.bottom - 8;
     const spaceAbove = rect.top - 8;
@@ -55,7 +54,6 @@
     let top: number;
     let maxHeight: number;
 
-    // Prefer below, fallback to above
     if (spaceBelow >= estimatedHeight || spaceBelow >= spaceAbove) {
       top = rect.bottom + 4;
       maxHeight = Math.min(300, spaceBelow - 4);
@@ -64,7 +62,6 @@
       maxHeight = Math.min(300, spaceAbove - 4);
     }
 
-    // Horizontal positioning
     let left: number;
     if (align === 'right') {
       left = rect.right - dropdownWidth;
@@ -74,7 +71,6 @@
       left = rect.left;
     }
 
-    // Clamp to viewport
     if (left + dropdownWidth > window.innerWidth - 8) {
       left = window.innerWidth - dropdownWidth - 8;
     }
@@ -135,7 +131,6 @@
 
   function handleClickOutside(e: MouseEvent) {
     const target = e.target as HTMLElement;
-    // Check if click is outside both the dropdown and the anchor
     if (anchorEl && !anchorEl.contains(target)) {
       const dropdownEl = document.querySelector('.dropdown-menu');
       if (!dropdownEl?.contains(target)) {
@@ -166,13 +161,13 @@
   .dropdown-menu {
     position: fixed;
     z-index: 1100;
-    background: var(--bg-elevated, rgba(30, 30, 30, 0.98));
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
-    border-radius: 8px;
+    background: var(--surface-bg, rgba(18, 18, 18, 0.95));
+    backdrop-filter: blur(var(--surface-blur, 16px));
+    -webkit-backdrop-filter: blur(var(--surface-blur, 16px));
+    border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.1));
+    border-radius: var(--radius, 8px);
     padding: 4px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--surface-shadow, 0 8px 32px rgba(0, 0, 0, 0.4));
     overflow-y: auto;
     animation: dropdownIn 0.12s ease-out;
   }

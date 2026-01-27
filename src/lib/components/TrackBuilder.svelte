@@ -1,12 +1,12 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
   import { t } from '$lib/i18n';
   import { getProxyConfig, getSettings, settings } from '$lib/stores/settings';
   import ThumbnailGlow from './ThumbnailGlow.svelte';
   import { logs } from '$lib/stores/logs';
   import { deps } from '$lib/stores/deps';
   import { portal } from '$lib/actions/portal';
+  import Skeleton from './Skeleton.svelte';
   import Icon from './Icon.svelte';
   import type { IconName } from './Icon.svelte';
   import Select from './Select.svelte';
@@ -15,60 +15,16 @@
   import CollapsibleBlock from './CollapsibleBlock.svelte';
   import ClipRangeSelector from './ClipRangeSelector.svelte';
   import { formatSize, formatDuration, extractYouTubeVideoId } from '$lib/utils/format';
-  import { isAndroid, getVideoInfoOnAndroid, waitForAndroidYtDlp } from '$lib/utils/android';
-  import {
-    viewStateCache,
-    androidDataCache,
-    type VideoViewState,
-    type CachedVideoInfo,
-  } from '$lib/stores/viewState';
   import {
     mediaCache,
-    convertBackendFormats,
     type VideoInfo as UnifiedVideoInfo,
     type VideoFormat as UnifiedVideoFormat,
+    type SponsorBlockSegment,
   } from '$lib/stores/mediaCache';
+  import { resolveUrl, convertProxyConfig } from '$lib/backend/mediaBackend';
+  import type { Chapter, Storyboard, VideoFormat as BindingVideoFormat } from '$lib/bindings';
 
-  interface VideoFormat {
-    format_id: string;
-    ext: string;
-    resolution: string | null;
-    fps: number | null;
-    vcodec: string | null;
-    acodec: string | null;
-    filesize: number | null;
-    filesize_approx: number | null;
-    tbr: number | null;
-    vbr: number | null;
-    abr: number | null;
-    asr: number | null;
-    format_note: string | null;
-    has_video: boolean;
-    has_audio: boolean;
-  }
-
-  interface Storyboard {
-    url: string;
-    width: number;
-    height: number;
-    cols: number;
-    rows: number;
-    fragment_count: number;
-    fragment_duration: number;
-  }
-
-  interface Chapter {
-    title: string;
-    start_time: number;
-    end_time: number;
-  }
-
-  interface SponsorBlockSegment {
-    category: string;
-    segment: [number, number];
-    UUID?: string;
-    actionType?: string;
-  }
+  type VideoFormat = UnifiedVideoFormat;
 
   interface VideoInfo {
     title: string;
@@ -76,20 +32,18 @@
     thumbnail: string | null;
     duration: number | null;
     formats: VideoFormat[];
-    view_count?: number | null;
-    like_count?: number | null;
+    viewCount?: number | null;
+    likeCount?: number | null;
     description?: string | null;
-    upload_date?: string | null;
-    channel_url?: string | null;
-    channel_id?: string | null;
+    uploadDate?: string | null;
+    channelUrl?: string | null;
+    channelId?: string | null;
     storyboards?: Storyboard[] | null;
     chapters?: Chapter[] | null;
     sponsorSegments?: SponsorBlockSegment[] | null;
   }
 
   function normalizeExternalUrl(url: string): string {
-    // Protocol-relative URLs (//host/path) can resolve to the app scheme (tauri://...)
-    // and cleartext http:// is often blocked. Prefer https.
     if (url.startsWith('//')) return `https:${url}`;
     if (url.startsWith('http://')) return url.replace(/^http:\/\//, 'https://');
     return url;
@@ -99,19 +53,15 @@
     return normalizeExternalUrl(url);
   }
 
-  function parseStoryboardsFromYtdlpFormats(
-    rawFormats: Array<Record<string, unknown>>
-  ): Storyboard[] | null {
+  function parseStoryboardsFromFormats(formats: BindingVideoFormat[]): Storyboard[] | null {
     const storyboards: Storyboard[] = [];
 
-    for (const f of rawFormats) {
-      const formatId = typeof f.format_id === 'string' ? f.format_id : '';
-      const formatNote = typeof f.format_note === 'string' ? f.format_note : '';
-      const ext = typeof f.ext === 'string' ? f.ext : '';
+    for (const f of formats) {
+      const formatId = f.formatId || '';
+      const formatNote = f.formatNote || '';
+      const ext = f.ext || '';
 
-      const fragments = Array.isArray(f.fragments)
-        ? (f.fragments as Array<Record<string, unknown>>)
-        : null;
+      const fragments = f.fragments ?? null;
 
       const isStoryboard =
         formatId.startsWith('sb') ||
@@ -123,22 +73,12 @@
 
       const firstFrag = fragments[0];
 
-      const width = typeof f.width === 'number' && Number.isFinite(f.width) ? Math.floor(f.width) : 160;
-      const height = typeof f.height === 'number' && Number.isFinite(f.height) ? Math.floor(f.height) : 90;
-      const cols =
-        typeof f.columns === 'number' && Number.isFinite(f.columns)
-          ? Math.floor(f.columns)
-          : typeof (f as any).cols === 'number' && Number.isFinite((f as any).cols)
-            ? Math.floor((f as any).cols)
-            : 10;
-      const rows =
-        typeof f.rows === 'number' && Number.isFinite(f.rows)
-          ? Math.floor(f.rows)
-          : typeof (f as any).rows === 'number' && Number.isFinite((f as any).rows)
-            ? Math.floor((f as any).rows)
-            : 10;
+      const width = 160;
+      const height = 90;
+      const cols = f.columns ?? 10;
+      const rows = f.rows ?? 10;
 
-      const fragment_duration =
+      const fragmentDuration =
         typeof firstFrag?.duration === 'number' && Number.isFinite(firstFrag.duration)
           ? firstFrag.duration
           : 2.0;
@@ -157,8 +97,8 @@
         height: Math.max(1, height),
         cols: Math.max(1, cols),
         rows: Math.max(1, rows),
-        fragment_count: fragments.length,
-        fragment_duration,
+        fragmentCount: fragments.length,
+        fragmentDuration,
       });
     }
 
@@ -181,7 +121,7 @@
     embedThumbnail?: boolean;
     embedMetadata?: boolean;
     outputTemplate?: string;
-    clipRanges?: { start: number; end: number }[];
+    clipRanges?: { id: string; start: number; end: number }[];
   }
 
   export interface PrefetchedInfo {
@@ -239,10 +179,6 @@
     const uiState = mediaCache.getUIState(url);
     const cachedFormats = mediaCache.getFormats(url);
     const cachedVideoInfo = mediaCache.getVideoInfo(url);
-    const cachedPreview = mediaCache.getBestPreview(url);
-
-    const legacyCached = viewStateCache.get<VideoViewState>('video', url);
-    const androidCachedData = isAndroid() ? androidDataCache.getVideo(url) : null;
 
     let info: VideoInfo | null = null;
     if (cachedVideoInfo && cachedFormats) {
@@ -251,43 +187,25 @@
         author: cachedVideoInfo.author,
         thumbnail: cachedVideoInfo.thumbnail,
         duration: cachedVideoInfo.duration,
-        view_count: cachedVideoInfo.viewCount,
-        like_count: cachedVideoInfo.likeCount,
+        viewCount: cachedVideoInfo.viewCount,
+        likeCount: cachedVideoInfo.likeCount,
         description: cachedVideoInfo.description,
-        upload_date: cachedVideoInfo.uploadDate,
-        channel_url: cachedVideoInfo.channelUrl,
-        channel_id: cachedVideoInfo.channelId,
+        uploadDate: cachedVideoInfo.uploadDate,
+        channelUrl: cachedVideoInfo.channelUrl,
+        channelId: cachedVideoInfo.channelId,
         chapters: cachedVideoInfo.chapters ?? null,
         storyboards: cachedVideoInfo.storyboards ?? null,
         sponsorSegments: cachedVideoInfo.sponsorSegments ?? null,
-        formats: cachedFormats.map((f) => ({
-          format_id: f.formatId,
-          ext: f.ext,
-          resolution: f.resolution,
-          fps: f.fps,
-          vcodec: f.vcodec,
-          acodec: f.acodec,
-          filesize: f.filesize,
-          filesize_approx: f.filesizeApprox,
-          tbr: f.tbr,
-          vbr: f.vbr,
-          abr: f.abr,
-          asr: f.asr,
-          format_note: f.formatNote,
-          has_video: f.hasVideo,
-          has_audio: f.hasAudio,
-        })),
+        formats: cachedFormats,
       };
-    } else if (androidCachedData) {
-      info = androidCachedData as VideoInfo;
     }
 
     const hasFullData = !!info;
 
     return {
       info,
-      selectedVideo: uiState?.selectedVideo ?? legacyCached?.selectedVideo ?? 'best',
-      selectedAudio: uiState?.selectedAudio ?? legacyCached?.selectedAudio ?? 'best',
+      selectedVideo: uiState?.selectedVideo ?? 'best',
+      selectedAudio: uiState?.selectedAudio ?? 'best',
       loading: !hasFullData,
       lastLoadedUrl: hasFullData ? url : '',
       fromCache: hasFullData,
@@ -327,8 +245,8 @@
   }
 
   function getFmtSize(f: VideoFormat): string {
-    const size = f.filesize ?? f.filesize_approx;
-    if (size) return formatSize(size);
+    const size = f.filesize ?? f.filesizeApprox;
+    if (size) return formatSize(Number(size));
     return '';
   }
 
@@ -355,8 +273,8 @@
       } else {
         parts.push('?');
       }
-    } else if (f.format_note) {
-      parts.push(f.format_note);
+    } else if (f.formatNote) {
+      parts.push(f.formatNote);
     } else {
       parts.push('?');
     }
@@ -390,8 +308,6 @@
 
   let destroyed = false;
   let thumbnailError = $state(false);
-
-  // One-time silent refresh for cached entries missing fields (e.g., channel_url for non-YouTube).
   let refreshedMissingChannelForUrl = $state<string | null>(null);
 
   let selectedVideo = $state<string>(initialState.selectedVideo);
@@ -432,12 +348,10 @@
   let embedThumbnail = $state(initialDefaults.embedThumbnail);
   let embedMetadata = $state(!initialDefaults.clearMetadata);
 
-  // Output filename state - initialize from global settings
   const initialOutputTemplate = $settings.ytdlpAdvanced?.outputTemplate || '%(title)s.%(ext)s';
   let outputTemplate = $state(initialOutputTemplate);
   let isEditingFilename = $state(false);
 
-  // Clip range state
   interface ClipRange {
     id: string;
     start: number;
@@ -445,8 +359,9 @@
   }
   let clipRanges = $state<ClipRange[]>([]);
 
-  // SponsorBlock segments for timeline visualization
-  let sponsorSegments = $state<SponsorBlockSegment[] | null>(initialState.info?.sponsorSegments ?? null);
+  let sponsorSegments = $state<SponsorBlockSegment[] | null>(
+    initialState.info?.sponsorSegments ?? null
+  );
   let sponsorSegmentsLoading = $state(false);
 
   let showMoreOptions = $state(false);
@@ -489,8 +404,8 @@
           }
         }
 
-        if (height === 0 && f.format_note) {
-          const match = f.format_note.match(/(\d+)p/);
+        if (height === 0 && f.formatNote) {
+          const match = f.formatNote.match(/(\d+)p/);
           if (match) {
             height = parseInt(match[1]);
           }
@@ -514,7 +429,7 @@
       });
     });
 
-    if (audioFormats.length > 0 || videoFormats.some((f) => f.has_audio)) {
+    if (audioFormats.length > 0 || videoFormats.some((f) => f.hasAudio)) {
       available.push({ id: 'music', label: $t('download.tracks.presetMusic'), icon: 'music' });
     }
 
@@ -543,11 +458,17 @@
       const h = parseInt(f.resolution?.split('x')[1] || '0') || 0;
       return h === targetHeight;
     });
-    return match?.format_id || null;
+    return match?.formatId || null;
   }
 
   $effect(() => {
-    if (!loading && info && isYouTubeMusic && !didInitialPreset) {
+    if (
+      !loading &&
+      info &&
+      isYouTubeMusic &&
+      $settings.youtubeMusicAudioOnly &&
+      !didInitialPreset
+    ) {
       didInitialPreset = true;
       applyPreset('music');
     }
@@ -563,17 +484,16 @@
   });
 
   let hasSeparateStreams = $derived(
-    info?.formats?.some((f) => (f.has_video && !f.has_audio) || (f.has_audio && !f.has_video)) ??
-      false
+    info?.formats?.some((f) => (f.hasVideo && !f.hasAudio) || (f.hasAudio && !f.hasVideo)) ?? false
   );
 
-  let hasMuxedFormats = $derived(info?.formats?.some((f) => f.has_video && f.has_audio) ?? false);
+  let hasMuxedFormats = $derived(info?.formats?.some((f) => f.hasVideo && f.hasAudio) ?? false);
 
   let useDualSelectors = $derived(hasSeparateStreams);
 
   let videoFormats = $derived(
     info?.formats
-      .filter((f) => f.has_video)
+      .filter((f) => f.hasVideo)
       .sort((a, b) => {
         const aH = parseInt(a.resolution?.split('x')[1] || '0') || 0;
         const bH = parseInt(b.resolution?.split('x')[1] || '0') || 0;
@@ -583,13 +503,13 @@
 
   let audioFormats = $derived(
     info?.formats
-      .filter((f) => f.has_audio && !f.has_video)
+      .filter((f) => f.hasAudio && !f.hasVideo)
       .sort((a, b) => (b.abr ?? 0) - (a.abr ?? 0)) ?? []
   );
 
   let muxedFormats = $derived(
     info?.formats
-      .filter((f) => f.has_video && f.has_audio)
+      .filter((f) => f.hasVideo && f.hasAudio)
       .sort((a, b) => {
         const aH = parseInt(a.resolution?.split('x')[1] || '0') || 0;
         const bH = parseInt(b.resolution?.split('x')[1] || '0') || 0;
@@ -599,13 +519,13 @@
 
   let selectedVideoIsMuxed = $derived(
     selectedVideo !== 'best' && selectedVideo !== 'none'
-      ? (info?.formats.find((f) => f.format_id === selectedVideo)?.has_audio ?? false)
+      ? (info?.formats.find((f) => f.formatId === selectedVideo)?.hasAudio ?? false)
       : false
   );
 
   let muxedOptions = $derived([
     { value: 'best', label: $t('download.tracks.best') },
-    ...muxedFormats.map((f) => ({ value: f.format_id, label: makeVideoLabel(f) })),
+    ...muxedFormats.map((f) => ({ value: f.formatId, label: makeVideoLabel(f) })),
   ]);
 
   let selectedMuxed = $state('best');
@@ -645,7 +565,7 @@
               : $t('download.tracks.bestQuality'),
           },
           { value: 'none', label: $t('download.tracks.noVideo') },
-          ...videoFormats.map((f) => ({ value: f.format_id, label: makeVideoLabel(f) })),
+          ...videoFormats.map((f) => ({ value: f.formatId, label: makeVideoLabel(f) })),
         ]
   );
 
@@ -670,7 +590,7 @@
               ]
             : []),
           ...audioFormats.map((f) => ({
-            value: f.format_id,
+            value: f.formatId,
             label: makeAudioLabel(f),
             disabled: selectedVideoIsMuxed,
           })),
@@ -690,7 +610,7 @@
           ...(selectedAudio !== 'none'
             ? [{ value: 'none', label: $t('download.tracks.noVideo') }]
             : []),
-          ...videoFormats.map((f) => ({ value: f.format_id, label: makeVideoLabel(f) })),
+          ...videoFormats.map((f) => ({ value: f.formatId, label: makeVideoLabel(f) })),
         ]
   );
 
@@ -701,7 +621,6 @@
     processedThumbnail || info?.thumbnail || prefetchedInfo?.thumbnail
   );
 
-  // If thumbnail src changes (e.g. http -> https normalization), don't keep a stale error state.
   let lastThumbnailSrc = $state<string | null>(null);
   $effect(() => {
     const next = displayThumbnail ?? null;
@@ -717,17 +636,17 @@
 
     if (selectedVideo !== 'none') {
       if (selectedVideo === 'best' && videoFormats.length > 0) {
-        const size = videoFormats[0].filesize ?? videoFormats[0].filesize_approx;
+        const size = videoFormats[0].filesize ?? videoFormats[0].filesizeApprox;
         if (size) {
-          total += size;
+          total += Number(size);
           hasEstimate = true;
         }
       } else {
-        const fmt = videoFormats.find((f) => f.format_id === selectedVideo);
+        const fmt = videoFormats.find((f) => f.formatId === selectedVideo);
         if (fmt) {
-          const size = fmt.filesize ?? fmt.filesize_approx;
+          const size = fmt.filesize ?? fmt.filesizeApprox;
           if (size) {
-            total += size;
+            total += Number(size);
             hasEstimate = true;
           }
         }
@@ -737,17 +656,17 @@
     if (selectedAudio !== 'none') {
       if (selectedAudio === 'best' && audioFormats.length > 0) {
         const best = getBestAudioFormat({ preferM4a: selectedVideo === 'none' });
-        const size = best?.filesize ?? best?.filesize_approx;
+        const size = best?.filesize ?? best?.filesizeApprox;
         if (size) {
-          total += size;
+          total += Number(size);
           hasEstimate = true;
         }
       } else {
-        const fmt = audioFormats.find((f) => f.format_id === selectedAudio);
+        const fmt = audioFormats.find((f) => f.formatId === selectedAudio);
         if (fmt) {
-          const size = fmt.filesize ?? fmt.filesize_approx;
+          const size = fmt.filesize ?? fmt.filesizeApprox;
           if (size) {
-            total += size;
+            total += Number(size);
             hasEstimate = true;
           }
         }
@@ -757,95 +676,80 @@
     return hasEstimate ? formatSize(total) : null;
   });
 
-  // Predict the output file extension based on selected formats
   let predictedExtension = $derived.by(() => {
-    // Audio-only download
     if (selectedVideo === 'none') {
       if (selectedAudio === 'best') {
         const best = getBestAudioFormat({ preferM4a: true });
         return best?.ext ?? 'm4a';
       }
-      const fmt = audioFormats.find((f) => f.format_id === selectedAudio);
+      const fmt = audioFormats.find((f) => f.formatId === selectedAudio);
       return fmt?.ext ?? 'm4a';
     }
 
-    // Get video format info
     let videoFmt: VideoFormat | undefined;
     if (selectedVideo === 'best') {
       videoFmt = videoFormats[0];
     } else {
-      videoFmt = videoFormats.find((f) => f.format_id === selectedVideo);
+      videoFmt = videoFormats.find((f) => f.formatId === selectedVideo);
     }
 
-    // Muxed format (has both video and audio)
-    if (videoFmt?.has_audio) {
+    if (videoFmt?.hasAudio) {
       return videoFmt.ext ?? 'mp4';
     }
 
-    // Video-only (no audio selected)
     if (selectedAudio === 'none') {
       return videoFmt?.ext ?? 'mp4';
     }
 
-    // Video + Audio merge - determine container
     let audioFmt: VideoFormat | undefined;
     if (selectedAudio === 'best') {
       audioFmt = getBestAudioFormat({ preferM4a: false }) ?? undefined;
     } else {
-      audioFmt = audioFormats.find((f) => f.format_id === selectedAudio);
+      audioFmt = audioFormats.find((f) => f.formatId === selectedAudio);
     }
 
     const videoExt = videoFmt?.ext ?? 'mp4';
     const audioExt = audioFmt?.ext ?? 'm4a';
 
-    // MP4-compatible containers merge to mp4
     const mp4Compatible = ['mp4', 'm4a', 'm4v', 'mov'];
     if (mp4Compatible.includes(videoExt) && mp4Compatible.includes(audioExt)) {
       return 'mp4';
     }
 
-    // WebM containers merge to webm
     if (videoExt === 'webm' && audioExt === 'webm') {
       return 'webm';
     }
 
-    // Mixed containers default to mkv
     return 'mkv';
   });
 
-  // Sanitize filename for display (remove unsafe characters)
   function sanitizeFilename(name: string): string {
     return name.replace(/[<>:"/\\|?*]/g, '_').trim();
   }
 
-  // Get currently selected video format details
   let selectedVideoFormat = $derived.by(() => {
     if (selectedVideo === 'none') return null;
     if (selectedVideo === 'best') return videoFormats[0] ?? null;
-    return videoFormats.find((f) => f.format_id === selectedVideo) ?? null;
+    return videoFormats.find((f) => f.formatId === selectedVideo) ?? null;
   });
 
-  // Get currently selected audio format details
   let selectedAudioFormat = $derived.by(() => {
     if (selectedAudio === 'none') return null;
-    if (selectedAudio === 'best') return getBestAudioFormat({ preferM4a: selectedVideo === 'none' }) ?? null;
-    return audioFormats.find((f) => f.format_id === selectedAudio) ?? null;
+    if (selectedAudio === 'best')
+      return getBestAudioFormat({ preferM4a: selectedVideo === 'none' }) ?? null;
+    return audioFormats.find((f) => f.formatId === selectedAudio) ?? null;
   });
 
-  // Derived preview filename - fully reactive
   let filenamePreview = $derived.by(() => {
-    // Resolve template with current values
     const template = outputTemplate || '%(title)s.%(ext)s';
     const ext = predictedExtension;
     const title = sanitizeFilename(displayTitle || 'video');
     const uploader = sanitizeFilename(displayAuthor || 'Unknown');
     const id = url.match(/(?:v=|\/)([\w-]{11})(?:\?|&|$)/)?.[1] ?? 'unknown';
-    const uploadDate = info?.upload_date ?? '';
+    const uploadDate = info?.uploadDate ?? '';
     const duration = displayDuration ?? 0;
-    const viewCount = info?.view_count ?? 0;
-    const likeCount = info?.like_count ?? 0;
-
-    // Get resolution from selected video format, not first format
+    const viewCount = info?.viewCount ?? 0;
+    const likeCount = info?.likeCount ?? 0;
     const resolution = selectedVideoFormat?.resolution ?? 'unknown';
     const fps = selectedVideoFormat?.fps ?? 0;
     const vcodec = selectedVideoFormat?.vcodec ?? 'unknown';
@@ -881,9 +785,9 @@
           downloadMode = 'audio';
           formatString = selectedAudio === 'best' ? '' : selectedAudio;
         } else if (selectedVideo === 'best') {
-          formatString = ''; // Let backend pick best
+          formatString = '';
         } else {
-          formatString = selectedVideo; // Use specific stream ID
+          formatString = selectedVideo;
         }
       }
     } else if (!useDualSelectors) {
@@ -902,7 +806,7 @@
     } else if (selectedVideo === 'none') {
       if (selectedAudio === 'best') {
         const best = getBestAudioFormat({ preferM4a: true });
-        formatString = best?.format_id ?? 'bestaudio';
+        formatString = best?.formatId ?? 'bestaudio';
         downloadMode = 'audio';
       } else {
         formatString = selectedAudio;
@@ -943,11 +847,15 @@
       embedThumbnail,
       embedMetadata,
       outputTemplate: outputTemplate !== initialOutputTemplate ? outputTemplate : undefined,
-      // Only include clip ranges if not full video
-      clipRanges: clipRanges.length > 0 && 
-        !(clipRanges.length === 1 && clipRanges[0].start <= 0.5 && clipRanges[0].end >= (displayDuration ?? 0) - 0.5)
-        ? clipRanges.map(r => ({ start: r.start, end: r.end }))
-        : undefined,
+      clipRanges:
+        clipRanges.length > 0 &&
+        !(
+          clipRanges.length === 1 &&
+          clipRanges[0].start <= 0.5 &&
+          clipRanges[0].end >= (displayDuration ?? 0) - 0.5
+        )
+          ? clipRanges.map((r) => ({ id: r.id, start: r.start, end: r.end }))
+          : undefined,
     };
   }
 
@@ -957,7 +865,7 @@
   }
 
   function getNormalizedChannelUrl(): string | null {
-    const raw = info?.channel_url;
+    const raw = info?.channelUrl;
     if (!raw) return null;
     return normalizeExternalUrl(raw);
   }
@@ -968,14 +876,12 @@
 
     onopenchannel(channelUrl, {
       name: info?.author ?? undefined,
-      thumbnail: undefined, // Video thumbnail is not the channel thumbnail
+      thumbnail: undefined,
     });
   }
 
   let canOpenChannel = $derived(!!getNormalizedChannelUrl() && !!onopenchannel);
 
-  // If we loaded from cache and the backend now exposes channel URLs for more sites,
-  // do a one-time silent refresh so the channel link becomes clickable.
   $effect(() => {
     if (!onopenchannel) return;
     if (loading) return;
@@ -1007,72 +913,18 @@
           author: info.author,
           thumbnail: info.thumbnail,
           duration: info.duration,
-          viewCount: info.view_count ?? null,
-          likeCount: info.like_count ?? null,
-          uploadDate: info.upload_date ?? null,
+          viewCount: info.viewCount ?? null,
+          likeCount: info.likeCount ?? null,
+          uploadDate: info.uploadDate ?? null,
           description: info.description ?? null,
-          channelUrl: info.channel_url ?? null,
-          channelId: info.channel_id ?? null,
+          channelUrl: info.channelUrl ?? null,
+          channelId: info.channelId ?? null,
           chapters: info.chapters ?? null,
           storyboards: info.storyboards ?? null,
-          sponsorSegments: null, // Will be updated after async fetch
+          sponsorSegments: null,
         });
 
-        mediaCache.setFormats(
-          url,
-          info.formats.map((f) => ({
-            formatId: f.format_id,
-            ext: f.ext,
-            resolution: f.resolution,
-            fps: f.fps,
-            vcodec: f.vcodec,
-            acodec: f.acodec,
-            filesize: f.filesize,
-            filesizeApprox: f.filesize_approx,
-            tbr: f.tbr,
-            vbr: f.vbr,
-            abr: f.abr,
-            asr: f.asr,
-            formatNote: f.format_note,
-            hasVideo: f.has_video,
-            hasAudio: f.has_audio,
-          }))
-        );
-      }
-
-      viewStateCache.set<VideoViewState>({
-        type: 'video',
-        url,
-        selectedVideo,
-        selectedAudio,
-        scrollTop: 0,
-        timestamp: Date.now(),
-      });
-
-      if (isAndroid() && info) {
-        androidDataCache.setVideo(url, {
-          title: info.title,
-          author: info.author ?? '',
-          thumbnail: info.thumbnail,
-          duration: info.duration,
-          view_count: info.view_count ?? null,
-          like_count: info.like_count ?? null,
-          upload_date: info.upload_date ?? null,
-          description: info.description ?? null,
-          formats: info.formats.map((f) => ({
-            format_id: f.format_id,
-            ext: f.ext,
-            resolution: f.resolution,
-            fps: f.fps,
-            vcodec: f.vcodec,
-            acodec: f.acodec,
-            abr: f.abr,
-            filesize: f.filesize,
-            filesize_approx: f.filesize_approx,
-            has_video: f.has_video,
-            has_audio: f.has_audio,
-          })),
-        });
+        mediaCache.setFormats(url, info.formats);
       }
     }
   }
@@ -1091,7 +943,6 @@
     processedThumbnail = normalizeExternalUrl(thumbUrl);
   }
 
-  // Update cached sponsor segments
   function updateCachedSponsorSegments(segments: SponsorBlockSegment[]) {
     const cachedInfo = mediaCache.getVideoInfo(url);
     if (cachedInfo) {
@@ -1102,7 +953,6 @@
     }
   }
 
-  // Fetch SponsorBlock segments for the video
   async function fetchSponsorBlockSegments(videoUrl: string) {
     const videoId = extractYouTubeVideoId(videoUrl);
     if (!videoId) {
@@ -1112,25 +962,33 @@
 
     sponsorSegmentsLoading = true;
     try {
-      // Fetch all segment categories
-      const categories = JSON.stringify(['sponsor', 'selfpromo', 'interaction', 'intro', 'outro', 'preview', 'music_offtopic', 'filler', 'poi_highlight']);
+      const categories = JSON.stringify([
+        'sponsor',
+        'selfpromo',
+        'interaction',
+        'intro',
+        'outro',
+        'preview',
+        'music_offtopic',
+        'filler',
+        'poi_highlight',
+      ]);
       const response = await fetch(
         `https://sponsor.ajay.app/api/skipSegments?videoID=${videoId}&categories=${encodeURIComponent(categories)}`
       );
-      
+
       if (response.status === 404) {
-        // No segments for this video
         sponsorSegments = [];
         updateCachedSponsorSegments([]);
         logs.debug('tracks', `No SponsorBlock segments for video: ${videoId}`);
         return;
       }
-      
+
       if (!response.ok) {
         throw new Error(`SponsorBlock API error: ${response.status}`);
       }
-      
-      const data = await response.json() as SponsorBlockSegment[];
+
+      const data = (await response.json()) as SponsorBlockSegment[];
       sponsorSegments = data;
       updateCachedSponsorSegments(data);
       logs.info('tracks', `Loaded ${data.length} SponsorBlock segments for video: ${videoId}`);
@@ -1150,7 +1008,6 @@
       loading = true;
     }
     error = null;
-    // Reset sticky error state so a previously-failed thumbnail can render after normalization/retry.
     thumbnailError = false;
     if (!silent || !hadInfo) {
       processedThumbnail = null;
@@ -1162,91 +1019,68 @@
 
       let loadedInfo: VideoInfo;
 
-      if (isAndroid()) {
-        await waitForAndroidYtDlp();
-        if (destroyed) return; // Check after await
-        const currentSettings = getSettings();
-        const playerClient = currentSettings.usePlayerClientForExtraction
-          ? currentSettings.youtubePlayerClient
-          : currentSettings.extractionPlayerClient || null;
-        const raw = await getVideoInfoOnAndroid(url, playerClient);
-        if (destroyed) return; // Check after await
-        if (!raw) throw new Error('Failed to get video info');
+      const currentSettings = getSettings();
+      const resolveResult = await resolveUrl(url, {
+        cookies_from_browser: cookiesFromBrowser || null,
+        custom_cookies: customCookies || null,
+        proxy: convertProxyConfig(getProxyConfig()),
+        youtube_player_client: currentSettings.usePlayerClientForExtraction
+          ? currentSettings.youtubePlayerClient || null
+          : null,
+      });
 
-        const rawFormats = (raw.formats as Array<Record<string, unknown>>) || [];
-        const storyboards = parseStoryboardsFromYtdlpFormats(rawFormats);
-        logs.debug('tracks', `Android storyboard formats: ${storyboards?.length ?? 0}`);
+      if (destroyed) return;
 
-        const rawChannelUrl = (raw.channel_url as string) || (raw.uploader_url as string) || null;
-        const rawChannelId =
-          (raw.channel_id as string) || (raw.uploader_id as string) || null;
+      const raw = resolveResult.info;
+      const storyboards = raw.storyboards ?? parseStoryboardsFromFormats(raw.formats ?? []);
+      const normalizedChannelUrl = raw.channelUrl ? normalizeExternalUrl(raw.channelUrl) : null;
 
-        let normalizedChannelUrl = rawChannelUrl ? normalizeExternalUrl(rawChannelUrl) : null;
-        const rawThumb = (raw.thumbnail as string) || null;
-        const normalizedThumb = rawThumb ? normalizeExternalUrl(rawThumb) : null;
+      let thumbnail = raw.thumbnail ? normalizeExternalUrl(raw.thumbnail) : null;
+      const formatsArray = raw.formats ?? [];
 
-        // Some extractors (notably bilibili) may omit uploader_url but provide uploader_id.
-        if (!normalizedChannelUrl && rawChannelId && (url.includes('bilibili.com') || url.includes('b23.tv'))) {
-          normalizedChannelUrl = `https://space.bilibili.com/${rawChannelId}`;
-        }
-        loadedInfo = {
-          title: (raw.title as string) || url,
-          author: (raw.uploader as string) || (raw.channel as string) || null,
-          thumbnail: normalizedThumb,
-          duration: (raw.duration as number) || null,
-          view_count: (raw.view_count as number) || null,
-          like_count: (raw.like_count as number) || null,
-          description: (raw.description as string) || null,
-          upload_date: (raw.upload_date as string) || null,
-          channel_url: normalizedChannelUrl,
-          channel_id: rawChannelId,
-          storyboards,
-          formats: rawFormats.map((f) => ({
-            format_id: (f.format_id as string) || '',
-            ext: (f.ext as string) || '',
-            resolution: (f.resolution as string) || null,
-            fps: (f.fps as number) || null,
-            vcodec: (f.vcodec as string) || null,
-            acodec: (f.acodec as string) || null,
-            filesize: (f.filesize as number) || null,
-            filesize_approx: (f.filesize_approx as number) || null,
-            tbr: (f.tbr as number) || null,
-            vbr: (f.vbr as number) || null,
-            abr: (f.abr as number) || null,
-            asr: (f.asr as number) || null,
-            format_note: (f.format_note as string) || null,
-            has_video: f.vcodec !== null && f.vcodec !== 'none',
-            has_audio: f.acodec !== null && f.acodec !== 'none',
-          })),
-        };
-      } else {
-        const currentSettings = getSettings();
+      loadedInfo = {
+        title: raw.title || url,
+        author: raw.uploader || raw.channel || null,
+        thumbnail: thumbnail,
+        duration: raw.duration ? Number(raw.duration) : null,
+        viewCount: raw.viewCount ? Number(raw.viewCount) : null,
+        likeCount: raw.likeCount ? Number(raw.likeCount) : null,
+        description: raw.description ?? null,
+        uploadDate: raw.uploadDate ?? null,
+        channelUrl: raw.channelUrl ?? null,
+        channelId: raw.channelId ?? null,
+        storyboards: storyboards,
+        chapters: raw.chapters ?? null,
+        sponsorSegments: null,
+        formats: formatsArray.map((f) => ({
+          formatId: f.formatId || '',
+          ext: f.ext || '',
+          resolution: f.resolution || null,
+          fps: f.fps ? Number(f.fps) : null,
+          vcodec: f.vcodec || null,
+          acodec: f.acodec || null,
+          filesize: f.filesize ? Number(f.filesize) : null,
+          filesizeApprox: f.filesizeApprox ? Number(f.filesizeApprox) : null,
+          tbr: f.tbr ? Number(f.tbr) : null,
+          vbr: f.vbr ? Number(f.vbr) : null,
+          abr: f.abr ? Number(f.abr) : null,
+          asr: f.asr ? Number(f.asr) : null,
+          formatNote: f.formatNote || null,
+          hasVideo: f.hasVideo,
+          hasAudio: f.hasAudio,
+          quality: f.quality ? Number(f.quality) : null,
+          rows: f.rows ?? null,
+          columns: f.columns ?? null,
+          fragments: f.fragments ?? null,
+        })),
+      };
 
-        loadedInfo = await invoke<VideoInfo>('get_video_formats', {
-          url,
-          cookiesFromBrowser: cookiesFromBrowser || null,
-          customCookies: customCookies || null,
-          proxyConfig: getProxyConfig(),
-          youtubePlayerClient: currentSettings.usePlayerClientForExtraction
-            ? currentSettings.youtubePlayerClient
-            : currentSettings.extractionPlayerClient || null,
-        });
-        if (destroyed) return;
-
-        if (loadedInfo.thumbnail) {
-          loadedInfo.thumbnail = normalizeExternalUrl(loadedInfo.thumbnail);
-        }
-        if (loadedInfo.channel_url) {
-          loadedInfo.channel_url = normalizeExternalUrl(loadedInfo.channel_url);
-        }
-
-        if (
-          !loadedInfo.channel_url &&
-          loadedInfo.channel_id &&
-          (url.includes('bilibili.com') || url.includes('b23.tv'))
-        ) {
-          loadedInfo.channel_url = `https://space.bilibili.com/${loadedInfo.channel_id}`;
-        }
+      if (
+        !loadedInfo.channelUrl &&
+        loadedInfo.channelId &&
+        (url.includes('bilibili.com') || url.includes('b23.tv'))
+      ) {
+        loadedInfo.channelUrl = `https://space.bilibili.com/${loadedInfo.channelId}`;
       }
 
       info = loadedInfo;
@@ -1254,7 +1088,6 @@
 
       if (info.thumbnail) processThumbnail(info.thumbnail);
 
-      // Fetch SponsorBlock segments in the background (don't await) if not already cached
       if (!sponsorSegments || sponsorSegments.length === 0) {
         fetchSponsorBlockSegments(url);
       }
@@ -1338,19 +1171,19 @@
                 <span class="thumb-duration">{formatDuration(info.duration)}</span>
               {/if}
             {:else if loading}
-              <div class="video-thumb skeleton"></div>
+              <Skeleton width="100%" height="auto" class="video-thumb" />
             {:else}
               <div class="video-thumb empty"><Icon name="video" size={32} /></div>
             {/if}
           </div>
           <div class="video-info">
             {#if loading && !displayTitle}
-              <div class="title-skel skeleton"></div>
-              <div class="meta-skel skeleton"></div>
+              <Skeleton width="90%" height="14px" />
+              <Skeleton width="50%" height="10px" />
               <div class="stats-skel">
-                <span class="stat-skel skeleton"></span>
-                <span class="stat-skel skeleton"></span>
-                <span class="stat-skel skeleton"></span>
+                <Skeleton width="60px" height="12px" />
+                <Skeleton width="60px" height="12px" />
+                <Skeleton width="60px" height="12px" />
               </div>
             {:else if displayTitle || info}
               <h1 class="video-title">{displayTitle}</h1>
@@ -1371,34 +1204,30 @@
                     {/if}
                   </span>
                 {/if}
-                {#if displayDuration && !info?.view_count}
+                {#if displayDuration && !info?.viewCount}
                   <span class="meta-item"
                     ><Icon name="clock" size={14} />{formatDuration(displayDuration)}</span
                   >
                 {/if}
                 {#if loading && !info}
-                  <!-- Show skeleton stats while loading full info -->
-                  <span class="meta-item skeleton-inline"></span>
-                  <span class="meta-item skeleton-inline"></span>
-                  <span class="meta-item skeleton-inline"></span>
+                  <Skeleton width="50px" height="14px" class="meta-item" />
+                  <Skeleton width="50px" height="14px" class="meta-item" />
+                  <Skeleton width="50px" height="14px" class="meta-item" />
                 {:else}
-                  {#if info?.view_count}<span class="meta-item"
-                      ><Icon name="eye_line_duotone" size={14} />{formatCount(
-                        info.view_count
-                      )}</span
+                  {#if info?.viewCount}<span class="meta-item"
+                      ><Icon name="eye_line_duotone" size={14} />{formatCount(info.viewCount)}</span
                     >{/if}
-                  {#if info?.like_count}<span class="meta-item"
-                      ><Icon name="heart" size={14} />{formatCount(info.like_count)}</span
+                  {#if info?.likeCount}<span class="meta-item"
+                      ><Icon name="heart" size={14} />{formatCount(info.likeCount)}</span
                     >{/if}
-                  {#if info?.upload_date}<span class="meta-item"
-                      ><Icon name="date" size={14} />{formatUploadDate(info.upload_date)}</span
+                  {#if info?.uploadDate}<span class="meta-item"
+                      ><Icon name="date" size={14} />{formatUploadDate(info.uploadDate)}</span
                     >{/if}
                 {/if}
               </div>
 
-              <!-- Output Filename - shown as secondary metadata (not between title and author) -->
               {#if loading && !filenamePreview}
-                <div class="filename-skel skeleton"></div>
+                <Skeleton width="100%" height="18px" style="max-width: 280px; margin-top: 4px;" />
               {:else}
                 <div class="filename-row">
                   <Icon name="file_text" size={12} />
@@ -1415,7 +1244,7 @@
               {/if}
 
               {#if loading && !info?.description}
-                <div class="desc-skel skeleton"></div>
+                <Skeleton width="100%" height="32px" radius="6px" style="margin-top: 8px;" />
               {:else if cleanDescription(info?.description)}
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1425,10 +1254,10 @@
                 </div>
               {/if}
             {:else}
-              <div class="title-skel skeleton"></div>
-              <div class="meta-skel skeleton"></div>
-              <div class="desc-skel skeleton"></div>
-              <div class="filename-skel skeleton"></div>
+              <Skeleton width="90%" height="14px" />
+              <Skeleton width="50%" height="10px" />
+              <Skeleton width="100%" height="32px" radius="6px" style="margin-top: 8px;" />
+              <Skeleton width="100%" height="18px" style="max-width: 280px; margin-top: 4px;" />
             {/if}
           </div>
         </div>
@@ -1437,11 +1266,10 @@
           <span class="section-label-sm">{$t('download.tracks.quality')}</span>
           <div class="presets-row">
             {#if loading && presets.length <= 1}
-              <!-- Show skeleton chips while loading -->
-              <div class="preset-skel skeleton"></div>
-              <div class="preset-skel skeleton"></div>
-              <div class="preset-skel skeleton"></div>
-              <div class="preset-skel skeleton"></div>
+              <Skeleton pill width="80px" height="32px" />
+              <Skeleton pill width="80px" height="32px" />
+              <Skeleton pill width="80px" height="32px" />
+              <Skeleton pill width="80px" height="32px" />
             {:else}
               {#each presets as preset}
                 <Chip
@@ -1455,15 +1283,14 @@
             {/if}
           </div>
           {#if loading && !info}
-            <!-- Skeleton for quality selects while loading -->
             <div class="quality-row">
               <div class="quality-select">
-                <span class="select-label-skel skeleton"></span>
-                <div class="select-skel skeleton"></div>
+                <Skeleton width="60px" height="12px" style="margin-bottom: 6px;" />
+                <Skeleton width="100%" height="36px" radius="8px" />
               </div>
               <div class="quality-select">
-                <span class="select-label-skel skeleton"></span>
-                <div class="select-skel skeleton"></div>
+                <Skeleton width="60px" height="12px" style="margin-bottom: 6px;" />
+                <Skeleton width="100%" height="36px" radius="8px" />
               </div>
             </div>
           {:else if useDualSelectors}
@@ -1504,11 +1331,10 @@
             </div>
           {/if}
 
-          <!-- Clip Range Selector -->
           {#if loading && !displayDuration}
-            <div class="timeline-skel skeleton"></div>
+            <Skeleton width="100%" height="48px" radius="8px" style="margin-top: 12px;" />
           {:else if displayDuration && displayDuration > 0}
-            <ClipRangeSelector 
+            <ClipRangeSelector
               duration={displayDuration}
               bind:ranges={clipRanges}
               disabled={loading}
@@ -1524,8 +1350,14 @@
               <div class="option-grid">
                 <Checkbox bind:checked={skipSponsors} label={$t('download.tracks.skipSponsors')} />
                 <Checkbox bind:checked={skipIntros} label={$t('download.tracks.skipIntros')} />
-                <Checkbox bind:checked={skipSelfPromo} label={$t('download.tracks.skipSelfPromo')} />
-                <Checkbox bind:checked={skipInteraction} label={$t('download.tracks.skipInteraction')} />
+                <Checkbox
+                  bind:checked={skipSelfPromo}
+                  label={$t('download.tracks.skipSelfPromo')}
+                />
+                <Checkbox
+                  bind:checked={skipInteraction}
+                  label={$t('download.tracks.skipInteraction')}
+                />
               </div>
             </CollapsibleBlock>
           {/if}
@@ -1533,7 +1365,10 @@
           <CollapsibleBlock title={$t('download.tracks.embedOptions')} expanded={true}>
             <div class="option-grid">
               <Checkbox bind:checked={embedChapters} label={$t('download.tracks.embedChapters')} />
-              <Checkbox bind:checked={embedThumbnail} label={$t('download.tracks.embedThumbnail')} />
+              <Checkbox
+                bind:checked={embedThumbnail}
+                label={$t('download.tracks.embedThumbnail')}
+              />
               <Checkbox bind:checked={embedMetadata} label={$t('download.tracks.embedMetadata')} />
             </div>
           </CollapsibleBlock>
@@ -1556,25 +1391,25 @@
               src={displayThumbnail}
               alt=""
               class="thumb"
-                decoding="async"
-                onload={(e) => {
-                  const src = (e.currentTarget as HTMLImageElement).getAttribute('src');
-                  if (src && src === displayThumbnail) thumbnailError = false;
-                }}
-                onerror={(e) => {
-                  const src = (e.currentTarget as HTMLImageElement).getAttribute('src');
-                  if (src && src === displayThumbnail) thumbnailError = true;
-                }}
+              decoding="async"
+              onload={(e) => {
+                const src = (e.currentTarget as HTMLImageElement).getAttribute('src');
+                if (src && src === displayThumbnail) thumbnailError = false;
+              }}
+              onerror={(e) => {
+                const src = (e.currentTarget as HTMLImageElement).getAttribute('src');
+                if (src && src === displayThumbnail) thumbnailError = true;
+              }}
             />
           {:else if loading}
-            <div class="thumb skeleton"></div>
+            <Skeleton width="72px" height="72px" radius="8px" />
           {:else}
             <div class="thumb empty"><Icon name="video" size={20} /></div>
           {/if}
           <div class="info">
             {#if loading && !displayTitle}
-              <div class="title-skel skeleton"></div>
-              <div class="meta-skel skeleton"></div>
+              <Skeleton width="90%" height="14px" />
+              <Skeleton width="50%" height="10px" />
             {:else if displayTitle || info}
               <span class="title-row">
                 <span class="title">{displayTitle}</span>
@@ -1613,25 +1448,25 @@
                   {formatDuration(displayDuration)}
                 {/if}
               </span>
-              {#if info?.view_count || info?.like_count}
+              {#if info?.viewCount || info?.likeCount}
                 <div class="stats-row">
-                  {#if info?.view_count}
+                  {#if info?.viewCount}
                     <span class="stat">
                       <Icon name="eye_line_duotone" size={12} />
-                      {formatCount(info.view_count)}
+                      {formatCount(info.viewCount)}
                     </span>
                   {/if}
-                  {#if info?.like_count}
+                  {#if info?.likeCount}
                     <span class="stat">
                       <Icon name="heart" size={12} />
-                      {formatCount(info.like_count)}
+                      {formatCount(info.likeCount)}
                     </span>
                   {/if}
                 </div>
               {/if}
             {:else}
-              <div class="title-skel skeleton"></div>
-              <div class="meta-skel skeleton"></div>
+              <Skeleton width="90%" height="14px" />
+              <Skeleton width="50%" height="10px" />
             {/if}
           </div>
         </div>
@@ -1661,7 +1496,6 @@
 
       {#if showMoreOptions}
         <div class="options-sections">
-          <!-- Output Filename Section -->
           <CollapsibleBlock title={$t('download.tracks.outputFilename')} expanded={true}>
             <div class="filename-row in-block">
               <div class="filename-toggle">
@@ -1681,8 +1515,14 @@
               <div class="option-grid">
                 <Checkbox bind:checked={skipSponsors} label={$t('download.tracks.skipSponsors')} />
                 <Checkbox bind:checked={skipIntros} label={$t('download.tracks.skipIntros')} />
-                <Checkbox bind:checked={skipSelfPromo} label={$t('download.tracks.skipSelfPromo')} />
-                <Checkbox bind:checked={skipInteraction} label={$t('download.tracks.skipInteraction')} />
+                <Checkbox
+                  bind:checked={skipSelfPromo}
+                  label={$t('download.tracks.skipSelfPromo')}
+                />
+                <Checkbox
+                  bind:checked={skipInteraction}
+                  label={$t('download.tracks.skipInteraction')}
+                />
               </div>
             </CollapsibleBlock>
           {/if}
@@ -1705,7 +1545,10 @@
           <CollapsibleBlock title={$t('download.tracks.embedOptions')} expanded={true}>
             <div class="option-grid">
               <Checkbox bind:checked={embedChapters} label={$t('download.tracks.embedChapters')} />
-              <Checkbox bind:checked={embedThumbnail} label={$t('download.tracks.embedThumbnail')} />
+              <Checkbox
+                bind:checked={embedThumbnail}
+                label={$t('download.tracks.embedThumbnail')}
+              />
               <Checkbox bind:checked={embedMetadata} label={$t('download.tracks.embedMetadata')} />
             </div>
           </CollapsibleBlock>
@@ -1731,7 +1574,6 @@
   </div>
 </div>
 
-<!-- Description Modal -->
 {#if showDescription && info?.description}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -1759,7 +1601,6 @@
   }
 
   .track-builder.full-bleed {
-    /* margin: 0 -8px 0 -16px; */
     padding: 0 8px 0 0;
     height: 100%;
     display: flex;
@@ -1778,7 +1619,6 @@
     top: 0;
     z-index: 10;
     margin: 0;
-    /* padding: 10px 16px 10px 16px; */
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
 
@@ -1786,7 +1626,6 @@
     background: transparent;
     border: none;
     border-radius: 0;
-    /* padding: 0 16px 0 16px; */
     flex: 1;
     overflow-y: auto;
   }
@@ -1795,7 +1634,6 @@
     display: none;
   }
 
-  /* View header with back and download buttons */
   .view-header {
     display: flex;
     align-items: center;
@@ -1814,7 +1652,7 @@
     padding: 6px 10px;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.6);
     font-size: 13px;
     font-weight: 500;
@@ -1837,12 +1675,12 @@
   }
 
   .header-badge {
-    display: none; /* Hide on mobile, show via media query */
+    display: none;
     align-items: center;
     gap: 5px;
     padding: 4px 10px;
     background: rgba(255, 0, 0, 0.12);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: #ff6b6b;
     font-size: 11px;
     font-weight: 600;
@@ -1873,7 +1711,7 @@
     padding: 8px 14px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: white;
     font-size: 13px;
     font-weight: 500;
@@ -1902,8 +1740,6 @@
     cursor: not-allowed;
   }
 
-  /* ==================== FULL PAGE LAYOUT - YouTube Style ==================== */
-
   .content-scroll {
     display: flex;
     flex-direction: column;
@@ -1911,19 +1747,17 @@
     padding-top: 8px;
   }
 
-  /* Video Header - side by side on wide screens */
   .video-header {
     display: flex;
     gap: 16px;
     align-items: flex-start;
   }
 
-  /* Video Thumbnail */
   .video-thumb-container {
     position: relative;
     flex-shrink: 0;
     width: 280px;
-    border-radius: 12px;
+    border-radius: var(--radius-lg, 12px);
     overflow: hidden;
   }
 
@@ -1932,7 +1766,7 @@
     aspect-ratio: 16 / 9;
     object-fit: cover;
     background: rgba(255, 255, 255, 0.04);
-    border-radius: 12px;
+    border-radius: var(--radius-lg, 12px);
   }
 
   .video-thumb.empty {
@@ -1948,13 +1782,12 @@
     right: 8px;
     padding: 3px 6px;
     background: rgba(0, 0, 0, 0.8);
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     font-size: 12px;
     font-weight: 500;
     color: white;
   }
 
-  /* Video Info */
   .video-info {
     flex: 1;
     min-width: 0;
@@ -2052,11 +1885,10 @@
     display: none;
   }
 
-  /* Description Preview (YouTube style clickable box) */
   .desc-preview {
     padding: 8px 10px;
     background: rgba(255, 255, 255, 0.04);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     cursor: pointer;
     transition: background 0.15s;
   }
@@ -2093,14 +1925,13 @@
     gap: 8px;
   }
 
-  /* Filename Row - Hover to Reveal */
   .filename-row {
     position: relative;
     display: flex;
     align-items: flex-start;
     gap: 6px;
     padding: 4px 0;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: rgba(255, 255, 255, 0.4);
     transition: color 0.15s ease;
   }
@@ -2132,7 +1963,9 @@
     line-height: 1.4;
     opacity: 1;
     transform: translateY(0);
-    transition: opacity 0.15s ease, transform 0.15s ease;
+    transition:
+      opacity 0.15s ease,
+      transform 0.15s ease;
     pointer-events: none;
   }
 
@@ -2149,7 +1982,9 @@
     font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
     opacity: 0;
     transform: translateY(4px);
-    transition: opacity 0.15s ease, transform 0.15s ease;
+    transition:
+      opacity 0.15s ease,
+      transform 0.15s ease;
   }
 
   .filename-template-input:focus {
@@ -2160,7 +1995,6 @@
     color: rgba(255, 255, 255, 0.3);
   }
 
-  /* On hover or focus: crossfade with slide animation */
   .filename-toggle:hover .filename-preview-text,
   .filename-toggle:focus-within .filename-preview-text {
     opacity: 0;
@@ -2173,7 +2007,6 @@
     transform: translateY(0);
   }
 
-  /* Subtle label on hover */
   .filename-row::after {
     content: 'template';
     position: absolute;
@@ -2193,7 +2026,6 @@
     opacity: 1;
   }
 
-  /* Quality Section */
   .quality-section {
     display: flex;
     flex-direction: column;
@@ -2245,7 +2077,6 @@
     text-transform: none;
   }
 
-  /* Description Modal */
   .desc-modal-overlay {
     position: fixed;
     inset: 0;
@@ -2264,7 +2095,7 @@
     max-height: 70vh;
     background: #1a1a24;
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
+    border-radius: var(--radius-lg, 12px);
     display: flex;
     flex-direction: column;
     animation: slideUp 0.2s ease-out;
@@ -2303,7 +2134,7 @@
     height: 28px;
     background: rgba(255, 255, 255, 0.06);
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.6);
     cursor: pointer;
     transition: all 0.15s;
@@ -2324,8 +2155,6 @@
     overflow-y: auto;
   }
 
-  /* ==================== COMPACT LAYOUT ==================== */
-
   .download-btn {
     display: flex;
     align-items: center;
@@ -2333,7 +2162,7 @@
     padding: 10px 20px;
     background: var(--accent, #6366f1);
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: white;
     font-size: 14px;
     font-weight: 600;
@@ -2351,7 +2180,6 @@
     cursor: not-allowed;
   }
 
-  /* Footer actions */
   .footer-actions {
     margin-top: 12px;
     padding-top: 12px;
@@ -2381,7 +2209,7 @@
     gap: 6px;
     padding: 4px 10px;
     background: rgba(255, 0, 0, 0.15);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: #ff6b6b;
     font-size: 12px;
     font-weight: 600;
@@ -2391,7 +2219,7 @@
   .card {
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
+    border-radius: var(--radius-lg, 12px);
     padding: 0;
   }
 
@@ -2408,7 +2236,7 @@
     padding: 6px;
     background: rgba(255, 255, 255, 0.06);
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.6);
     cursor: pointer;
   }
@@ -2423,7 +2251,6 @@
     gap: 14px;
   }
 
-  /* Left side: thumbnail + info */
   .left {
     display: flex;
     gap: 10px;
@@ -2434,7 +2261,7 @@
   .thumb {
     width: 72px;
     height: 72px;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     object-fit: cover;
     flex-shrink: 0;
     background: rgba(255, 255, 255, 0.04);
@@ -2483,7 +2310,7 @@
     height: 22px;
     background: rgba(255, 255, 255, 0.08);
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     color: rgba(255, 255, 255, 0.5);
     cursor: pointer;
     transition: all 0.15s ease;
@@ -2544,7 +2371,6 @@
     color: rgba(255, 255, 255, 0.4);
   }
 
-  /* Right side: selectors */
   .right {
     display: flex;
     gap: 8px;
@@ -2566,7 +2392,6 @@
     letter-spacing: 0.5px;
   }
 
-  /* Extras */
   .extras-row {
     display: flex;
     align-items: flex-start;
@@ -2588,7 +2413,7 @@
     padding: 4px 8px;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     color: white;
     font-size: 12px;
     font-family: inherit;
@@ -2606,7 +2431,7 @@
     padding: 4px 8px;
     background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     color: rgba(255, 255, 255, 0.5);
     font-size: 11px;
     cursor: pointer;
@@ -2618,7 +2443,6 @@
     background: rgba(255, 255, 255, 0.06);
   }
 
-  /* Options sections with CollapsibleBlock */
   .options-sections {
     display: flex;
     flex-direction: column;
@@ -2632,110 +2456,13 @@
     gap: 6px 16px;
   }
 
-  /* Skeleton */
-  .skeleton {
-    background: linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0.04) 0%,
-      rgba(255, 255, 255, 0.08) 50%,
-      rgba(255, 255, 255, 0.04) 100%
-    );
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
-    border-radius: 4px;
-  }
-
-  @keyframes shimmer {
-    0% {
-      background-position: 200% 0;
-    }
-    100% {
-      background-position: -200% 0;
-    }
-  }
-
-  .title-skel {
-    height: 14px;
-    width: 90%;
-  }
-
-  .meta-skel {
-    height: 10px;
-    width: 50%;
-  }
-
   .stats-skel {
     display: flex;
     gap: 12px;
     margin-top: 8px;
   }
 
-  .stat-skel {
-    height: 12px;
-    width: 60px;
-    border-radius: 4px;
-  }
-
-  .skeleton-inline {
-    display: inline-block;
-    width: 50px;
-    height: 14px;
-    border-radius: 4px;
-    background: linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0.06) 25%,
-      rgba(255, 255, 255, 0.12) 50%,
-      rgba(255, 255, 255, 0.06) 75%
-    );
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
-  }
-
-  .desc-skel {
-    height: 32px;
-    width: 100%;
-    border-radius: 6px;
-    margin-top: 8px;
-  }
-
-  .preset-skel {
-    height: 32px;
-    width: 80px;
-    border-radius: 16px;
-  }
-
-  .filename-skel {
-    height: 18px;
-    width: 100%;
-    max-width: 280px;
-    border-radius: 4px;
-    margin-top: 4px;
-  }
-
-  .select-label-skel {
-    display: block;
-    height: 12px;
-    width: 60px;
-    border-radius: 4px;
-    margin-bottom: 6px;
-  }
-
-  .select-skel {
-    height: 36px;
-    width: 100%;
-    border-radius: 8px;
-  }
-
-  .timeline-skel {
-    height: 48px;
-    width: 100%;
-    border-radius: 8px;
-    margin-top: 12px;
-  }
-
-  /* Mobile / Android layout */
   @media (max-width: 560px) {
-    /* Compact layout mobile styles */
     .main-row {
       flex-direction: column;
       gap: 12px;
@@ -2788,7 +2515,6 @@
       max-width: 120px;
     }
 
-    /* Full page layout mobile styles - stack vertically */
     .video-header {
       flex-direction: column;
     }
@@ -2808,7 +2534,6 @@
     }
   }
 
-  /* Utility classes */
   :global(.rotate-180) {
     transform: rotate(180deg);
   }

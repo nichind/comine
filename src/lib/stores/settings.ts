@@ -7,6 +7,8 @@ export type VideoQuality = 'max' | '4k' | '1440p' | '1080p' | '720p' | '480p' | 
 export type DownloadMode = 'auto' | 'audio' | 'mute';
 export type AudioQuality = 'best' | '320' | '256' | '192' | '128' | '96';
 export type DefaultProcessor = 'auto' | 'yt-dlp' | 'lux';
+export type PreferredVideoCodec = 'any' | 'h264' | 'h265' | 'vp9' | 'av1';
+export type PreferredAudioCodec = 'any' | 'opus' | 'aac' | 'mp3' | 'vorbis';
 
 export interface CustomPreset {
   id: string;
@@ -45,13 +47,6 @@ export type ToastPosition =
   | 'bottom-center'
   | 'top-center';
 export type NotificationMonitor = 'primary' | 'cursor';
-/**
- * Window effect types by platform:
- * - Windows 10/11: acrylic, blur
- * - Windows 11: mica, mica-dark, mica-light, tabbed, tabbed-dark, tabbed-light
- * - macOS: vibrancy-* variants
- * - All: solid, oled, animated, image (CSS-based)
- */
 export type BackgroundType =
   | 'solid'
   | 'oled'
@@ -80,32 +75,37 @@ export type BackgroundType =
   | 'vibrancy-under-window'
   | 'vibrancy-under-page';
 export type AccentStyle = 'solid' | 'gradient' | 'glow';
+export type SurfaceStyle = 'glass' | 'frosted' | 'elevated' | 'accent' | 'contrast' | 'custom';
+export type ShadowIntensity = 'none' | 'subtle' | 'medium' | 'strong';
+
+export interface SurfaceSettings {
+  opacity: number;
+  borderOpacity: number;
+  shadowIntensity: ShadowIntensity;
+  accentTint: number;
+}
+
+export type BorderRadiusPreset = 'none' | 'subtle' | 'rounded' | 'pill' | 'custom';
+export type TextScalePreset = 'compact' | 'default' | 'large' | 'custom';
+
 export type ProxyMode = 'none' | 'system' | 'custom';
 
-/**
- * yt-dlp Advanced Settings
- * Controls extraction, download, aria2, and post-processing behavior
- */
 export interface YtDlpAdvancedSettings {
-  // Master toggle for advanced settings visibility
   advancedMode: boolean;
 
-  // Extraction settings
   extractionPlayerSkipWebpage: boolean;
   extractionPlayerSkipConfigs: boolean;
   extractionFlatPlaylist: boolean;
   extractionNoPlaylist: boolean;
   extractionCustomArgs: string;
 
-  // Download settings
   downloadNoPlaylist: boolean;
   downloadConcurrentFragments: number;
   downloadRetries: number;
   downloadFragmentRetries: number;
   downloadCustomArgs: string;
 
-  // aria2 override settings (when useAria2 is enabled)
-  aria2OverrideGlobal: boolean; // false = use global aria2 settings, true = use yt-dlp specific
+  aria2OverrideGlobal: boolean;
   aria2YtdlpConnections: number;
   aria2YtdlpSplits: number;
   aria2YtdlpMinSplitSize: string;
@@ -113,12 +113,10 @@ export interface YtDlpAdvancedSettings {
   aria2YtdlpCustomArgs: string;
   aria2FallbackToNative: boolean;
 
-  // Post-processing settings
   postProcessCustomArgs: string;
   postProcessKeepOriginal: boolean;
   postProcessEmbedInfoJson: boolean;
 
-  // Output settings
   outputTemplate: string;
   outputRestrictFilenames: boolean;
   outputWindowsFilenames: boolean;
@@ -156,6 +154,16 @@ export const defaultYtDlpAdvanced: YtDlpAdvancedSettings = {
   outputWindowsFilenames: true,
 };
 
+export type FFmpegHwAccel = 'auto' | 'none' | 'nvenc' | 'qsv' | 'amf' | 'videotoolbox';
+
+export interface FFmpegSettings {
+  hwAccel: FFmpegHwAccel;
+}
+
+export const defaultFFmpegSettings: FFmpegSettings = {
+  hwAccel: 'auto',
+};
+
 export interface AppSettings {
   onboardingCompleted: boolean;
   onboardingVersion: number;
@@ -185,7 +193,6 @@ export interface AppSettings {
 
   closeBehavior: CloseBehavior;
 
-
   autoUpdate: boolean;
   allowPreReleases: boolean;
   sendStats: boolean;
@@ -204,6 +211,15 @@ export interface AppSettings {
   accentStyle: AccentStyle;
   useSystemAccent: boolean;
 
+  surfaceStyle: SurfaceStyle;
+  surfaceCustom: SurfaceSettings;
+
+  borderRadius: BorderRadiusPreset;
+  borderRadiusCustom: number;
+
+  textScale: TextScalePreset;
+  textScaleCustom: number;
+
   sizeUnit: 'binary' | 'decimal';
   showHistoryStats: boolean;
 
@@ -221,6 +237,8 @@ export interface AppSettings {
   defaultVideoQuality: VideoQuality;
   defaultDownloadMode: DownloadMode;
   defaultAudioQuality: AudioQuality;
+  preferredVideoCodec: PreferredVideoCodec;
+  preferredAudioCodec: PreferredAudioCodec;
   selectedPreset: string;
   clearMetadata: boolean;
   dontShowInHistory: boolean;
@@ -229,7 +247,6 @@ export interface AppSettings {
   cookiesFromBrowser: string;
   customCookies: string;
 
-  // Tracks cookie updates pushed from the browser extension (for visibility/debugging).
   extensionCookiesReceived: Array<{
     domain: string;
     sourceUrl?: string | null;
@@ -276,12 +293,17 @@ export interface AppSettings {
   downloadsSortDirection: 'asc' | 'desc';
   historyViewMode: 'list' | 'grid';
   gridItemSize: number;
+  downloadsVisibleColumns: ('format' | 'size' | 'duration')[];
+  hideMissingFiles: boolean;
+  showSourceTags: boolean;
+  downloadsUngroupPlaylistsOnSort: boolean;
 
   showMobileNavLabels: boolean;
 
   customPresets: CustomPreset[];
 
-  // yt-dlp Advanced Settings
+  ffmpeg: FFmpegSettings;
+
   ytdlpAdvanced: YtDlpAdvancedSettings;
 }
 
@@ -342,7 +364,6 @@ export const defaultSettings: AppSettings = {
 
   closeBehavior: 'tray',
 
-
   autoUpdate: true,
   allowPreReleases: false,
   sendStats: true,
@@ -361,6 +382,19 @@ export const defaultSettings: AppSettings = {
   accentStyle: 'solid',
   useSystemAccent: false,
 
+  surfaceStyle: 'glass',
+  surfaceCustom: {
+    opacity: 80,
+    borderOpacity: 15,
+    shadowIntensity: 'medium',
+    accentTint: 5,
+  },
+
+  borderRadius: 'rounded',
+  borderRadiusCustom: 10,
+  textScale: 'default',
+  textScaleCustom: 1.0,
+
   sizeUnit: 'binary',
   showHistoryStats: false,
 
@@ -377,6 +411,8 @@ export const defaultSettings: AppSettings = {
   defaultVideoQuality: 'max',
   defaultDownloadMode: 'auto',
   defaultAudioQuality: 'best',
+  preferredVideoCodec: 'any',
+  preferredAudioCodec: 'any',
   selectedPreset: 'custom',
   clearMetadata: false,
   dontShowInHistory: false,
@@ -425,10 +461,16 @@ export const defaultSettings: AppSettings = {
   downloadsSortDirection: 'desc',
   historyViewMode: 'list',
   gridItemSize: 200,
+  downloadsVisibleColumns: ['format', 'size', 'duration'],
+  hideMissingFiles: false,
+  showSourceTags: true,
+  downloadsUngroupPlaylistsOnSort: false,
 
   showMobileNavLabels: true,
 
   customPresets: [],
+
+  ffmpeg: defaultFFmpegSettings,
 
   ytdlpAdvanced: defaultYtDlpAdvanced,
 };

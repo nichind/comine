@@ -10,7 +10,6 @@
 
   let { searchQuery }: Props = $props();
 
-  /** Dependency configuration for rendering */
   interface DepConfig {
     name: DependencyName;
     label: string;
@@ -155,7 +154,7 @@
     font-size: 10px;
     font-weight: 600;
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     text-transform: uppercase;
   }
 
@@ -170,10 +169,10 @@
   }
 
   .dep-status {
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     font-weight: 500;
     padding: 2px 8px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
   }
 
   .dep-status.checking {
@@ -201,11 +200,11 @@
     align-items: center;
     gap: 6px;
     padding: 6px 12px;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.05);
     color: white;
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
@@ -268,9 +267,9 @@
     padding: 10px;
     background: rgba(239, 68, 68, 0.1);
     border: 1px solid rgba(239, 68, 68, 0.2);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: #ef4444;
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
   }
 
   @keyframes spin {

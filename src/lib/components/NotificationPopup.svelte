@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { writable } from 'svelte/store';
+  import { writable, get } from 'svelte/store';
 
   export interface Notification {
     id: string;
@@ -10,6 +10,7 @@
     duration?: number;
     onAction?: () => void;
     actionLabel?: string;
+    onDismiss?: () => void;
   }
 
   type NotificationInput = Omit<Notification, 'id'>;
@@ -33,11 +34,18 @@
   }
 
   export function dismiss(id: string) {
+    const notif = get(notificationsStore).find((n) => n.id === id);
+
     const timeout = timeoutsMap.get(id);
     if (timeout) {
       clearTimeout(timeout);
       timeoutsMap.delete(id);
     }
+
+    try {
+      notif?.onDismiss?.();
+    } catch {}
+
     notificationsStore.update((n) => n.filter((notif) => notif.id !== id));
   }
 
@@ -77,8 +85,8 @@
 <div class="notification-container">
   {#each notifications as notif (notif.id)}
     <div class="notification" in:fly={{ x: 320, duration: 300 }} out:fade={{ duration: 200 }}>
-      <button class="close-btn" onclick={() => dismiss(notif.id)}>
-        <Icon name="close" size={14} />
+      <button class="dismiss" onclick={() => dismiss(notif.id)} aria-label="Dismiss">
+        <Icon name="cross" size={12} />
       </button>
 
       <div class="notification-content">
@@ -107,51 +115,59 @@
 <style>
   .notification-container {
     position: fixed;
-    bottom: 24px;
-    right: 24px;
-    z-index: 10000;
+    bottom: 16px;
+    right: 16px;
+    z-index: 2000;
     display: flex;
     flex-direction: column-reverse;
-    gap: 12px;
-    max-width: 360px;
+    gap: 10px;
+    max-width: 380px;
     pointer-events: none;
   }
 
   .notification {
-    background: rgb(28, 28, 32);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 12px;
+    background: var(--surface-bg, rgba(18, 18, 18, 0.92));
+    backdrop-filter: blur(var(--surface-blur, 16px));
+    -webkit-backdrop-filter: blur(var(--surface-blur, 16px));
+    border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.06));
+    border-radius: var(--radius-lg, 12px);
     padding: 16px;
-    box-shadow:
-      0 8px 32px rgba(0, 0, 0, 0.4),
-      0 2px 8px rgba(0, 0, 0, 0.2);
+    box-shadow: var(
+      --surface-shadow,
+      0 8px 32px rgba(0, 0, 0, 0.32),
+      0 2px 8px rgba(0, 0, 0, 0.16)
+    );
     pointer-events: all;
     position: relative;
     min-width: 300px;
+    max-width: 380px;
     overflow: hidden;
     isolation: isolate;
     transform: translateZ(0);
   }
 
-  .close-btn {
+  .dismiss {
     position: absolute;
     top: 8px;
     right: 8px;
+    width: 20px;
+    height: 20px;
+    margin: -2px -2px 0 0;
     background: transparent;
     border: none;
-    color: rgba(255, 255, 255, 0.4);
+    color: var(--surface-text-muted, rgba(255, 255, 255, 0.3));
     cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
+    padding: 0;
+    border-radius: var(--radius-sm, 6px);
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.15s;
+    transition: all 0.15s ease;
   }
 
-  .close-btn:hover {
-    color: rgba(255, 255, 255, 0.8);
-    background: rgba(255, 255, 255, 0.1);
+  .dismiss:hover {
+    color: var(--surface-text, rgba(255, 255, 255, 0.95));
+    background: var(--surface-bg-hover, rgba(255, 255, 255, 0.08));
   }
 
   .notification-content {
@@ -163,7 +179,7 @@
   .thumbnail {
     width: 48px;
     height: 48px;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     object-fit: cover;
     flex-shrink: 0;
   }
@@ -177,14 +193,14 @@
   .title {
     font-size: 14px;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.95);
+    color: var(--surface-text, rgba(255, 255, 255, 0.95));
     margin: 0 0 4px 0;
     line-height: 1.3;
   }
 
   .body {
     font-size: 13px;
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--surface-text-muted, rgba(255, 255, 255, 0.6));
     margin: 0;
     line-height: 1.4;
     display: -webkit-box;
@@ -199,6 +215,6 @@
     gap: 8px;
     margin-top: 12px;
     padding-top: 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid var(--surface-border, rgba(255, 255, 255, 0.06));
   }
 </style>

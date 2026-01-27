@@ -8,7 +8,7 @@
     message: string;
     type: ToastType;
     duration: number;
-    progress?: number; // 0-100 for progress toasts
+    progress?: number;
     subMessage?: string;
   }
 
@@ -30,7 +30,6 @@
     toasts.update((t) => t.filter((toast) => toast.id !== id));
   }
 
-  /** Update an existing toast's message, progress, or type */
   export function updateToast(
     id: number,
     updates: Partial<Pick<Toast, 'message' | 'progress' | 'type' | 'subMessage'>>
@@ -175,14 +174,16 @@
   .toast {
     display: flex;
     flex-direction: column;
-    background: rgba(24, 24, 26, 0.92);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
-    box-shadow:
+    background: var(--surface-bg, rgba(18, 18, 18, 0.92));
+    backdrop-filter: blur(var(--surface-blur, 16px));
+    -webkit-backdrop-filter: blur(var(--surface-blur, 16px));
+    border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.06));
+    border-radius: var(--radius-lg, 12px);
+    box-shadow: var(
+      --surface-shadow,
       0 8px 32px rgba(0, 0, 0, 0.32),
-      0 2px 8px rgba(0, 0, 0, 0.16);
+      0 2px 8px rgba(0, 0, 0, 0.16)
+    );
     pointer-events: auto;
     overflow: hidden;
     min-width: 280px;
@@ -244,14 +245,14 @@
   .message {
     font-size: 13px;
     font-weight: 500;
-    color: rgba(255, 255, 255, 0.92);
+    color: var(--surface-text, rgba(255, 255, 255, 0.92));
     line-height: 1.4;
   }
 
   .sub-message {
     font-size: 12px;
     font-weight: 400;
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--surface-text-muted, rgba(255, 255, 255, 0.5));
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -266,21 +267,21 @@
     margin: -2px -4px -2px 0;
     background: transparent;
     border: none;
-    border-radius: 6px;
-    color: rgba(255, 255, 255, 0.3);
+    border-radius: var(--radius-sm, 6px);
+    color: var(--surface-text-muted, rgba(255, 255, 255, 0.3));
     cursor: pointer;
     transition: all 0.15s ease;
     flex-shrink: 0;
   }
 
   .dismiss:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.7);
+    background: var(--surface-bg-hover, rgba(255, 255, 255, 0.08));
+    color: var(--surface-text, rgba(255, 255, 255, 0.7));
   }
 
   .progress-track {
     height: 3px;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--surface-border, rgba(255, 255, 255, 0.06));
   }
 
   .progress-fill {

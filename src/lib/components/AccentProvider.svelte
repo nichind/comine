@@ -36,7 +36,7 @@
     if (!isRgbMode) return;
 
     if (timestamp - lastRgbUpdate >= 100) {
-      rgbHue = (rgbHue + 3) % 360; // 3 degrees per update = ~12 seconds full cycle
+      rgbHue = (rgbHue + 3) % 360;
       lastRgbUpdate = timestamp;
     }
 
@@ -181,7 +181,6 @@
         return;
       }
 
-      // Bridge can come up a moment after mount; retry briefly while enabled.
       if ($settings.useSystemAccent && !systemAccentColor && systemAccentRetryAttempts < 10) {
         systemAccentRetryAttempts += 1;
         if (systemAccentRetryTimer !== null) {
@@ -279,5 +278,3 @@
     }
   });
 </script>
-
-<!-- This component only sets CSS variables, no visual output -->

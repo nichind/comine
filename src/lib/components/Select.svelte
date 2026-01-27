@@ -177,10 +177,10 @@
     height: 36px;
     padding: 0 14px;
     font-family: inherit;
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px; /* Matching buttons radius */
+    border-radius: var(--radius, 8px);
     color: white;
     cursor: pointer;
     outline: none;
@@ -230,12 +230,14 @@
 
   .select-dropdown {
     position: fixed;
-    background: rgba(30, 30, 30, 0.98);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 6px;
+    background: var(--surface-bg, rgba(18, 18, 18, 0.95));
+    backdrop-filter: blur(var(--surface-blur, 16px));
+    -webkit-backdrop-filter: blur(var(--surface-blur, 16px));
+    border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.12));
+    border-radius: var(--radius-sm, 6px);
     padding: 3px;
     z-index: 1100;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--surface-shadow, 0 8px 24px rgba(0, 0, 0, 0.4));
     max-height: 240px;
     overflow-y: auto;
   }
@@ -244,11 +246,11 @@
     width: 100%;
     padding: 11px 14px;
     font-family: inherit;
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     background: transparent;
     border: none;
-    border-radius: 5px;
-    color: rgba(255, 255, 255, 0.8);
+    border-radius: var(--radius-sm, 5px);
+    color: var(--surface-text, rgba(255, 255, 255, 0.8));
     cursor: pointer;
     text-align: left;
     transition: all 0.15s;
@@ -259,13 +261,13 @@
   }
 
   .select-option:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: white;
+    background: var(--surface-bg-hover, rgba(255, 255, 255, 0.1));
+    color: var(--surface-text, white);
   }
 
   .select-option.selected {
-    color: white;
-    background: rgba(255, 255, 255, 0.08);
+    color: var(--surface-text, white);
+    background: var(--surface-bg-active, rgba(255, 255, 255, 0.08));
   }
 
   .select-option.selected :global(svg) {

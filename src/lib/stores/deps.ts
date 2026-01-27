@@ -8,7 +8,7 @@ export interface DependencyStatus {
   installed: boolean;
   version: string | null;
   path: string | null;
-  update_available: string | null;
+  updateAvailable: string | null;
 }
 
 export interface InstallProgress {
@@ -23,7 +23,7 @@ export interface InstallProgress {
 export interface ReleaseInfo {
   tag: string;
   name: string;
-  published_at: string;
+  publishedAt: string;
 }
 
 export type DependencyName = 'ytdlp' | 'ffmpeg' | 'aria2' | 'deno' | 'quickjs' | 'lux';
@@ -214,7 +214,7 @@ function createDepsStore() {
       logs.info('deps', `${dep} uninstalled`);
       update((s) => ({
         ...s,
-        [dep]: { installed: false, version: null, path: null, update_available: null },
+        [dep]: { installed: false, version: null, path: null, updateAvailable: null },
       }));
       return true;
     } catch (err) {
@@ -239,14 +239,14 @@ function createDepsStore() {
       logs.debug('deps', 'Checking for yt-dlp updates...');
       try {
         const status = await invoke<DependencyStatus>('check_ytdlp', { checkUpdates: true });
-        if (status.update_available) {
-          logs.info('deps', `yt-dlp update available: ${status.update_available}`);
+        if (status.updateAvailable) {
+          logs.info('deps', `yt-dlp update available: ${status.updateAvailable}`);
           update((s) => ({
             ...s,
-            ytdlp: s.ytdlp ? { ...s.ytdlp, update_available: status.update_available } : status,
+            ytdlp: s.ytdlp ? { ...s.ytdlp, updateAvailable: status.updateAvailable } : status,
           }));
         }
-        return status.update_available;
+        return status.updateAvailable;
       } catch (err) {
         logs.error('deps', `Failed to check for updates: ${err}`);
         return null;

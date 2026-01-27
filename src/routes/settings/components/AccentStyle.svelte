@@ -58,10 +58,10 @@
 
   .accent-style-btn {
     padding: 8px 16px;
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     font-weight: 500;
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     background: rgba(255, 255, 255, 0.05);
     color: rgba(255, 255, 255, 0.7);
     cursor: pointer;

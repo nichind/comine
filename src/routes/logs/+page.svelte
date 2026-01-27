@@ -18,7 +18,7 @@
   const ESTIMATED_HEIGHT_MOBILE = 48;
 
   let searchQuery = $state('');
-  let virtualList: ReturnType<typeof VirtualList<LogEntry>> | null = $state(null);
+  let virtualList: VirtualList<LogEntry> | null = $state(null);
   let autoScroll = $state(true);
   let hasScrolledDown = $state(false);
   let isMobile = $state(false);
@@ -213,6 +213,7 @@
         bind:this={virtualList}
         items={$filteredLogs}
         estimatedItemHeight={estimatedHeight}
+        measureItems={true}
         overscan={10}
         containerClass="log-list-virtual"
         onscroll={handleScroll}
@@ -243,7 +244,6 @@
     {/if}
   </div>
 
-  <!-- Floating toolbar -->
   <div class="floating-toolbar">
     <div class="toolbar-content">
       <div class="search-box">
@@ -342,14 +342,12 @@
     </div>
   </div>
 
-  <!-- Log count indicator -->
   <div class="log-counter">
     <span class="counter-text">{$filteredLogs.length}</span>
     <span class="counter-label">logs</span>
   </div>
 </div>
 
-<!-- Copy confirmation modal -->
 <Modal bind:open={showCopyModal} title={$t('logs.copyConfirmTitle')}>
   <div class="copy-confirm-content">
     <div class="warning-icon">
@@ -390,12 +388,9 @@
     flex: 1;
     overflow: hidden;
     font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Consolas', monospace;
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     padding-bottom: 30px;
-    /* Mask handled by VirtualList now */
   }
-
-  /* .scrolled class logic removed/handled by VirtualList */
 
   :global(.log-list-virtual) {
     padding: 4px 8px;
@@ -433,13 +428,12 @@
     color: rgba(255, 255, 255, 0.35);
   }
 
-  /* Desktop log entry */
   .log-entry {
     display: flex;
     align-items: flex-start;
     gap: 10px;
     padding: 6px 10px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     line-height: 1.5;
     transition: background 0.1s;
   }
@@ -448,7 +442,6 @@
     background: rgba(255, 255, 255, 0.04);
   }
 
-  /* Mobile log entry */
   .log-entry.mobile {
     flex-direction: column;
     gap: 4px;
@@ -477,7 +470,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 11px;
+    font-size: var(--text-xs, 11px);
   }
 
   .log-time {
@@ -519,7 +512,7 @@
 
   .log-source {
     color: rgba(255, 255, 255, 0.5);
-    font-size: 11px;
+    font-size: var(--text-xs, 11px);
     flex-shrink: 0;
   }
 
@@ -537,7 +530,7 @@
   }
 
   .log-entry.mobile .log-message {
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     line-height: 1.6;
     padding-left: 2px;
   }
@@ -549,7 +542,6 @@
     color: rgba(251, 191, 36, 0.95);
   }
 
-  /* Floating toolbar - glassmorphism style */
   .floating-toolbar {
     position: absolute;
     bottom: 8px;
@@ -560,12 +552,12 @@
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
+    border-radius: var(--radius-lg, 12px);
     padding: 8px;
   }
 
   :global(.app.mobile) .floating-toolbar {
-    bottom: 96px; /* Account for floating nav bar */
+    bottom: 96px;
   }
 
   .toolbar-content {
@@ -581,7 +573,7 @@
     gap: 6px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     padding: 0 10px;
     height: 30px;
     min-width: 120px;
@@ -599,7 +591,7 @@
     border: none;
     outline: none;
     color: rgba(255, 255, 255, 0.9);
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     width: 100%;
     font-family: inherit;
   }
@@ -634,7 +626,7 @@
     font-weight: 600;
     padding: 0 8px;
     height: 30px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     border: 1px solid rgba(255, 255, 255, 0.1);
     background: rgba(255, 255, 255, 0.08);
     color: rgba(255, 255, 255, 0.5);
@@ -691,7 +683,7 @@
   .action-btn {
     width: 30px;
     height: 30px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     border: 1px solid rgba(255, 255, 255, 0.1);
     background: rgba(255, 255, 255, 0.08);
     color: rgba(255, 255, 255, 0.8);
@@ -720,7 +712,6 @@
     color: rgb(255, 100, 100);
   }
 
-  /* Log counter */
   .log-counter {
     position: absolute;
     top: 8px;
@@ -729,7 +720,7 @@
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     padding: 6px 10px;
     display: flex;
     align-items: baseline;
@@ -737,7 +728,7 @@
   }
 
   .counter-text {
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     font-weight: 500;
     color: rgba(255, 255, 255, 0.9);
     font-variant-numeric: tabular-nums;
@@ -748,7 +739,6 @@
     color: rgba(255, 255, 255, 0.5);
   }
 
-  /* Copy confirmation modal */
   .copy-confirm-content {
     display: flex;
     flex-direction: column;
@@ -767,7 +757,7 @@
 
   .copy-warning-text {
     color: rgba(255, 255, 255, 0.85);
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
     line-height: 1.5;
     margin: 0;
   }
@@ -778,29 +768,29 @@
     gap: 8px;
     padding: 12px 16px;
     background: rgba(0, 0, 0, 0.3);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
   }
 
   .size-label {
     color: rgba(255, 255, 255, 0.6);
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
   }
 
   .size-value {
     color: rgba(251, 191, 36, 1);
-    font-size: 16px;
+    font-size: var(--text-lg, 16px);
     font-weight: 600;
   }
 
   .size-chars {
     color: rgba(255, 255, 255, 0.5);
-    font-size: 11px;
+    font-size: var(--text-xs, 11px);
   }
 
   .copy-hint {
     color: rgba(255, 255, 255, 0.5);
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     margin: 0;
   }
 
@@ -810,7 +800,6 @@
     justify-content: flex-end;
   }
 
-  /* Mobile adjustments */
   @media (max-width: 768px) {
     .toolbar-content {
       gap: 4px;

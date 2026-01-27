@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
+
   interface Props {
     value?: string;
     placeholder?: string;
@@ -8,8 +10,8 @@
     onfocus?: (e: FocusEvent) => void;
     onblur?: (e: FocusEvent) => void;
     onkeydown?: (e: KeyboardEvent) => void;
-    iconLeft?: any;
-    iconRight?: any;
+    iconLeft?: Snippet;
+    iconRight?: Snippet;
   }
 
   let {
@@ -67,7 +69,7 @@
     font-size: 14px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: white;
     outline: none;
     transition: all 0.2s;

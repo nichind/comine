@@ -8,6 +8,7 @@ export interface HistoryItem {
   url: string;
   title: string;
   author: string;
+  authorUrl?: string;
   thumbnail: string;
   extension: string;
   size: number;
@@ -18,9 +19,12 @@ export interface HistoryItem {
   playlistId?: string;
   playlistTitle?: string;
   playlistIndex?: number;
+  convertedFormat?: string;
+  downloadSource?: string;
+  isFavourite?: boolean;
 }
 
-export type FilterType = 'all' | 'video' | 'audio' | 'image' | 'file';
+export type FilterType = 'all' | 'video' | 'audio' | 'image' | 'file' | 'favourites';
 export type SortType = 'date' | 'name' | 'size' | 'duration' | 'format';
 
 interface HistoryState {
@@ -33,7 +37,6 @@ interface HistoryState {
 let store: Store | null = null;
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
-// Debounced save to avoid too many writes
 function debouncedSave(items: HistoryItem[]) {
   if (saveTimeout) {
     clearTimeout(saveTimeout);
@@ -52,7 +55,6 @@ function debouncedSave(items: HistoryItem[]) {
 
 const MAX_HISTORY_ITEMS = 1000;
 
-// Force immediate save (for critical operations)
 async function forceSave(items: HistoryItem[]) {
   if (saveTimeout) {
     clearTimeout(saveTimeout);
@@ -128,23 +130,17 @@ function createHistoryStore() {
       return newItem;
     },
 
-    /**
-     * Add multiple items directly to history, preserving their IDs and timestamps.
-     * Useful for imports and migrations.
-     */
     async restore(newItems: HistoryItem[]) {
       await ensureInitialized();
-      
+
       update((state) => {
-        // Filter out any duplicates by ID just in case
-        const currentIds = new Set(state.items.map(i => i.id));
-        const uniqueNew = newItems.filter(i => !currentIds.has(i.id));
-        
-        // Merge and sort by date descending
+        const currentIds = new Set(state.items.map((i) => i.id));
+        const uniqueNew = newItems.filter((i) => !currentIds.has(i.id));
+
         const items = [...uniqueNew, ...state.items]
           .sort((a, b) => b.downloadedAt - a.downloadedAt)
           .slice(0, MAX_HISTORY_ITEMS);
-          
+
         debouncedSave(items);
         return { ...state, items };
       });
@@ -173,6 +169,37 @@ function createHistoryStore() {
 
     setSort(sort: SortType) {
       update((state) => ({ ...state, sort }));
+    },
+
+    toggleFavourite(id: string) {
+      update((state) => {
+        const items = state.items.map((item) =>
+          item.id === id ? { ...item, isFavourite: !item.isFavourite } : item
+        );
+        debouncedSave(items);
+        return { ...state, items };
+      });
+    },
+
+    setFavourite(id: string, value: boolean) {
+      update((state) => {
+        const items = state.items.map((item) =>
+          item.id === id ? { ...item, isFavourite: value } : item
+        );
+        debouncedSave(items);
+        return { ...state, items };
+      });
+    },
+
+    bulkSetFavourite(ids: string[], value: boolean) {
+      update((state) => {
+        const idSet = new Set(ids);
+        const items = state.items.map((item) =>
+          idSet.has(item.id) ? { ...item, isFavourite: value } : item
+        );
+        debouncedSave(items);
+        return { ...state, items };
+      });
     },
 
     async exportData(): Promise<string> {
@@ -482,6 +509,7 @@ export const historyStats = derived(history, ($history) => {
     (sum: number, item: HistoryItem) => sum + (item.duration || 0),
     0
   );
+  const favouritesCount = items.filter((item: HistoryItem) => item.isFavourite).length;
 
   const formatCounts: Record<string, number> = {};
   for (const item of items) {
@@ -498,5 +526,6 @@ export const historyStats = derived(history, ($history) => {
     totalDuration,
     formatCounts,
     mostCommonFormat,
+    favouritesCount,
   };
 });

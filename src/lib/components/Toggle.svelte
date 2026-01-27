@@ -59,7 +59,7 @@
     width: 36px;
     height: 20px;
     background: rgba(255, 255, 255, 0.2);
-    border-radius: 10px;
+    border-radius: var(--radius, 10px);
     transition: all 0.2s;
   }
 
@@ -97,7 +97,6 @@
     background: var(--accent, #6366f1);
   }
 
-  /* Gradient/glow style animation */
   :global(.accent-gradient) .toggle-wrapper.checked .toggle,
   :global(.accent-glow) .toggle-wrapper.checked .toggle {
     background: var(--accent-gradient, var(--accent, #6366f1));
@@ -135,7 +134,7 @@
     .toggle {
       width: 44px;
       height: 24px;
-      border-radius: 12px;
+      border-radius: var(--radius-lg, 12px);
     }
 
     .slider {
@@ -160,6 +159,6 @@
 
   .label {
     color: rgba(255, 255, 255, 0.9);
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
   }
 </style>

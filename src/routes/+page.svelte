@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { readText } from '@tauri-apps/plugin-clipboard-manager';
   import { invoke } from '@tauri-apps/api/core';
+  import { replaceState } from '$app/navigation';
   import { page } from '$app/stores';
   import { t } from '$lib/i18n';
   import { deps } from '$lib/stores/deps';
@@ -32,7 +33,7 @@
   import type { IconName } from '$lib/components/Icon.svelte';
   import Toggle from '$lib/components/Toggle.svelte';
 
-  import { isAndroid, isAndroidYtDlpReady } from '$lib/utils/android';
+  import { isAndroid } from '$lib/utils/android';
   import {
     settings,
     settingsReady,
@@ -142,7 +143,6 @@
     return 'platform_generic';
   }
 
-  // Derived state for current URL detection
   let isYouTubeUrl = $derived(checkIsYouTubeUrl(url));
   let isPlaylistUrl = $derived(checkIsPlaylistUrl(url));
   let isChannelUrl = $derived(checkIsChannelUrl(url));
@@ -164,7 +164,9 @@
       } else if (openChannel) {
         navigation.openChannel(urlParam);
       }
-      window.history.replaceState({}, '', window.location.pathname);
+      if (typeof window !== 'undefined') {
+        replaceState(window.location.pathname, {});
+      }
     }
   });
 
@@ -184,12 +186,11 @@
   });
 
   let canDownload = $derived(
-    isAndroid() ? androidReady : ($deps.ytdlp?.installed || $deps.lux?.installed)
+    isAndroid() ? androidReady : $deps.ytdlp?.installed || $deps.lux?.installed
   );
 
   let isDownloading = $derived($activeDownloadsCount > 0);
 
-  // Collapsible block states - simplified to 3 blocks
   let downloadOptionsExpanded = $state(true);
   let mediaSettingsExpanded = $state(false);
   let downloaderExpanded = $state(false);
@@ -217,14 +218,19 @@
   let subtitleLanguages = $state($settings.subtitleLanguages ?? 'en,ru');
   let embedThumbnail = $state($settings.embedThumbnail ?? true);
   let downloadSpeedLimit = $state($settings.downloadSpeedLimit ?? 0);
-  let ytdlpAdvanced = $state<YtDlpAdvancedSettingsType>($settings.ytdlpAdvanced ?? { ...defaultYtDlpAdvanced });
+  let ytdlpAdvanced = $state<YtDlpAdvancedSettingsType>(
+    $settings.ytdlpAdvanced ?? { ...defaultYtDlpAdvanced }
+  );
 
   $effect(() => {
     if (!$settingsReady) return;
 
     selectedPreset = $settings.selectedPreset ?? 'best';
     videoQuality = $settings.defaultVideoQuality ?? 'max';
-    downloadMode = $settings.defaultDownloadMode ?? 'auto';
+    const isYtmUrl = url && /music\.youtube\.com/i.test(url);
+    if (!($settings.youtubeMusicAudioOnly && isYtmUrl)) {
+      downloadMode = $settings.defaultDownloadMode ?? 'auto';
+    }
     audioQuality = $settings.defaultAudioQuality ?? 'best';
     convertToMp4 = $settings.convertToMp4 ?? false;
     remux = $settings.remux ?? true;
@@ -390,7 +396,6 @@
       embedSubtitles = customPreset.embedSubtitles ?? false;
       subtitleLanguages = customPreset.subtitleLanguages ?? 'en,ru';
       embedThumbnail = customPreset.embedThumbnail ?? true;
-      // Restore output template if saved in preset
       if (customPreset.outputTemplate) {
         updateSetting('ytdlpAdvanced', {
           ...($settings.ytdlpAdvanced ?? {}),
@@ -560,13 +565,7 @@
 
   onMount(async () => {
     if (isAndroid()) {
-      const checkReady = () => {
-        androidReady = isAndroidYtDlpReady();
-        if (!androidReady) {
-          setTimeout(checkReady, 500);
-        }
-      };
-      checkReady();
+      androidReady = true;
 
       if (!url.trim()) {
         try {
@@ -617,7 +616,6 @@
 
     logs.info('download', `Using custom tracks: ${selection.formatString}`);
 
-    // Convert sponsorblock categories array to individual boolean fields
     const hasSponsorBlock = selection.sponsorblock && selection.sponsorblock.length > 0;
     const sponsorCategories = selection.sponsorblock ?? [];
 
@@ -634,10 +632,18 @@
       cookiesFromBrowser,
       customCookies,
       sponsorBlock: hasSponsorBlock ? true : sponsorBlock,
-      sponsorBlockSkipSponsors: hasSponsorBlock ? sponsorCategories.includes('sponsor') : sponsorBlockSkipSponsors,
-      sponsorBlockSkipIntros: hasSponsorBlock ? (sponsorCategories.includes('intro') || sponsorCategories.includes('outro')) : sponsorBlockSkipIntros,
-      sponsorBlockSkipSelfPromo: hasSponsorBlock ? sponsorCategories.includes('selfpromo') : sponsorBlockSkipSelfPromo,
-      sponsorBlockSkipInteraction: hasSponsorBlock ? sponsorCategories.includes('interaction') : sponsorBlockSkipInteraction,
+      sponsorBlockSkipSponsors: hasSponsorBlock
+        ? sponsorCategories.includes('sponsor')
+        : sponsorBlockSkipSponsors,
+      sponsorBlockSkipIntros: hasSponsorBlock
+        ? sponsorCategories.includes('intro') || sponsorCategories.includes('outro')
+        : sponsorBlockSkipIntros,
+      sponsorBlockSkipSelfPromo: hasSponsorBlock
+        ? sponsorCategories.includes('selfpromo')
+        : sponsorBlockSkipSelfPromo,
+      sponsorBlockSkipInteraction: hasSponsorBlock
+        ? sponsorCategories.includes('interaction')
+        : sponsorBlockSkipInteraction,
       chapters: selection.embedChapters ?? chapters,
       embedSubtitles: selection.embedSubs ?? embedSubtitles,
       subtitleLanguages: selection.subLangs ?? subtitleLanguages,
@@ -695,7 +701,11 @@
       author: e.entry.uploader ?? undefined,
       duration: e.entry.duration ?? undefined,
       downloadMode: e.settings.downloadMode,
-      sponsorBlock: e.settings.skipSponsors || e.settings.skipIntros || e.settings.skipSelfPromo || e.settings.skipInteraction,
+      sponsorBlock:
+        e.settings.skipSponsors ||
+        e.settings.skipIntros ||
+        e.settings.skipSelfPromo ||
+        e.settings.skipInteraction,
       sponsorBlockSkipSponsors: e.settings.skipSponsors,
       sponsorBlockSkipIntros: e.settings.skipIntros,
       sponsorBlockSkipSelfPromo: e.settings.skipSelfPromo,
@@ -767,7 +777,11 @@
       author: selection.channelInfo.name,
       duration: e.entry.duration ?? undefined,
       downloadMode: e.settings.downloadMode,
-      sponsorBlock: e.settings.skipSponsors || e.settings.skipIntros || e.settings.skipSelfPromo || e.settings.skipInteraction,
+      sponsorBlock:
+        e.settings.skipSponsors ||
+        e.settings.skipIntros ||
+        e.settings.skipSelfPromo ||
+        e.settings.skipInteraction,
       sponsorBlockSkipSponsors: e.settings.skipSponsors,
       sponsorBlockSkipIntros: e.settings.skipIntros,
       sponsorBlockSkipSelfPromo: e.settings.skipSelfPromo,
@@ -826,7 +840,6 @@
     const downloadUrl = url.trim();
     logs.info('download', `Quick download: ${downloadUrl}`);
 
-    // Check for direct file download
     const fileCheck = isDirectFileUrl(downloadUrl);
     if (fileCheck.isFile) {
       logs.info('download', `Direct file URL detected: ${fileCheck.filename}`);
@@ -852,18 +865,19 @@
     }
 
     const cachedPreview = mediaCache.getPreview(downloadUrl);
-    const prefetchedInfo = cachedPreview ? {
-      title: cachedPreview.title,
-      author: cachedPreview.author,
-      thumbnail: cachedPreview.thumbnail,
-      duration: cachedPreview.duration,
-    } : undefined;
+    const prefetchedInfo = cachedPreview
+      ? {
+          title: cachedPreview.title,
+          author: cachedPreview.author,
+          thumbnail: cachedPreview.thumbnail,
+          duration: cachedPreview.duration,
+        }
+      : undefined;
 
     if (prefetchedInfo?.title) {
       logs.debug('download', `Using cached preview info: ${prefetchedInfo.title}`);
     }
 
-    // Add to queue with current settings
     const queueId = queue.add(downloadUrl, {
       videoQuality,
       downloadMode: downloadMode as 'auto' | 'audio' | 'mute',
@@ -886,7 +900,6 @@
 
     if (queueId) {
       logs.info('download', `Added to queue with ID: ${queueId}`);
-      // Use prefetched title if available, otherwise use hostname
       let displayTitle = prefetchedInfo?.title;
       if (!displayTitle) {
         try {
@@ -928,7 +941,6 @@
             style={active ? scrollMaskStyle : ''}
           >
             {#if view.type === 'home'}
-              <!-- HOME VIEW -->
               <div class="page-header">
                 <h1>{$t('app.name')}</h1>
                 <p class="subtitle">{$t('download.subtitle')}</p>
@@ -937,7 +949,6 @@
               <Divider my={20} />
 
               <div class="page-content">
-                <!-- URL Input -->
                 <div class="url-input-wrapper">
                   {#if url.trim() && canDownload && (isVideoUrl || isPlaylistUrl || isChannelUrl)}
                     <button
@@ -985,16 +996,13 @@
 
                 <SetupBanner />
 
-                <!-- Settings Blocks -->
                 <div class="settings-blocks">
-                  <!-- Download Options Block (Presets + Quality + Post-processing) -->
                   <CollapsibleBlock
                     title={$t('download.blocks.general')}
                     icon="settings"
                     description={$t('download.blocks.generalDesc')}
                     bind:expanded={downloadOptionsExpanded}
                   >
-                    <!-- Presets -->
                     <div class="options-group">
                       <span class="group-label">{$t('download.options.presets')}</span>
                       <div class="options-row">
@@ -1025,7 +1033,6 @@
                       </div>
                     </div>
 
-                    <!-- Quality Settings -->
                     <div class="options-group">
                       <span class="group-label">{$t('download.blocks.quality')}</span>
                       <div class="options-row">
@@ -1047,7 +1054,6 @@
                       </div>
                     </div>
 
-                    <!-- Post-Processing -->
                     <div class="options-group">
                       <span class="group-label">{$t('download.options.postProcessing')}</span>
                       <div class="checkbox-grid">
@@ -1072,14 +1078,12 @@
                     </div>
                   </CollapsibleBlock>
 
-                  <!-- Media Settings Block (SponsorBlock, Embed, Subtitles) -->
                   <CollapsibleBlock
                     title={$t('download.blocks.youtubeOptions')}
                     icon="video"
                     description="SponsorBlock, chapters, thumbnails, and subtitles"
                     bind:expanded={mediaSettingsExpanded}
                   >
-                    <!-- SponsorBlock -->
                     <div class="options-group">
                       <div class="group-header">
                         <span class="group-label">SponsorBlock</span>
@@ -1093,7 +1097,8 @@
                           <Checkbox
                             checked={sponsorBlockSkipSponsors}
                             label={$t('download.tracks.skipSponsors')}
-                            onchange={(val) => handleCheckboxChange('sponsorBlockSkipSponsors', val)}
+                            onchange={(val) =>
+                              handleCheckboxChange('sponsorBlockSkipSponsors', val)}
                           />
                           <Checkbox
                             checked={sponsorBlockSkipIntros}
@@ -1103,18 +1108,19 @@
                           <Checkbox
                             checked={sponsorBlockSkipSelfPromo}
                             label={$t('download.tracks.skipSelfPromo')}
-                            onchange={(val) => handleCheckboxChange('sponsorBlockSkipSelfPromo', val)}
+                            onchange={(val) =>
+                              handleCheckboxChange('sponsorBlockSkipSelfPromo', val)}
                           />
                           <Checkbox
                             checked={sponsorBlockSkipInteraction}
                             label={$t('download.tracks.skipInteraction')}
-                            onchange={(val) => handleCheckboxChange('sponsorBlockSkipInteraction', val)}
+                            onchange={(val) =>
+                              handleCheckboxChange('sponsorBlockSkipInteraction', val)}
                           />
                         </div>
                       {/if}
                     </div>
 
-                    <!-- Embed Options -->
                     <div class="options-group">
                       <span class="group-label">{$t('download.tracks.embedOptions')}</span>
                       <div class="checkbox-grid">
@@ -1131,7 +1137,6 @@
                       </div>
                     </div>
 
-                    <!-- Subtitles -->
                     <div class="options-group">
                       <div class="group-header">
                         <span class="group-label">{$t('download.tracks.subtitles')}</span>
@@ -1158,27 +1163,26 @@
                     </div>
                   </CollapsibleBlock>
 
-                  <!-- Downloader Block (Cookies, aria2, Speed, Playlists) -->
                   <CollapsibleBlock
                     title={$t('download.blocks.downloader')}
                     icon="tuning2"
                     description={$t('download.blocks.advancedDesc')}
                     bind:expanded={downloaderExpanded}
                   >
-                    <!-- Authentication -->
                     <div class="options-group">
                       <span class="group-label">{$t('download.blocks.authentication')}</span>
                       <div class="setting-row">
                         <span class="setting-desc">{$t('download.blocks.authenticationHint')}</span>
                         <SettingButton
                           label={$t('download.options.cookies')}
-                          value={cookiesFromBrowser ? getBrowserLabel(cookiesFromBrowser) : $t('download.options.noCookies')}
+                          value={cookiesFromBrowser
+                            ? getBrowserLabel(cookiesFromBrowser)
+                            : $t('download.options.noCookies')}
                           onclick={() => (cookiesModalOpen = true)}
                         />
                       </div>
                     </div>
 
-                    <!-- Downloader Choice -->
                     <div class="options-group">
                       <div class="group-header">
                         <span class="group-label">{$t('download.options.useAria2')}</span>
@@ -1197,7 +1201,6 @@
                       {/if}
                     </div>
 
-                    <!-- Speed Limit -->
                     <div class="options-group">
                       <span class="group-label">{$t('settings.downloads.downloadSpeedLimit')}</span>
                       <div class="speed-chips">
@@ -1248,7 +1251,6 @@
                       </div>
                     </div>
 
-                    <!-- Other Options -->
                     <div class="options-group">
                       <span class="group-label">{$t('download.options.other')}</span>
                       <div class="checkbox-grid">
@@ -1277,7 +1279,6 @@
                 {/if}
               </div>
             {:else if view.type === 'video'}
-              <!-- VIDEO VIEW -->
               <TrackBuilder
                 url={view.url ?? ''}
                 {cookiesFromBrowser}
@@ -1302,7 +1303,6 @@
                 prefetchedInfo={view.cachedData}
               />
             {:else if view.type === 'playlist'}
-              <!-- PLAYLIST VIEW -->
               <PlaylistBuilder
                 url={view.url ?? ''}
                 {cookiesFromBrowser}
@@ -1328,7 +1328,6 @@
                 prefetchedInfo={view.cachedData}
               />
             {:else if view.type === 'channel'}
-              <!-- CHANNEL VIEW -->
               <ChannelBuilder
                 url={view.url ?? ''}
                 {cookiesFromBrowser}
@@ -1361,7 +1360,6 @@
   </ViewStack>
 </div>
 
-<!-- Modals -->
 <OptionModal
   bind:open={videoQualityModalOpen}
   title={$t('download.options.videoQuality')}
@@ -1403,7 +1401,6 @@
       customCookiesInput = customCookies;
       customCookiesModalOpen = true;
     } else if (val === '') {
-      // When set to "None", clear the custom cookies content and delete cookie files
       customCookies = '';
       saveSettings();
       try {
@@ -1415,7 +1412,6 @@
   }}
 />
 
-<!-- Custom Cookies Modal -->
 <Modal bind:open={customCookiesModalOpen} title={$t('download.options.customCookies')}>
   <p class="modal-desc">{$t('download.options.customCookiesDescription')}</p>
   <textarea
@@ -1442,7 +1438,6 @@
   {/snippet}
 </Modal>
 
-<!-- Create Preset Modal -->
 <Modal bind:open={createPresetModalOpen} title={$t('download.options.createPreset')}>
   <p class="modal-desc">{$t('download.options.createPresetDescription')}</p>
   <Input bind:value={newPresetName} placeholder={$t('download.options.presetNamePlaceholder')} />
@@ -1479,7 +1474,6 @@
   {/snippet}
 </Modal>
 
-<!-- Custom Speed Limit Modal -->
 <Modal bind:open={speedLimitModalOpen} title={$t('settings.downloads.downloadSpeedLimit')}>
   <p class="modal-desc">{$t('settings.downloads.downloadSpeedLimitDescription')}</p>
   <div class="speed-input-wrapper">
@@ -1585,7 +1579,6 @@
     gap: 16px;
   }
 
-  /* URL Input */
   .url-input-wrapper {
     display: flex;
     align-items: center;
@@ -1593,7 +1586,7 @@
     padding: 4px 4px 4px 16px;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 12px;
+    border-radius: var(--radius-lg, 12px);
     transition: all 0.2s;
   }
 
@@ -1610,7 +1603,7 @@
   .url-input {
     flex: 1;
     padding: 8px 0;
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
     background: transparent;
     border: none;
     color: white;
@@ -1629,7 +1622,7 @@
     justify-content: center;
     background: rgba(255, 255, 255, 0.1);
     border: none;
-    border-radius: 10px;
+    border-radius: var(--radius, 10px);
     color: rgba(255, 255, 255, 0.8);
     cursor: pointer;
     transition: all 0.15s;
@@ -1646,14 +1639,12 @@
     color: white;
   }
 
-  /* Settings Blocks Container */
   .settings-blocks {
     display: flex;
     flex-direction: column;
     gap: 12px;
   }
 
-  /* Options group styling */
   .options-group {
     display: flex;
     flex-direction: column;
@@ -1661,7 +1652,7 @@
   }
 
   .group-label {
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     font-weight: 500;
     color: rgba(255, 255, 255, 0.5);
     text-transform: uppercase;
@@ -1708,7 +1699,7 @@
     padding: 6px 10px;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: white;
     font-size: 12px;
     font-family: inherit;
@@ -1750,10 +1741,10 @@
   .speed-input {
     width: 100px;
     padding: 10px 12px;
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: white;
     outline: none;
     transition: border-color 0.15s;
@@ -1767,7 +1758,6 @@
     color: rgba(255, 255, 255, 0.4);
   }
 
-  /* Hide number input spinners */
   .speed-input::-webkit-inner-spin-button,
   .speed-input::-webkit-outer-spin-button {
     -webkit-appearance: none;
@@ -1780,7 +1770,7 @@
   }
 
   .speed-unit {
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
     color: rgba(255, 255, 255, 0.6);
   }
 
@@ -1797,19 +1787,17 @@
     }
   }
 
-  /* Status */
   .status {
     padding: 12px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: rgba(255, 255, 255, 0.8);
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
   }
 
-  /* Custom Cookies Modal */
   .modal-desc {
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     color: rgba(255, 255, 255, 0.6);
     margin: 0 0 12px 0;
     line-height: 1.5;
@@ -1820,10 +1808,10 @@
     min-width: 400px;
     padding: 12px;
     font-family: monospace;
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     background: rgba(0, 0, 0, 0.3);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: rgba(255, 255, 255, 0.9);
     resize: vertical;
   }
@@ -1839,11 +1827,11 @@
 
   .modal-btn {
     padding: 8px 16px;
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
     font-weight: 500;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: rgba(255, 255, 255, 0.8);
     cursor: pointer;
     transition: all 0.15s;
@@ -1868,7 +1856,6 @@
     cursor: not-allowed;
   }
 
-  /* Preset delete button */
   .preset-delete {
     display: inline-flex;
     align-items: center;
@@ -1890,12 +1877,11 @@
     color: #ef4444;
   }
 
-  /* Preset summary in create modal */
   .preset-summary {
     margin-top: 16px;
     padding: 12px;
     background: rgba(255, 255, 255, 0.05);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
   }
 
   .summary-label {
@@ -1914,7 +1900,7 @@
   .summary-item {
     padding: 4px 8px;
     background: rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     font-size: 12px;
     color: rgba(255, 255, 255, 0.7);
   }
@@ -1929,7 +1915,7 @@
     background: rgba(255, 0, 0, 0.15);
     color: #ff6666;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     flex-shrink: 0;
     cursor: pointer;
     overflow: hidden;
@@ -1991,7 +1977,7 @@
     background: var(--accent-alpha, rgba(99, 102, 241, 0.15));
     color: var(--accent, rgb(99, 102, 241));
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     cursor: pointer;
     transition: all 0.15s ease;
     flex-shrink: 0;

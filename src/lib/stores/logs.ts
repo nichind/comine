@@ -47,12 +47,8 @@ const initialState: LogsState = {
 
 let isInitializing = false;
 
-/**
- * Parse a log line from the session file
- * [2024-12-29T15:30:45.123Z] [INFO] source: message
- */
+// [2024-12-29T15:30:45.123Z] [INFO] source: message
 function parseLogLine(line: string, index: number): LogEntry | null {
-  // Match: [timestamp] [LEVEL] source: message
   const match = line.match(/^\[([^\]]+)\]\s*\[(\w+)\]\s*([^:]+):\s*(.*)$/);
   if (!match || match.length < 5) {
     return {

@@ -114,7 +114,6 @@
 {#if showBanner}
   <div class="setup-banner">
     {#if $deps.error}
-      <!-- Error State -->
       <div class="banner-content error">
         <Icon name="cross_circle" size={18} />
         <span class="error-text">{$deps.error}</span>
@@ -123,7 +122,6 @@
         </button>
       </div>
     {:else if installingCount > 0}
-      <!-- Installing State -->
       <div class="banner-content installing">
         <div class="banner-left">
           <div class="spinner"></div>
@@ -137,7 +135,6 @@
         </div>
       </div>
     {:else}
-      <!-- Missing deps - show install button -->
       <div class="banner-content">
         <div class="banner-left">
           <Icon name="download" size={18} />
@@ -167,7 +164,7 @@
     padding: 12px 16px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 10px;
+    border-radius: var(--radius, 10px);
     transition: all 0.2s;
   }
 
@@ -257,7 +254,7 @@
     padding: 6px 12px;
     background: rgba(239, 68, 68, 0.15);
     border: 1px solid rgba(239, 68, 68, 0.25);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(239, 68, 68, 0.9);
     font-size: 11px;
     font-weight: 500;

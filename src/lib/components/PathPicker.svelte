@@ -13,7 +13,7 @@
 
   async function pick() {
     if (disabled) return;
-    
+
     try {
       const selected = await open({
         directory: pickType === 'folder',
@@ -43,7 +43,7 @@
     padding: 10px 14px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.8);
     font-size: 13px;
     cursor: pointer;

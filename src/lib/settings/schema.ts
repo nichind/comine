@@ -14,11 +14,11 @@ const PLATFORM_GROUPS: Record<PlatformGroup, Platform[]> = {
 };
 
 export function isVisibleOnPlatform(
-  platforms: (Platform | PlatformGroup)[] | undefined,
+  platforms: readonly (Platform | PlatformGroup)[] | undefined,
   currentPlatform: Platform
 ): boolean {
   if (!platforms) return true;
-  return platforms.some(p => {
+  return platforms.some((p) => {
     if (p in PLATFORM_GROUPS) {
       return PLATFORM_GROUPS[p as PlatformGroup].includes(currentPlatform);
     }
@@ -28,56 +28,80 @@ export function isVisibleOnPlatform(
 
 export function getSettingValue(settings: AppSettings, key: string): unknown {
   if (key.includes('.')) {
-    return key.split('.').reduce((obj: any, k) => obj?.[k], settings);
+    return key.split('.').reduce(
+      (obj: Record<string, unknown> | undefined, k) => {
+        if (obj && typeof obj === 'object')
+          return (obj as Record<string, unknown>)[k] as Record<string, unknown> | undefined;
+        return undefined;
+      },
+      settings as unknown as Record<string, unknown>
+    );
   }
   return settings[key as keyof AppSettings];
 }
 
 interface BaseDef {
-  key: keyof AppSettings | `ytdlpAdvanced.${string}`;
+  key:
+    | keyof AppSettings
+    | `ytdlpAdvanced.${string}`
+    | `ffmpeg.${string}`
+    | `surfaceCustom.${string}`;
   section: string;
   subsection?: string;
   icon: IconName;
   titleKey: string;
   descriptionKey?: string;
-  platforms?: (Platform | PlatformGroup)[];  // undefined = all platforms
+  platforms?: (Platform | PlatformGroup)[]; // undefined = all platforms
   visible?: (settings: AppSettings) => boolean;
   disabled?: (settings: AppSettings) => boolean;
   keywords?: string[]; // Extra search terms (e.g. ['reset', 'clear'] for data items)
-  onSet?: (value: unknown) => void | Promise<void>;  // Side-effect handler
+  onSet?: (value: unknown) => void | Promise<void>; // Side-effect handler
 }
 
 export type SettingDef =
   | (BaseDef & { type: 'toggle' })
-  | (BaseDef & { type: 'select'; options: { value: string; label: string }[] | ((platform: Platform) => { value: string; label: string }[]); width?: number })
-  | (BaseDef & { type: 'slider'; min: number; max: number; step?: number; suffix?: string; debounce?: number })
+  | (BaseDef & {
+      type: 'select';
+      options:
+        | { value: string; label: string }[]
+        | ((platform: Platform) => { value: string; label: string }[]);
+      width?: number;
+    })
+  | (BaseDef & {
+      type: 'slider';
+      min: number;
+      max: number;
+      step?: number;
+      suffix?: string;
+      debounce?: number;
+    })
   | (BaseDef & { type: 'input'; placeholder?: string; width?: number; debounce?: number })
   | (BaseDef & { type: 'color' })
   | (BaseDef & { type: 'path'; pickType: 'file' | 'folder' })
-  | { 
-      type: 'action'; 
-      key: string;  // Unique ID, not an AppSettings key
-      section: string; 
-      subsection?: string; 
-      platforms?: (Platform | PlatformGroup)[]; 
+  | {
+      type: 'action';
+      key: string; // Unique ID, not an AppSettings key
+      section: string;
+      subsection?: string;
+      platforms?: (Platform | PlatformGroup)[];
       icon: IconName;
       titleKey: string;
       descriptionKey?: string;
-      buttonKey: string;  // Translation key for button text
+      buttonKey: string; // Translation key for button text
       action: () => void | Promise<void>;
-      loading?: () => boolean;  // Returns true while action is in progress
+      loading?: () => boolean; // Returns true while action is in progress
       keywords?: string[];
       visible?: (settings: AppSettings) => boolean;
       disabled?: (settings: AppSettings) => boolean;
     }
-  | { 
-      type: 'custom'; 
-      key: string; 
-      section: string; 
-      subsection?: string; 
-      platforms?: (Platform | PlatformGroup)[]; 
-      keywords?: string[]; 
-      titleKey: string; 
+  | {
+      type: 'custom';
+      key: string;
+      section: string;
+      subsection?: string;
+      platforms?: (Platform | PlatformGroup)[];
+      keywords?: string[];
+      titleKey: string;
       descriptionKey?: string;
       visible?: (settings: AppSettings) => boolean;
       disabled?: (settings: AppSettings) => boolean;
@@ -89,9 +113,19 @@ export const SECTIONS = [
   { id: 'general', titleKey: 'settings.general.title', icon: 'settings' },
   { id: 'downloads', titleKey: 'settings.downloads.title', icon: 'download' },
   { id: 'processing', titleKey: 'settings.processing.title', icon: 'server' },
-  { id: 'notifications', titleKey: 'settings.notifications.title', icon: 'bell', platforms: ['desktop'] },
+  {
+    id: 'notifications',
+    titleKey: 'settings.notifications.title',
+    icon: 'bell',
+    platforms: ['desktop'],
+  },
   { id: 'network', titleKey: 'settings.network.title', icon: 'globe' },
-  { id: 'integration', titleKey: 'settings.integration.title', icon: 'extensions', platforms: ['desktop'] },
+  {
+    id: 'integration',
+    titleKey: 'settings.integration.title',
+    icon: 'extensions',
+    platforms: ['desktop'],
+  },
   { id: 'app', titleKey: 'settings.app.title', icon: 'widgets' },
   { id: 'deps', titleKey: 'settings.deps.title', icon: 'package', platforms: ['desktop'] },
   { id: 'data', titleKey: 'settings.data.title', icon: 'folder' },
@@ -106,7 +140,9 @@ export const SETTINGS: SettingDef[] = [
     icon: 'globe',
     titleKey: 'settings.general.language',
     options: locales.map((l) => ({ value: l.code, label: l.nativeName })),
-    onSet: (v) => { setLocale(v as Locale); }
+    onSet: (v) => {
+      setLocale(v as Locale);
+    },
   },
   {
     type: 'toggle',
@@ -117,7 +153,9 @@ export const SETTINGS: SettingDef[] = [
     titleKey: 'settings.general.startOnBoot',
     descriptionKey: 'settings.general.startOnBootDescription',
     platforms: ['desktop'],
-    onSet: async (v) => { await invoke('set_auto_start', { enable: v }); }
+    onSet: async (v) => {
+      await invoke('set_auto_start', { enable: v });
+    },
   },
   {
     type: 'toggle',
@@ -222,6 +260,45 @@ export const SETTINGS: SettingDef[] = [
     icon: 'image',
     titleKey: 'settings.downloads.embedThumbnail',
     descriptionKey: 'settings.downloads.embedThumbnailTooltip',
+  },
+  // Preferred codecs subsection
+  {
+    type: 'select',
+    key: 'preferredVideoCodec',
+    section: 'downloads',
+    subsection: 'codecs',
+    icon: 'video',
+    titleKey: 'settings.downloads.preferredVideoCodec',
+    descriptionKey: 'settings.downloads.preferredVideoCodecDescription',
+    options: () => {
+      const $t = get(t);
+      return [
+        { value: 'any', label: $t('settings.downloads.codecAny') },
+        { value: 'h264', label: 'H.264 (AVC)' },
+        { value: 'h265', label: 'H.265 (HEVC)' },
+        { value: 'vp9', label: 'VP9' },
+        { value: 'av1', label: 'AV1' },
+      ];
+    },
+  },
+  {
+    type: 'select',
+    key: 'preferredAudioCodec',
+    section: 'downloads',
+    subsection: 'codecs',
+    icon: 'music',
+    titleKey: 'settings.downloads.preferredAudioCodec',
+    descriptionKey: 'settings.downloads.preferredAudioCodecDescription',
+    options: () => {
+      const $t = get(t);
+      return [
+        { value: 'any', label: $t('settings.downloads.codecAny') },
+        { value: 'opus', label: 'Opus' },
+        { value: 'aac', label: 'AAC' },
+        { value: 'mp3', label: 'MP3' },
+        { value: 'vorbis', label: 'Vorbis' },
+      ];
+    },
   },
   // Concurrency subsection
   {
@@ -427,7 +504,7 @@ export const SETTINGS: SettingDef[] = [
     placeholder: '--geo-bypass --ignore-errors',
     width: 250,
   },
-  
+
   {
     type: 'toggle',
     key: 'ytdlpAdvanced.downloadNoPlaylist',
@@ -546,6 +623,30 @@ export const SETTINGS: SettingDef[] = [
     descriptionKey: 'ytdlp.advanced.postProcess.customArgsHint',
     placeholder: '--exec "echo {}"',
     width: 250,
+  },
+
+  // FFmpeg Settings
+  {
+    type: 'select',
+    key: 'ffmpeg.hwAccel',
+    section: 'processing',
+    subsection: 'ffmpeg',
+    icon: 'server',
+    titleKey: 'settings.ffmpeg.hwAccel',
+    descriptionKey: 'settings.ffmpeg.hwAccelDescription',
+    platforms: ['desktop'],
+    options: () => {
+      const $t = get(t);
+      return [
+        { value: 'auto', label: $t('settings.ffmpeg.hwAccelAuto') },
+        { value: 'none', label: $t('settings.ffmpeg.hwAccelNone') },
+        { value: 'nvenc', label: 'NVIDIA NVENC' },
+        { value: 'qsv', label: 'Intel Quick Sync' },
+        { value: 'amf', label: 'AMD AMF' },
+        { value: 'videotoolbox', label: 'VideoToolbox (macOS)' },
+      ];
+    },
+    width: 200,
   },
 
   {
@@ -787,12 +888,15 @@ export const SETTINGS: SettingDef[] = [
           { value: 'vibrancy-popover', label: $t('settings.app.backgroundVibrancyPopover') },
           { value: 'vibrancy-menu', label: $t('settings.app.backgroundVibrancyMenu') },
           { value: 'vibrancy-content', label: $t('settings.app.backgroundVibrancyContent') },
-          { value: 'vibrancy-under-window', label: $t('settings.app.backgroundVibrancyUnderWindow') },
+          {
+            value: 'vibrancy-under-window',
+            label: $t('settings.app.backgroundVibrancyUnderWindow'),
+          },
           ...baseOpts,
         ];
       }
       return baseOpts;
-    }
+    },
   },
   {
     type: 'color',
@@ -854,10 +958,20 @@ export const SETTINGS: SettingDef[] = [
     suffix: '%',
     debounce: 150,
     visible: (s) => {
-        const type = s.backgroundType;
-        if (type === 'oled') return false;
-        const isWindowEffect = ['acrylic', 'mica', 'mica-dark', 'mica-light', 'tabbed', 'tabbed-dark', 'tabbed-light', 'blur', 'vibrancy'].some(k => type.startsWith(k));
-        return !isWindowEffect;
+      const type = s.backgroundType;
+      if (type === 'oled') return false;
+      const isWindowEffect = [
+        'acrylic',
+        'mica',
+        'mica-dark',
+        'mica-light',
+        'tabbed',
+        'tabbed-dark',
+        'tabbed-light',
+        'blur',
+        'vibrancy',
+      ].some((k) => type.startsWith(k));
+      return !isWindowEffect;
     },
     platforms: ['desktop'],
   },
@@ -891,6 +1005,154 @@ export const SETTINGS: SettingDef[] = [
     section: 'app',
     subsection: 'appearance',
     titleKey: 'settings.app.accentStyle',
+  },
+  {
+    type: 'select',
+    key: 'surfaceStyle',
+    section: 'app',
+    subsection: 'appearance',
+    icon: 'widgets',
+    titleKey: 'settings.app.surfaceStyle',
+    descriptionKey: 'settings.app.surfaceStyleDescription',
+    options: () => {
+      const $t = get(t);
+      return [
+        { value: 'glass', label: $t('settings.app.surfaceGlass') },
+        { value: 'frosted', label: $t('settings.app.surfaceFrosted') },
+        { value: 'elevated', label: $t('settings.app.surfaceElevated') },
+        { value: 'accent', label: $t('settings.app.surfaceAccent') },
+        { value: 'contrast', label: $t('settings.app.surfaceContrast') },
+        { value: 'custom', label: $t('settings.app.surfaceCustom') },
+      ];
+    },
+    keywords: ['surface', 'glass', 'frosted', 'blur', 'transparency'],
+  },
+  {
+    type: 'slider',
+    key: 'surfaceCustom.opacity',
+    section: 'app',
+    subsection: 'appearance',
+    icon: 'blur',
+    titleKey: 'settings.app.surfaceOpacity',
+    min: 30,
+    max: 100,
+    step: 5,
+    suffix: '%',
+    debounce: 100,
+    visible: (s) => s.surfaceStyle === 'custom',
+  },
+  {
+    type: 'slider',
+    key: 'surfaceCustom.borderOpacity',
+    section: 'app',
+    subsection: 'appearance',
+    icon: 'tuning',
+    titleKey: 'settings.app.surfaceBorderOpacity',
+    min: 0,
+    max: 40,
+    step: 2,
+    suffix: '%',
+    debounce: 100,
+    visible: (s) => s.surfaceStyle === 'custom',
+  },
+  {
+    type: 'select',
+    key: 'surfaceCustom.shadowIntensity',
+    section: 'app',
+    subsection: 'appearance',
+    icon: 'starry',
+    titleKey: 'settings.app.surfaceShadow',
+    options: () => {
+      const $t = get(t);
+      return [
+        { value: 'none', label: $t('settings.app.shadowNone') },
+        { value: 'subtle', label: $t('settings.app.shadowSubtle') },
+        { value: 'medium', label: $t('settings.app.shadowMedium') },
+        { value: 'strong', label: $t('settings.app.shadowStrong') },
+      ];
+    },
+    visible: (s) => s.surfaceStyle === 'custom',
+  },
+  {
+    type: 'slider',
+    key: 'surfaceCustom.accentTint',
+    section: 'app',
+    subsection: 'appearance',
+    icon: 'pen_new',
+    titleKey: 'settings.app.surfaceAccentTint',
+    min: 0,
+    max: 30,
+    step: 5,
+    suffix: '%',
+    debounce: 100,
+    visible: (s) => s.surfaceStyle === 'custom',
+  },
+  {
+    type: 'select',
+    key: 'borderRadius',
+    section: 'app',
+    subsection: 'appearance',
+    icon: 'widget',
+    titleKey: 'settings.app.borderRadius',
+    descriptionKey: 'settings.app.borderRadiusDescription',
+    options: () => {
+      const $t = get(t);
+      return [
+        { value: 'none', label: $t('settings.app.radiusNone') },
+        { value: 'subtle', label: $t('settings.app.radiusSubtle') },
+        { value: 'rounded', label: $t('settings.app.radiusRounded') },
+        { value: 'pill', label: $t('settings.app.radiusPill') },
+        { value: 'custom', label: $t('settings.app.radiusCustom') },
+      ];
+    },
+    keywords: ['corners', 'rounded', 'square', 'radius'],
+  },
+  {
+    type: 'slider',
+    key: 'borderRadiusCustom',
+    section: 'app',
+    subsection: 'appearance',
+    icon: 'widget',
+    titleKey: 'settings.app.borderRadiusCustom',
+    min: 0,
+    max: 24,
+    step: 2,
+    suffix: 'px',
+    debounce: 100,
+    visible: (s) => s.borderRadius === 'custom',
+  },
+  {
+    type: 'select',
+    key: 'textScale',
+    section: 'app',
+    subsection: 'appearance',
+    icon: 'text',
+    titleKey: 'settings.app.textScale',
+    descriptionKey: 'settings.app.textScaleDescription',
+    options: () => {
+      const $t = get(t);
+      return [
+        { value: 'compact', label: $t('settings.app.textCompact') },
+        { value: 'default', label: $t('settings.app.textDefault') },
+        { value: 'large', label: $t('settings.app.textLarge') },
+        { value: 'custom', label: $t('settings.app.textCustom') },
+      ];
+    },
+    keywords: ['font', 'size', 'text', 'accessibility'],
+  },
+  {
+    type: 'slider',
+    key: 'textScaleCustom',
+    section: 'app',
+    subsection: 'appearance',
+    icon: 'text',
+    titleKey: 'settings.app.textScaleCustom',
+    min: 0.8,
+    max: 1.4,
+    step: 0.05,
+    suffix: 'x',
+    debounce: 100,
+    visible: (s) => s.textScale === 'custom',
   },
 
   {

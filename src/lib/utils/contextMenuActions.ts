@@ -1,0 +1,175 @@
+import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+import type { UnifiedDownloadItem } from '$lib/stores/downloadsState.svelte';
+import type { DownloadsContext } from '$lib/stores/downloadsContext';
+import { getConversionFormats, type FormatOption } from '$lib/utils/conversion';
+import { queue } from '$lib/stores/queue';
+import { history } from '$lib/stores/history';
+
+// Use a function to get translations since we can't use $t directly in a .ts file
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type TranslateFn = (key: string, params?: any) => string;
+
+export interface ContextMenuState {
+  open: boolean;
+  x: number;
+  y: number;
+}
+
+export interface ConvertMenuState extends ContextMenuState {}
+export function buildActiveDownloadMenuItems(
+  item: UnifiedDownloadItem,
+  t: TranslateFn
+): MenuItem[] {
+  const items: MenuItem[] = [];
+  const isPaused = item.status === 'paused';
+  const isPending = item.status === 'pending';
+  const isDownloading =
+    item.status === 'downloading' ||
+    item.status === 'processing' ||
+    item.status === 'fetching-info' ||
+    item.status === 'converting';
+
+  items.push({ id: 'details', label: t('downloads.showDetails'), icon: 'info' });
+
+  if (item.source !== 'convert') {
+    if (isPaused) {
+      items.push({ id: 'resume', label: t('downloads.queue.resumeItem'), icon: 'play' });
+    } else if (isPending || isDownloading) {
+      items.push({ id: 'pause', label: t('downloads.queue.pauseItem'), icon: 'pause' });
+    }
+  }
+
+  items.push({ id: 'cancel', label: t('common.cancel'), icon: 'close', danger: true });
+
+  return items;
+}
+export function buildHistoryItemMenuItems(
+  item: UnifiedDownloadItem,
+  fileMissing: boolean,
+  conversionFormats: FormatOption[],
+  t: TranslateFn
+): MenuItem[] {
+  const isMediaType = item.type === 'video' || item.type === 'audio';
+  const hasChannelUrl = !!item.authorUrl;
+
+  const items: MenuItem[] = [
+    { id: 'play', label: t('downloads.play'), icon: 'play', disabled: fileMissing },
+    { id: 'details', label: t('downloads.showDetails'), icon: 'info' },
+  ];
+
+  if (isMediaType) {
+    items.push({ id: 'openInApp', label: t('downloads.openInApp'), icon: 'arrow_outward' });
+  }
+
+  if (hasChannelUrl) {
+    items.push({ id: 'viewChannel', label: t('downloads.viewChannel'), icon: 'user' });
+  }
+
+  items.push({
+    id: 'toggleFavourite',
+    label: item.isFavourite ? t('downloads.removeFromFavourites') : t('downloads.addToFavourites'),
+    icon: 'star',
+  });
+
+  items.push(
+    { id: 'folder', label: t('downloads.openFolder'), icon: 'folder', disabled: fileMissing },
+    {
+      id: 'convert',
+      label: t('downloads.convert'),
+      icon: 'refresh',
+      disabled: fileMissing || conversionFormats.length === 0,
+    },
+    { id: 'divider1', label: '', divider: true },
+    { id: 'copyUrl', label: t('downloads.copyUrl'), icon: 'link' },
+    { id: 'openLink', label: t('downloads.openLink'), icon: 'globe' },
+    { id: 'redownload', label: t('downloads.redownload'), icon: 'download' },
+    { id: 'divider2', label: '', divider: true },
+    { id: 'delete', label: t('downloads.delete'), icon: 'trash', danger: true }
+  );
+
+  return items;
+}
+export function buildContextMenuItems(
+  item: UnifiedDownloadItem,
+  fileMissing: boolean,
+  t: TranslateFn
+): MenuItem[] {
+  const conversionFormats = getConversionFormats(item.extension);
+
+  if (item.isActive) {
+    return buildActiveDownloadMenuItems(item, t);
+  }
+
+  return buildHistoryItemMenuItems(item, fileMissing, conversionFormats, t);
+}
+export function buildConvertMenuItems(formats: FormatOption[]): MenuItem[] {
+  return formats.map((f) => ({
+    id: `convert-${f.format}`,
+    label: f.label,
+    icon: f.audioOnly ? 'music' : 'video',
+  }));
+}
+export function handleContextMenuAction(
+  id: string,
+  item: UnifiedDownloadItem,
+  ctx: DownloadsContext,
+  openConvertMenu: () => void
+): boolean {
+  const conversionFormats = getConversionFormats(item.extension);
+
+  if (id.startsWith('convert-')) {
+    const format = id.replace('convert-', '');
+    const formatInfo = conversionFormats.find((f) => f.format === format);
+    if (formatInfo && item.filePath) {
+      ctx.convertItem(item as any, format, formatInfo.audioOnly);
+    }
+    return false;
+  }
+
+  switch (id) {
+    case 'details':
+      ctx.showDetails(item as any);
+      break;
+    case 'resume':
+      queue.resumeItem(item.id);
+      break;
+    case 'pause':
+      queue.pauseItem(item.id);
+      break;
+    case 'cancel':
+      queue.cancel(item.id);
+      break;
+    case 'play':
+      if (item.filePath) ctx.playItem(item as any);
+      break;
+    case 'openInApp':
+      ctx.openItem(item as any);
+      break;
+    case 'viewChannel':
+      ctx.openAuthor(item as any);
+      break;
+    case 'toggleFavourite':
+      history.toggleFavourite(item.id);
+      break;
+    case 'folder':
+      if (item.filePath) ctx.openFileLocation(item.filePath);
+      break;
+    case 'convert':
+      openConvertMenu();
+      return true;
+    case 'copyUrl':
+      navigator.clipboard.writeText(item.url);
+      break;
+    case 'openLink':
+      ctx.openLink(item.url);
+      break;
+    case 'redownload':
+      ctx.redownloadItem(item.url);
+      break;
+    case 'delete':
+      ctx.deleteItem(item.id);
+      break;
+  }
+
+  return false;
+}

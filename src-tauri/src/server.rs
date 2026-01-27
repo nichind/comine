@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::atomic::AtomicU16;
-use std::sync::{Mutex, LazyLock};
 use std::io::Write;
 use std::net::TcpStream;
+use std::sync::atomic::AtomicU16;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
@@ -45,7 +45,6 @@ pub struct QueueItem {
     pub added_at: f64,
 }
 
-/// History item structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryItem {
@@ -64,14 +63,12 @@ pub struct HistoryItem {
     pub completed_at: f64,
 }
 
-/// Update the queue items from the frontend
 pub fn update_queue(items: Vec<QueueItem>) {
     if let Ok(mut queue) = QUEUE_ITEMS.lock() {
         *queue = items;
     }
 }
 
-/// Update the history items from the frontend
 pub fn update_history(items: Vec<HistoryItem>) {
     if let Ok(mut history) = HISTORY_ITEMS.lock() {
         *history = items;
@@ -187,7 +184,8 @@ pub fn stop_server() {
     let port = SERVER_PORT.load(Ordering::SeqCst);
     if port != 0 {
         if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) {
-            let _ = stream.write_all(b"GET /ping HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+            let _ = stream
+                .write_all(b"GET /ping HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
             let _ = stream.flush();
         }
     }
@@ -274,13 +272,16 @@ fn handle_status(_app: &AppHandle) -> (u16, String) {
         Ok(queue) => queue.clone(),
         Err(_) => Vec::new(),
     };
-    
+
     let json = serde_json::json!({
         "queue": items,
         "count": items.len()
     });
-    
-    (200, serde_json::to_string(&json).unwrap_or_else(|_| r#"{"queue":[],"count":0}"#.to_string()))
+
+    (
+        200,
+        serde_json::to_string(&json).unwrap_or_else(|_| r#"{"queue":[],"count":0}"#.to_string()),
+    )
 }
 
 fn handle_status_single(_app: &AppHandle, url: &str) -> (u16, String) {
@@ -288,9 +289,10 @@ fn handle_status_single(_app: &AppHandle, url: &str) -> (u16, String) {
         Ok(queue) => queue.clone(),
         Err(_) => Vec::new(),
     };
-    
+
     if let Some(item) = items.iter().find(|i| i.url == url) {
-        let json = serde_json::to_string(item).unwrap_or_else(|_| r#"{"state":"unknown"}"#.to_string());
+        let json =
+            serde_json::to_string(item).unwrap_or_else(|_| r#"{"state":"unknown"}"#.to_string());
         (200, json)
     } else {
         (200, r#"{"state":"not_found"}"#.to_string())
@@ -302,8 +304,11 @@ fn handle_history(_app: &AppHandle) -> (u16, String) {
         Ok(history) => history.clone(),
         Err(_) => Vec::new(),
     };
-    
-    (200, serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_string()))
+
+    (
+        200,
+        serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_string()),
+    )
 }
 
 fn handle_download(app: &AppHandle, body: &str) -> (u16, String) {
@@ -437,7 +442,11 @@ fn handle_cookies(app: &AppHandle, body: &str) -> (u16, String) {
         // - Leading dot => include subdomains (TRUE)
         // - No leading dot => host-only (FALSE)
         let domain_str = cookie.domain.clone();
-        let include_subdomains = if domain_str.starts_with('.') { "TRUE" } else { "FALSE" };
+        let include_subdomains = if domain_str.starts_with('.') {
+            "TRUE"
+        } else {
+            "FALSE"
+        };
         let secure = if cookie.secure { "TRUE" } else { "FALSE" };
 
         let expires = cookie
@@ -448,13 +457,7 @@ fn handle_cookies(app: &AppHandle, body: &str) -> (u16, String) {
 
         lines.push(format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            domain_str,
-            include_subdomains,
-            cookie.path,
-            secure,
-            expires,
-            cookie.name,
-            cookie.value
+            domain_str, include_subdomains, cookie.path, secure, expires, cookie.name, cookie.value
         ));
     }
 
@@ -463,12 +466,18 @@ fn handle_cookies(app: &AppHandle, body: &str) -> (u16, String) {
     log::info!("[Server] Cookies formatted ({} lines)", lines.len());
 
     // Emit event so frontend can update the customCookies setting
-    let _ = app.emit("extension-cookies", serde_json::json!({
-        "domain": req.domain,
-        "sourceUrl": req.source_url,
-        "count": req.cookies.len(),
-        "cookies": content,
-    }));
+    let _ = app.emit(
+        "extension-cookies",
+        serde_json::json!({
+            "domain": req.domain,
+            "sourceUrl": req.source_url,
+            "count": req.cookies.len(),
+            "cookies": content,
+        }),
+    );
 
-    (200, format!(r#"{{"ok":true,"count":{}}}"#, req.cookies.len()))
+    (
+        200,
+        format!(r#"{{"ok":true,"count":{}}}"#, req.cookies.len()),
+    )
 }

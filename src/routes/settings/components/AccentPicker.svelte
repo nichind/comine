@@ -126,7 +126,7 @@
     width: 100%;
     height: 32px;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     cursor: pointer;
     background: transparent;
   }
@@ -134,10 +134,10 @@
   .color-text-input {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     padding: 8px 12px;
     color: white;
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     width: 100%;
   }
 

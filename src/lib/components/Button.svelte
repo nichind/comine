@@ -1,14 +1,15 @@
 <script lang="ts">
   import { spotlight } from '$lib/actions/spotlight';
+  import type { Snippet } from 'svelte';
 
   interface Props {
     variant?: 'primary' | 'secondary' | 'ghost';
     size?: 'sm' | 'md' | 'lg';
     disabled?: boolean;
     onclick?: (e: MouseEvent) => void;
-    children?: any;
-    iconLeft?: any;
-    iconRight?: any;
+    children?: Snippet;
+    iconLeft?: Snippet;
+    iconRight?: Snippet;
   }
 
   let {
@@ -45,10 +46,10 @@
     gap: 8px;
     padding: 8px 16px;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     cursor: pointer;
     font-family: inherit;
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
     transition: all 0.2s;
   }
 
@@ -62,7 +63,6 @@
     color: white;
   }
 
-  /* Gradient/glow style - subtle shimmer animation */
   :global(.accent-gradient) .primary,
   :global(.accent-glow) .primary {
     background: var(--accent-gradient, var(--accent, #6366f1));
@@ -111,19 +111,19 @@
 
   .sm {
     padding: 6px 12px;
-    font-size: 13px;
+    font-size: var(--text-sm, 13px);
     gap: 6px;
   }
 
   .md {
     padding: 8px 16px;
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
     gap: 8px;
   }
 
   .lg {
     padding: 12px 24px;
-    font-size: 16px;
+    font-size: var(--text-lg, 16px);
     gap: 10px;
   }
 

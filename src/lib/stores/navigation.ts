@@ -83,11 +83,6 @@ function createNavigationStore() {
       set({ stack: [{ type: 'home' }] });
     },
 
-    /**
-     * Open a video view
-     * @param url - The video URL
-     * @param previewData - Optional preview data to cache (title, thumbnail, etc.)
-     */
     openVideo(url: string, previewData?: MediaPreview) {
       if (previewData) {
         mediaCache.setPreview(url, { ...previewData, isPlaylist: false });
@@ -110,11 +105,6 @@ function createNavigationStore() {
       });
     },
 
-    /**
-     * Open a playlist view
-     * @param url - The playlist URL
-     * @param previewData - Optional preview data to cache (title, thumbnail, etc.)
-     */
     openPlaylist(url: string, previewData?: MediaPreview) {
       if (previewData) {
         mediaCache.setPreview(url, { ...previewData, isPlaylist: true });
@@ -137,11 +127,6 @@ function createNavigationStore() {
       });
     },
 
-    /**
-     * Open a channel view
-     * @param url - The channel URL
-     * @param previewData - Optional preview data to cache (name, thumbnail, etc.)
-     */
     openChannel(url: string, previewData?: MediaPreview) {
       if (previewData) {
         mediaCache.setPreview(url, { ...previewData, isPlaylist: false });

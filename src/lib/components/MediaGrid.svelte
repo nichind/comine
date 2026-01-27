@@ -40,7 +40,8 @@
   };
 
   interface Props {
-    items: any[];
+    items: unknown[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     mapItem?: (item: any) => MediaItemData;
     selectedIds: Set<string> | ((id: string) => boolean);
     viewMode?: ViewMode;
@@ -247,7 +248,7 @@
 
   let visibleItems = $derived.by<MediaItemData[]>(() => {
     if (!mapItem) return rawVisibleItems as MediaItemData[];
-    return (rawVisibleItems as any[]).map(mapItem);
+    return (rawVisibleItems as unknown[]).map(mapItem);
   });
 
   let bottomPadding = $derived(isMobile ? BOTTOM_PADDING_MOBILE : BOTTOM_PADDING);
@@ -534,7 +535,6 @@
 {/if}
 
 <style>
-  /* ===== List View ===== */
   .list-view {
     display: block;
     overflow-y: auto;
@@ -580,7 +580,7 @@
     gap: 10px;
     align-items: center;
     padding: 8px 10px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     cursor: pointer;
     user-select: none;
     contain: layout style;
@@ -603,12 +603,11 @@
     pointer-events: none;
   }
 
-  /* Thumbnail */
   .item-thumb {
     position: relative;
     width: 56px;
     height: 32px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     overflow: hidden;
     flex-shrink: 0;
   }
@@ -641,7 +640,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Info */
   .item-info {
     min-width: 0;
     display: flex;
@@ -669,7 +667,6 @@
     white-space: nowrap;
   }
 
-  /* Open button on thumbnail (list view) */
   .thumb-open-btn {
     position: absolute;
     inset: 0;
@@ -678,7 +675,7 @@
     justify-content: center;
     background: rgba(0, 0, 0, 0.7);
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     color: white;
     cursor: pointer;
     transition: background 0.15s;
@@ -688,7 +685,6 @@
     background: rgba(99, 102, 241, 0.8);
   }
 
-  /* Mode badge */
   .mode-badge {
     display: flex;
     align-items: center;
@@ -697,7 +693,7 @@
     height: 26px;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.5);
     cursor: pointer;
     transition: all 0.15s;
@@ -726,7 +722,6 @@
     color: #fbbf24;
   }
 
-  /* ===== Grid View ===== */
   .grid-view {
     overflow-y: auto;
     max-height: 100%;
@@ -775,7 +770,7 @@
     height: var(--card-height, auto);
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     overflow: hidden;
     transition:
       background 0.2s,
@@ -795,7 +790,6 @@
     background: rgba(99, 102, 241, 0.08);
   }
 
-  /* Card thumbnail */
   .card-thumb {
     position: relative;
     width: 100%;
@@ -834,7 +828,7 @@
     left: 6px;
     z-index: 5;
     background: rgba(0, 0, 0, 0.6);
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     padding: 3px;
     pointer-events: none;
     display: flex;
@@ -845,10 +839,9 @@
     right: 6px;
     padding: 2px 5px;
     font-size: 10px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
   }
 
-  /* Mode indicator badge */
   .mode-indicator {
     position: absolute;
     bottom: 6px;
@@ -860,7 +853,7 @@
     justify-content: center;
     background: rgba(0, 0, 0, 0.7);
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     color: rgba(255, 255, 255, 0.8);
     cursor: pointer;
     transition: all 0.15s;
@@ -886,7 +879,6 @@
     pointer-events: none;
   }
 
-  /* Centered mode button (on hover) */
   .mode-center {
     position: absolute;
     top: 50%;
@@ -898,7 +890,7 @@
     padding: 8px 14px;
     background: rgba(0, 0, 0, 0.8);
     border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: white;
     font-size: 11px;
     font-weight: 500;
@@ -936,7 +928,6 @@
     color: #1a1a1a;
   }
 
-  /* Open item button (grid view) - top-right corner */
   .card-open-btn {
     position: absolute;
     top: 6px;
@@ -948,7 +939,7 @@
     justify-content: center;
     background: rgba(0, 0, 0, 0.7);
     border: none;
-    border-radius: 5px;
+    border-radius: var(--radius-sm, 5px);
     color: rgba(255, 255, 255, 0.8);
     cursor: pointer;
     transition: all 0.15s;
@@ -959,7 +950,6 @@
     color: white;
   }
 
-  /* Card info */
   .card-info {
     padding: 8px 10px 10px;
     display: flex;
@@ -1019,7 +1009,7 @@
     );
     background-size: 200% 100%;
     animation: shimmer 1.5s infinite;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
   }
 
   @keyframes shimmer {

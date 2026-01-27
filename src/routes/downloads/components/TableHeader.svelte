@@ -2,18 +2,18 @@
   import Icon from '$lib/components/Icon.svelte';
   import Dropdown from '$lib/components/Dropdown.svelte';
   import type { SortType } from '$lib/stores/history';
-  import type { SortDirection } from '$lib/stores/downloadsState.svelte';
+  import type { SortDirection, ColumnKey } from '$lib/stores/downloadsState.svelte';
   import { t } from '$lib/i18n';
 
   interface Props {
     sortType: SortType;
     sortDirection: SortDirection;
+    visibleColumns: ColumnKey[];
     onSortChange: (type: SortType, direction: SortDirection) => void;
   }
 
-  let { sortType, sortDirection, onSortChange }: Props = $props();
+  let { sortType, sortDirection, visibleColumns, onSortChange }: Props = $props();
 
-  // Active popup state
   let openPopup = $state<SortType | null>(null);
   let anchorEl = $state<HTMLElement | null>(null);
 
@@ -23,21 +23,50 @@
     width: string;
     sortKey?: SortType;
     align?: 'left' | 'center' | 'right';
+    toggleable?: boolean;
   }
 
-  const columns: Column[] = [
+  const allColumns: Column[] = [
     { key: 'thumb', labelKey: 'downloads.sort.date', width: '56px', sortKey: 'date' },
-    { key: 'title', labelKey: 'downloads.table.title', width: '1fr', sortKey: 'name', align: 'left' },
-    { key: 'actions', labelKey: '', width: '60px' },
-    { key: 'format', labelKey: 'downloads.table.format', width: '50px', sortKey: 'format' },
-    { key: 'size', labelKey: 'downloads.table.size', width: '70px', sortKey: 'size' },
-    { key: 'duration', labelKey: 'downloads.table.duration', width: '60px', sortKey: 'duration' },
+    {
+      key: 'title',
+      labelKey: 'downloads.table.title',
+      width: '1fr',
+      sortKey: 'name',
+      align: 'left',
+    },
+    {
+      key: 'format',
+      labelKey: 'downloads.table.format',
+      width: '50px',
+      sortKey: 'format',
+      toggleable: true,
+    },
+    {
+      key: 'size',
+      labelKey: 'downloads.table.size',
+      width: '70px',
+      sortKey: 'size',
+      toggleable: true,
+    },
+    {
+      key: 'duration',
+      labelKey: 'downloads.table.duration',
+      width: '60px',
+      sortKey: 'duration',
+      toggleable: true,
+    },
   ];
+
+  let displayColumns = $derived(
+    allColumns.filter((col) => !col.toggleable || visibleColumns.includes(col.key as ColumnKey))
+  );
+
+  let gridTemplateColumns = $derived(displayColumns.map((c) => c.width).join(' '));
 
   function handleColumnClick(e: MouseEvent, column: Column) {
     if (!column.sortKey) return;
-    
-    // Toggle popup or open new one
+
     if (openPopup === column.sortKey) {
       openPopup = null;
       anchorEl = null;
@@ -66,16 +95,23 @@
   }
 </script>
 
-<div class="table-header" role="row">
-  {#each columns as column}
+<div class="table-header" role="row" style="grid-template-columns: {gridTemplateColumns};">
+  {#each displayColumns as column}
     {#if column.sortKey}
       <button
         class="header-cell sortable"
         class:active={sortType === column.sortKey}
         class:open={openPopup === column.sortKey}
-        style="width: {column.width}; min-width: {column.width}; justify-content: {column.align === 'left' ? 'flex-start' : 'center'};"
+        style="width: {column.width}; min-width: {column.width}; justify-content: {column.align ===
+        'left'
+          ? 'flex-start'
+          : 'center'};"
         role="columnheader"
-        aria-sort={sortType === column.sortKey ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+        aria-sort={sortType === column.sortKey
+          ? sortDirection === 'asc'
+            ? 'ascending'
+            : 'descending'
+          : 'none'}
         aria-haspopup="menu"
         aria-expanded={openPopup === column.sortKey}
         onclick={(e) => handleColumnClick(e, column)}
@@ -101,9 +137,8 @@
   {/each}
 </div>
 
-<!-- Sort Popup -->
 <Dropdown open={openPopup !== null} {anchorEl} onclose={closePopup}>
-  <button 
+  <button
     class="sort-option"
     class:selected={sortType === openPopup && sortDirection === 'asc'}
     role="menuitem"
@@ -115,7 +150,7 @@
       <Icon name="check" size={14} />
     {/if}
   </button>
-  <button 
+  <button
     class="sort-option"
     class:selected={sortType === openPopup && sortDirection === 'desc'}
     role="menuitem"
@@ -132,7 +167,6 @@
 <style>
   .table-header {
     display: grid;
-    grid-template-columns: 56px 1fr 60px 50px 70px 60px;
     gap: 12px;
     align-items: center;
     padding: 8px 16px;
@@ -145,7 +179,7 @@
     align-items: center;
     justify-content: center;
     gap: 4px;
-    font-size: 11px;
+    font-size: var(--text-xs, 11px);
     font-weight: 600;
     color: var(--text-tertiary, rgba(255, 255, 255, 0.5));
     text-transform: uppercase;
@@ -159,7 +193,7 @@
     background: transparent;
     border: none;
     padding: 4px 8px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     transition: all 0.15s ease;
   }
 
@@ -184,7 +218,6 @@
     white-space: nowrap;
   }
 
-  /* Sort option buttons (rendered inside Dropdown) */
   :global(.dropdown-menu) .sort-option {
     display: flex;
     align-items: center;
@@ -193,9 +226,9 @@
     padding: 8px 12px;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: var(--text-secondary, rgba(255, 255, 255, 0.8));
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     cursor: pointer;
     transition: all 0.12s;
     text-align: left;
@@ -216,17 +249,5 @@
 
   :global(.dropdown-menu) .sort-option.selected:hover {
     background: var(--accent-alpha, rgba(99, 102, 241, 0.15));
-  }
-
-  @media (max-width: 700px) {
-    .table-header {
-      grid-template-columns: 48px 1fr auto;
-    }
-
-    .header-cell:nth-child(4),
-    .header-cell:nth-child(5),
-    .header-cell:nth-child(6) {
-      display: none;
-    }
   }
 </style>

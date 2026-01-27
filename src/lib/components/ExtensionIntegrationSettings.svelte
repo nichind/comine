@@ -235,11 +235,9 @@
 
     <SettingItem
       title="Cookies received"
-      description={
-        cookieReceipts.length
-          ? `${cookieReceipts[0].count} cookie(s) from ${cookieReceipts[0].domain} · ${formatWhen(cookieReceipts[0].receivedAt)}`
-          : 'No cookies received from extension yet'
-      }
+      description={cookieReceipts.length
+        ? `${cookieReceipts[0].count} cookie(s) from ${cookieReceipts[0].domain} · ${formatWhen(cookieReceipts[0].receivedAt)}`
+        : 'No cookies received from extension yet'}
       icon="lock"
       highlight={searchQuery}
     >
@@ -249,7 +247,10 @@
         disabled={!cookieReceipts.length}
         onclick={() => {
           const text = cookieReceipts
-            .map((e) => `${e.domain} (${e.count})${e.sourceUrl ? `\n${e.sourceUrl}` : ''} · ${formatWhen(e.receivedAt)}`)
+            .map(
+              (e) =>
+                `${e.domain} (${e.count})${e.sourceUrl ? `\n${e.sourceUrl}` : ''} · ${formatWhen(e.receivedAt)}`
+            )
             .join('\n\n');
           if (text) {
             navigator.clipboard.writeText(text).then(
@@ -379,7 +380,7 @@
     padding: 12px 16px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     cursor: pointer;
     transition: all 0.15s;
     text-align: left;
@@ -411,7 +412,7 @@
   .install-steps {
     padding: 12px 16px;
     background: rgba(255, 255, 255, 0.03);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
   }
 
   .install-steps h4 {

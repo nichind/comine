@@ -92,7 +92,7 @@
         if (data.history && Array.isArray(data.history)) {
           const currentItems = $history.items;
           const currentIds = new Set(currentItems.map((c) => c.id));
-          
+
           const newItems = (data.history as HistoryItem[]).filter(
             (item) => item.id && !currentIds.has(item.id)
           );
@@ -100,7 +100,7 @@
           if (newItems.length > 0) {
             await history.restore(newItems);
           }
-          
+
           if (newItems.length > 0) {
             toast.success($t('settings.importCount', { count: newItems.length }));
           } else {
@@ -109,15 +109,10 @@
         }
 
         if (data.settings) {
-          // Merge settings safely
           const importedSettings = data.settings;
           const newSettings = { ...$settings, ...importedSettings };
-          
-          // Validate critical fields before applying
-          if (
-            newSettings.downloadPath &&
-            typeof newSettings.downloadPath === 'string'
-          ) {
+
+          if (newSettings.downloadPath && typeof newSettings.downloadPath === 'string') {
             updateSetting('downloadPath', newSettings.downloadPath);
           }
         }
@@ -152,7 +147,6 @@
   }
 </script>
 
-<!-- Reset Settings -->
 <SettingItem
   title={$t('settings.data.resetSettings')}
   description={$t('settings.data.resetSettingsDescription')}
@@ -165,7 +159,6 @@
   </button>
 </SettingItem>
 
-<!-- Clear History -->
 <SettingItem
   title={$t('settings.data.clearHistory')}
   description={$t('settings.data.clearHistoryDescription')}
@@ -178,7 +171,6 @@
   </button>
 </SettingItem>
 
-<!-- Clear Cache -->
 {#if onDesktop}
   <SettingItem
     title={$t('settings.data.clearCache')}
@@ -197,7 +189,6 @@
   </SettingItem>
 {/if}
 
-<!-- Export History -->
 <SettingItem
   title={$t('settings.data.exportHistory')}
   description={$t('settings.data.exportHistoryDescription')}
@@ -210,7 +201,6 @@
   </button>
 </SettingItem>
 
-<!-- Import History -->
 <SettingItem
   title={$t('settings.data.importHistory')}
   description={$t('settings.data.importHistoryDescription')}
@@ -223,7 +213,6 @@
   </button>
 </SettingItem>
 
-<!-- Import Message -->
 {#if importMessage}
   <p
     class="import-message"
@@ -234,7 +223,6 @@
   </p>
 {/if}
 
-<!-- Reset Settings Modal -->
 <Modal bind:open={showResetModal} title={$t('settings.data.resetSettings')}>
   <p>{$t('settings.data.resetSettingsConfirm')}</p>
 
@@ -248,7 +236,6 @@
   {/snippet}
 </Modal>
 
-<!-- Clear History Modal -->
 <Modal bind:open={showClearHistoryModal} title={$t('settings.data.clearHistory')}>
   <p>{$t('settings.data.clearHistoryConfirm')}</p>
 
@@ -268,11 +255,11 @@
     align-items: center;
     gap: 8px;
     padding: 8px 16px;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.05);
     color: white;
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
@@ -299,8 +286,8 @@
 
   .import-message {
     padding: 10px;
-    border-radius: 8px;
-    font-size: 13px;
+    border-radius: var(--radius, 8px);
+    font-size: var(--text-base, 13px);
     background: rgba(255, 255, 255, 0.05);
     margin-top: 10px;
   }
@@ -317,8 +304,8 @@
 
   .modal-btn {
     padding: 8px 16px;
-    border-radius: 8px;
-    font-size: 13px;
+    border-radius: var(--radius, 8px);
+    font-size: var(--text-base, 13px);
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;

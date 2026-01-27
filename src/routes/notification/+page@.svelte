@@ -59,7 +59,6 @@
   let rgbAnimationFrame: number | null = null;
   let lastRgbUpdate = 0;
 
-  // Thumbnail theming
   let thumbnailTheming = $state(false);
   let thumbnailColor = $state<RGB | null>(null);
   let thumbnailColorStyle = $derived(
@@ -99,7 +98,6 @@
   let notificationDuration = $state(12000);
   let showProgress = $state(true);
 
-  // Progress tracking state
   type DownloadState = 'idle' | 'downloading' | 'processing' | 'completed' | 'failed';
   let downloadState = $state<DownloadState>('idle');
   let downloadProgress = $state(0);
@@ -110,7 +108,6 @@
   let unlistenProgress: UnlistenFn | null = null;
   let unlistenStatus: UnlistenFn | null = null;
 
-  // Disk space warning
   let lowDiskSpace = $state(false);
   let availableSpaceGb = $state(0);
 
@@ -243,7 +240,6 @@
         downloadState = 'failed';
         downloadError = error || 'Download failed';
       } else if (status === 'cancelled') {
-        // Item was removed from queue, close notification
         closeNotification();
       }
     });
@@ -285,7 +281,6 @@
   }
 
   function scheduleAutoClose() {
-    // Don't auto-close if download is in progress
     if (downloadState !== 'idle') return;
 
     if (autoCloseTimer) clearTimeout(autoCloseTimer);
@@ -362,15 +357,14 @@
           .catch(() => {});
       }
 
-      // Check disk space
       if (downloadPath) {
         try {
-          const diskInfo = await invoke<{ available_gb: number }>('get_disk_space', {
+          const diskInfo = await invoke<{ availableGb: number }>('get_disk_space', {
             path: downloadPath,
           });
-          if (diskInfo && diskInfo.available_gb < 2) {
+          if (diskInfo && diskInfo.availableGb < 2) {
             lowDiskSpace = true;
-            availableSpaceGb = Math.round(diskInfo.available_gb * 10) / 10;
+            availableSpaceGb = Math.round(diskInfo.availableGb * 10) / 10;
           }
         } catch (e) {
           console.warn('Could not check disk space:', e);
@@ -385,7 +379,6 @@
   });
 </script>
 
-<!-- Fancy Background -->
 {#if fancyBackground}
   <div class="notification-background" style="--accent: {accentColor};">
     {#if backgroundType === 'animated' && backgroundVideo}
@@ -412,7 +405,6 @@
 {/if}
 
 {#if isCompact}
-  <!-- Compact single-row layout with icon buttons -->
   <div
     class="notification compact"
     class:fancy={fancyBackground}
@@ -425,7 +417,6 @@
       scheduleAutoClose();
     }}
   >
-    <!-- Corner dismiss X (always shown in compact mode) -->
     <button class="close-corner" onclick={closeNotification} aria-label="Close">
       <svg viewBox="0 0 24 24" fill="none" width="12" height="12">
         <path
@@ -465,7 +456,6 @@
 
     <div class="actions-compact">
       {#if downloadState === 'downloading' || downloadState === 'processing'}
-        <!-- Compact Progress View -->
         <div class="progress-compact" in:fade={{ duration: 200 }}>
           <div class="progress-ring" style="--progress: {downloadProgress}">
             <svg viewBox="0 0 36 36" width="28" height="28">
@@ -494,7 +484,6 @@
           </div>
         </div>
       {:else if downloadState === 'completed'}
-        <!-- Compact Completion View -->
         <div class="compact-completion" in:fade={{ duration: 200, delay: 100 }}>
           <button class="icon-btn open" onclick={handleOpenFile} title="Open">
             <Icon name="arrow_outward" size={16} />
@@ -504,7 +493,6 @@
           </button>
         </div>
       {:else if downloadState === 'failed'}
-        <!-- Compact Failed View -->
         <div class="icon-btn error" title="Failed" in:fade={{ duration: 200 }}>
           <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
             <path
@@ -518,7 +506,6 @@
       {:else}
         <div class="compact-default" out:fade={{ duration: 150 }}>
           {#if isChannel}
-            <!-- Channel: Single View Channel button -->
             <button
               class="icon-btn download channel"
               class:downloading={isDownloading}
@@ -552,7 +539,6 @@
               {/if}
             </button>
           {:else if isPlaylist}
-            <!-- Playlist: Single View Playlist button -->
             <button
               class="icon-btn download playlist"
               class:downloading={isDownloading}
@@ -586,7 +572,6 @@
               {/if}
             </button>
           {:else if isFile}
-            <!-- File: Single download button (no options) -->
             <button
               class="icon-btn download"
               class:downloading={isDownloading}
@@ -627,7 +612,6 @@
               {/if}
             </button>
           {:else if isVideoUrl}
-            <!-- YouTube/Bilibili/etc: Show Download and Track Builder buttons -->
             <button
               class="icon-btn download youtube"
               class:downloading={isDownloading}
@@ -676,7 +660,6 @@
               <Icon name="extensions" size={16} />
             </button>
           {:else}
-            <!-- Normal: Single download button -->
             <button
               class="icon-btn download"
               class:downloading={isDownloading}
@@ -722,7 +705,6 @@
     </div>
   </div>
 {:else}
-  <!-- Full notification layout -->
   <div
     class="notification"
     class:fancy={fancyBackground}
@@ -782,7 +764,6 @@
 
     <div class="actions">
       {#if downloadState === 'downloading' || downloadState === 'processing'}
-        <!-- Progress View -->
         <div class="progress-view" in:fade={{ duration: 200 }} out:fade={{ duration: 150 }}>
           <div class="progress-bar-container">
             <div class="progress-bar" style="width: {downloadProgress}%"></div>
@@ -809,7 +790,6 @@
           </div>
         </div>
       {:else if downloadState === 'completed'}
-        <!-- Completion View -->
         <div class="completion-actions" in:fade={{ duration: 200, delay: 100 }}>
           <button class="btn open" onclick={handleOpenFile}>
             <Icon name="arrow_outward" size={14} />
@@ -821,7 +801,6 @@
           </button>
         </div>
       {:else if downloadState === 'failed'}
-        <!-- Failed View -->
         <div class="error-actions" in:fade={{ duration: 200 }}>
           <div class="error-view">
             <span class="error-icon">✕</span>
@@ -830,17 +809,14 @@
           <button class="btn dismiss" onclick={closeNotification}>Close</button>
         </div>
       {:else}
-        <!-- Low disk space warning -->
         {#if lowDiskSpace}
           <div class="disk-warning" in:fade={{ duration: 200 }}>
             <Icon name="warning" size={12} />
             <span>Low disk space: {availableSpaceGb} GB left</span>
           </div>
         {/if}
-        <!-- Default buttons -->
         <div class="default-actions" out:fade={{ duration: 150 }}>
           {#if isChannel}
-            <!-- Channel: Single View Channel button -->
             <button
               class="btn download channel"
               class:downloading={isDownloading}
@@ -876,7 +852,6 @@
               {/if}
             </button>
           {:else if isPlaylist}
-            <!-- Playlist: Single View Playlist button -->
             <button
               class="btn download playlist"
               class:downloading={isDownloading}
@@ -912,7 +887,6 @@
               {/if}
             </button>
           {:else if isFile}
-            <!-- File: Download button only (no options) -->
             <button
               class="btn download"
               class:downloading={isDownloading}
@@ -942,7 +916,6 @@
               <button class="btn dismiss" onclick={closeNotification}>{dismissLabel}</button>
             {/if}
           {:else if isVideoUrl}
-            <!-- YouTube/Bilibili/etc: Show Download and Track Builder buttons -->
             <button
               class="btn download"
               class:downloading={isDownloading}
@@ -976,7 +949,6 @@
               Quality
             </button>
           {:else}
-            <!-- Normal: Download button and optional dismiss button -->
             <button
               class="btn download"
               class:downloading={isDownloading}
@@ -1029,14 +1001,13 @@
     padding: 0;
   }
 
-  /* Fancy background container */
   .notification-background {
     position: fixed;
     inset: 0;
     z-index: 0;
     overflow: hidden;
     pointer-events: none;
-    border-radius: 12px;
+    border-radius: var(--radius-lg, 12px);
   }
 
   .bg-video {
@@ -1077,7 +1048,7 @@
     gap: 10px;
     position: relative;
     z-index: 1;
-    border-radius: 12px;
+    border-radius: var(--radius-lg, 12px);
     height: 100vh;
     box-sizing: border-box;
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1134,10 +1105,10 @@
     background: none;
     border: none;
     color: rgba(255, 255, 255, 0.4);
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
     cursor: pointer;
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     z-index: 2;
   }
   .close-x:hover {
@@ -1145,7 +1116,6 @@
     background: rgba(255, 255, 255, 0.1);
   }
 
-  /* Corner dismiss for compact mode */
   .close-corner {
     position: absolute;
     top: 2px;
@@ -1155,7 +1125,7 @@
     color: rgba(255, 255, 255, 0.5);
     cursor: pointer;
     padding: 2px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     z-index: 10;
     display: flex;
     align-items: center;
@@ -1181,7 +1151,7 @@
   .thumb {
     width: 40px;
     height: 40px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     object-fit: cover;
     flex-shrink: 0;
     position: relative;
@@ -1214,7 +1184,7 @@
   }
 
   .title {
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
@@ -1245,7 +1215,7 @@
   }
 
   .subtitle {
-    font-size: 11px;
+    font-size: var(--text-xs, 11px);
     color: rgba(255, 255, 255, 0.5);
     white-space: nowrap;
     overflow: hidden;
@@ -1293,8 +1263,8 @@
     flex: 1;
     padding: 6px 12px;
     border: none;
-    border-radius: 6px;
-    font-size: 12px;
+    border-radius: var(--radius-sm, 6px);
+    font-size: var(--text-sm, 12px);
     font-weight: 500;
     cursor: pointer;
     font-family: inherit;
@@ -1365,7 +1335,6 @@
     }
   }
 
-  /* Progress view styles */
   .progress-view {
     flex-direction: column;
     justify-content: center;
@@ -1420,7 +1389,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 11px;
+    font-size: var(--text-xs, 11px);
   }
 
   .progress-percent {
@@ -1446,7 +1415,6 @@
     opacity: 0.4;
   }
 
-  /* Completion buttons */
   .btn.open {
     flex: 1;
     background: var(--accent, #6366f1);
@@ -1469,7 +1437,6 @@
     color: white;
   }
 
-  /* Error view styles */
   .error-view {
     flex: 1;
     display: flex;
@@ -1477,13 +1444,12 @@
     gap: 8px;
     padding: 6px 12px;
     background: rgba(239, 68, 68, 0.15);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: #ef4444;
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     font-weight: 500;
   }
 
-  /* Disk space warning */
   .disk-warning {
     display: flex;
     align-items: center;
@@ -1491,9 +1457,9 @@
     padding: 6px 10px;
     margin-bottom: 8px;
     background: rgba(245, 158, 11, 0.15);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: #fbbf24;
-    font-size: 11px;
+    font-size: var(--text-xs, 11px);
     font-weight: 500;
   }
 
@@ -1508,7 +1474,6 @@
     white-space: nowrap;
   }
 
-  /* Compact mode styles */
   .notification.compact {
     flex-direction: row;
     align-items: center;
@@ -1521,7 +1486,7 @@
   .thumb-compact {
     width: 32px;
     height: 32px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     object-fit: cover;
     flex-shrink: 0;
     position: relative;
@@ -1593,7 +1558,7 @@
     width: 32px;
     height: 32px;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -1669,7 +1634,6 @@
     background: #dc2626;
   }
 
-  /* Compact progress styles */
   .progress-compact {
     display: flex;
     align-items: center;
@@ -1697,7 +1661,6 @@
     color: rgba(255, 255, 255, 0.9);
   }
 
-  /* Compact completion buttons */
   .icon-btn.open {
     background: var(--accent, #6366f1);
     color: white;

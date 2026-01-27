@@ -74,7 +74,7 @@
   .collapsible-block {
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
+    border-radius: var(--radius-lg, 12px);
     overflow: hidden;
     transition: all 0.2s;
   }
@@ -131,7 +131,7 @@
     width: 36px;
     height: 36px;
     background: var(--accent-alpha, rgba(99, 102, 241, 0.15));
-    border-radius: 10px;
+    border-radius: var(--radius, 10px);
     color: var(--accent, #6366f1);
     flex-shrink: 0;
   }
@@ -150,7 +150,7 @@
   }
 
   .block-title {
-    font-size: 15px;
+    font-size: var(--text-md, 15px);
     font-weight: 600;
     color: rgba(255, 255, 255, 0.95);
     margin: 0;
@@ -158,9 +158,9 @@
 
   .badge {
     padding: 3px 8px;
-    font-size: 11px;
+    font-size: var(--text-xs, 11px);
     font-weight: 600;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     text-transform: uppercase;
     letter-spacing: 0.02em;
   }
@@ -186,7 +186,7 @@
   }
 
   .block-description {
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     color: rgba(255, 255, 255, 0.5);
     margin: 0;
     line-height: 1.4;

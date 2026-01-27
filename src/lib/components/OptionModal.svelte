@@ -103,7 +103,7 @@
   .modal {
     background: rgb(30, 32, 44);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
+    border-radius: var(--radius-lg, 12px);
     min-width: 320px;
     max-width: 90vw;
     animation: slideIn 0.2s ease;
@@ -141,7 +141,7 @@
     cursor: pointer;
     padding: 4px;
     display: flex;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     transition: all 0.15s;
   }
 
@@ -173,7 +173,7 @@
     font-weight: 500;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: rgba(255, 255, 255, 0.8);
     cursor: pointer;
     transition: all 0.15s;

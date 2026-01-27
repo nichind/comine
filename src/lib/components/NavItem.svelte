@@ -13,8 +13,15 @@
     register?: (node: HTMLElement) => void | { destroy?: () => void };
   }
 
-  let { href, icon, title = '', active = false, badge, external = false, register }: Props =
-    $props();
+  let {
+    href,
+    icon,
+    title = '',
+    active = false,
+    badge,
+    external = false,
+    register,
+  }: Props = $props();
 
   function registerAction(node: HTMLElement) {
     const result = register?.(node);

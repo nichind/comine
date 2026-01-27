@@ -36,19 +36,17 @@
         </button>
       {/if}
     </div>
-  {:else}
-    {#if onResetSection}
-      <div class="block-actions">
-        <button
-          class="section-reset-btn"
-          onclick={onResetSection}
-          use:tooltip={$t('settings.resetSectionTooltip')}
-        >
-          <Icon name="undo" size={14} />
-          <span class="reset-text">{$t('settings.resetSection')}</span>
-        </button>
-      </div>
-    {/if}
+  {:else if onResetSection}
+    <div class="block-actions">
+      <button
+        class="section-reset-btn"
+        onclick={onResetSection}
+        use:tooltip={$t('settings.resetSectionTooltip')}
+      >
+        <Icon name="undo" size={14} />
+        <span class="reset-text">{$t('settings.resetSection')}</span>
+      </button>
+    </div>
   {/if}
 
   <div class="block-content">
@@ -103,7 +101,7 @@
     align-items: center;
     gap: 6px;
     padding: 4px 8px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     background: transparent;
     border: 1px solid transparent;
     color: rgba(255, 255, 255, 0.4);

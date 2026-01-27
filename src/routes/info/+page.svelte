@@ -53,7 +53,6 @@
     return undefined;
   });
 
-  // Build-time constants defined in vite.config.js
   const APP_VERSION = __APP_VERSION__;
   const GIT_BRANCH = __GIT_BRANCH__;
   const COMMIT_HASH = __COMMIT_HASH__;
@@ -93,7 +92,6 @@
     <Divider my={20} />
 
     <div class="info-content">
-      <!-- Version & Build -->
       <section class="info-section">
         <div class="setting-item">
           <span class="setting-label">{$t('info.version')}</span>
@@ -119,7 +117,6 @@
         <p class="setting-description">{$t('app.description')}</p>
       </section>
 
-      <!-- Links -->
       <section class="info-section">
         <h2 class="section-title">{$t('info.links')}</h2>
         <button class="setting-item clickable" onclick={() => openLink('https://comine.app')}>
@@ -153,7 +150,6 @@
         </button>
       </section>
 
-      <!-- Developer -->
       <section class="info-section">
         <h2 class="section-title">{$t('info.developer')}</h2>
         <div class="dev-row">
@@ -184,7 +180,6 @@
         </div>
       </section>
 
-      <!-- Licenses -->
       <section class="info-section">
         <h2 class="section-title">{$t('info.legal')}</h2>
         <button
@@ -216,7 +211,7 @@
 
   .subtitle {
     color: rgba(255, 255, 255, 0.6);
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
   }
 
   .info-content {
@@ -251,7 +246,7 @@
 
   button.setting-item.clickable {
     cursor: pointer;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     margin-left: -8px;
     padding: 8px;
     padding-right: 12px;
@@ -264,18 +259,18 @@
   }
 
   .setting-label {
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
     color: rgba(255, 255, 255, 0.85);
   }
 
   .setting-value {
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
     color: rgba(255, 255, 255, 0.5);
   }
 
   .setting-value.mono {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
   }
 
   .setting-value.link {
@@ -283,7 +278,7 @@
   }
 
   .setting-description {
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     color: rgba(255, 255, 255, 0.5);
     padding-left: 4px;
     margin: 4px 0 0 0;
@@ -296,9 +291,9 @@
     padding: 4px 10px;
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     color: rgba(255, 255, 255, 0.7);
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     font-family: 'JetBrains Mono', monospace;
     cursor: pointer;
     transition: all 0.15s;
@@ -313,7 +308,6 @@
     opacity: 0.5;
   }
 
-  /* Developer row */
   .dev-row {
     display: flex;
     align-items: center;
@@ -381,7 +375,7 @@
     justify-content: center;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.5);
     cursor: pointer;
     transition: all 0.15s;

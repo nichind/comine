@@ -16,7 +16,7 @@
     step = 1,
     suffix = '',
     disabled = false,
-    onchange
+    onchange,
   }: Props = $props();
 
   function handleInput(e: Event) {

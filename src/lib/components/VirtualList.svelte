@@ -1,6 +1,7 @@
 <script lang="ts" generics="T">
-  import { onMount, onDestroy, tick } from 'svelte';
+  import { createVirtualizer } from '@tanstack/svelte-virtual';
   import type { Snippet } from 'svelte';
+  import { preserveScroll } from '$lib/actions/preserveScroll';
 
   interface Props {
     items: T[];
@@ -9,12 +10,15 @@
     containerClass?: string;
     onscroll?: () => void;
     getKey?: (item: T, index: number) => string | number;
+    getItemSize?: (index: number, item: T) => number | undefined;
+    measureItems?: boolean;
     children: Snippet<[T, number]>;
     header?: Snippet;
     footer?: Snippet;
     useFadeMask?: boolean;
     useCustomScrollbar?: boolean;
-    getItemSize?: (index: number, item: T) => number | undefined;
+    preserveScrollKey?: string;
+    preserveScrollThrottleMs?: number;
   }
 
   let {
@@ -24,330 +28,154 @@
     containerClass = '',
     onscroll,
     getKey,
+    getItemSize,
+    measureItems = false,
     children,
     header,
     footer,
     useFadeMask = false,
     useCustomScrollbar = false,
-    getItemSize,
+    preserveScrollKey,
+    preserveScrollThrottleMs,
   }: Props = $props();
 
-  let container: HTMLElement | null = $state(null);
-  let innerContainer: HTMLElement | null = $state(null);
-  let scrollTop = $state(0);
-  let containerHeight = $state(0);
-  let renderTrigger = $state(0);
-
-  const heightCache = new Map<string | number, number>();
-  const MAX_HEIGHT_CACHE_SIZE = 200;
-  let lastItemCount = 0;
-
-  let prefixSums: number[] = [];
-  let prefixSumsValid = false;
-  let dirtyRangeStart = 0;
-
-  function getItemKey(item: T, index: number): string | number {
-    if (getKey) return getKey(item, index);
-    if (item && typeof item === 'object' && 'id' in item) {
-      return (item as { id: string | number }).id;
-    }
-    return index;
-  }
-
-  function getItemHeight(index: number): number {
-    if (index < 0 || index >= items.length) return estimatedItemHeight;
-    
-    if (getItemSize) {
-        const explicit = getItemSize(index, items[index]);
-        if (explicit !== undefined) return explicit;
+  function measure(node: Element, enabled: boolean) {
+    if (enabled) {
+      $virtualizer.measureElement(node as any);
     }
 
-    const key = getItemKey(items[index], index);
-    return heightCache.get(key) ?? estimatedItemHeight;
+    return {
+      update(nextEnabled: boolean) {
+        if (nextEnabled) {
+          $virtualizer.measureElement(node as any);
+        }
+      },
+    };
   }
 
-  function rebuildPrefixSums(): void {
-    const n = items.length;
-    
-    if (!prefixSums.length || prefixSums.length !== n + 1) {
-      prefixSums = new Array(n + 1);
-      prefixSums[0] = 0;
-      for (let i = 0; i < n; i++) {
-        prefixSums[i + 1] = prefixSums[i] + getItemHeight(i);
+  let scrollElement: HTMLDivElement | null = $state(null);
+
+  const virtualizer = createVirtualizer({
+    get count() {
+      return items.length;
+    },
+    getScrollElement: () => scrollElement,
+    estimateSize: (index: number) => {
+      if (getItemSize && items[index]) {
+        const size = getItemSize(index, items[index]);
+        if (size !== undefined) return size;
       }
-    } else {
-      for (let i = dirtyRangeStart; i < n; i++) {
-        prefixSums[i + 1] = prefixSums[i] + getItemHeight(i);
+      return estimatedItemHeight;
+    },
+    get overscan() {
+      return overscan;
+    },
+    getItemKey: (index: number) => {
+      if (getKey && items[index]) {
+        return getKey(items[index], index);
       }
-    }
-    
-    prefixSumsValid = true;
-    dirtyRangeStart = n;
-  }
+      return index;
+    },
+  });
 
-  function ensurePrefixSums(): void {
-    if (!prefixSumsValid || prefixSums.length !== items.length + 1) {
-      rebuildPrefixSums();
-    }
-  }
+  let prevHeight = $state(0);
+  let prevCount = $state(0);
 
-  function getOffsetForIndex(index: number): number {
-    ensurePrefixSums();
-    return prefixSums[Math.min(index, items.length)] ?? 0;
-  }
+  $effect(() => {
+    const count = items.length;
+    const height = estimatedItemHeight;
+    const el = scrollElement;
 
-  function getTotalHeight(): number {
-    ensurePrefixSums();
-    return prefixSums[items.length] ?? 0;
-  }
+    if (el && count > 0) {
+      const heightChanged = height !== prevHeight;
+      const countChanged = count !== prevCount;
 
-  function findIndexByOffset(targetOffset: number): number {
-    ensurePrefixSums();
-    let lo = 0, hi = items.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (prefixSums[mid + 1] <= targetOffset) {
-        lo = mid + 1;
-      } else {
-        hi = mid;
+      $virtualizer.setOptions({
+        getScrollElement: () => el,
+        count,
+        estimateSize: (index: number) => {
+          if (getItemSize && items[index]) {
+            const size = getItemSize(index, items[index]);
+            if (size !== undefined) return size;
+          }
+          return height;
+        },
+        getItemKey: (index: number) => {
+          if (getKey && items[index]) {
+            return getKey(items[index], index);
+          }
+          return index;
+        },
+      });
+
+      if (heightChanged) {
+        prevHeight = height;
+        $virtualizer.measure();
       }
+      prevCount = count;
     }
-    return lo;
+  });
+
+  function handleScroll() {
+    onscroll?.();
   }
-
-  function calculateVisibleRange(): { start: number; end: number } {
-    const totalItems = items.length;
-    if (totalItems === 0 || containerHeight === 0) {
-      return { start: 0, end: 0 };
-    }
-
-    ensurePrefixSums();
-
-    let start = findIndexByOffset(scrollTop);
-    start = Math.max(0, start - overscan);
-
-    const endOffset = scrollTop + containerHeight + overscan * estimatedItemHeight;
-    let end = findIndexByOffset(endOffset);
-    end = Math.min(totalItems, end + overscan + 1);
-
-    return { start, end };
-  }
-
-  function invalidatePrefixSums(fromIndex: number = 0): void {
-    prefixSumsValid = false;
-    dirtyRangeStart = Math.min(dirtyRangeStart, fromIndex);
-  }
-
-  let visibleRange = $derived.by(() => {
-    void renderTrigger;
-    void items.length;
-    void scrollTop;
-    void containerHeight;
-    return calculateVisibleRange();
-  });
-
-  let visibleItems = $derived.by(() => {
-    const { start, end } = visibleRange;
-    return items.slice(start, end).map((item, i) => ({
-      item,
-      index: start + i,
-      key: getItemKey(item, start + i),
-    }));
-  });
-
-  let totalHeight = $derived.by(() => {
-    void renderTrigger;
-    void items.length;
-    return getTotalHeight();
-  });
-
-  let topPadding = $derived.by(() => {
-    void renderTrigger;
-    return getOffsetForIndex(visibleRange.start);
-  });
 
   const MASK_SIZE = 32;
   let topMaskHeight = $state(0);
   let bottomMaskHeight = $state(0);
 
   function updateMaskStyle() {
-    if (!useFadeMask || !container) {
+    if (!useFadeMask || !scrollElement) {
       topMaskHeight = 0;
       bottomMaskHeight = 0;
       return;
     }
-    const { scrollTop: st, scrollHeight, clientHeight } = container;
+    const { scrollTop: st, scrollHeight, clientHeight } = scrollElement;
     const maxScroll = scrollHeight - clientHeight;
-    
+
     topMaskHeight = st > 0 ? Math.min(st, MASK_SIZE) : 0;
-    bottomMaskHeight = (maxScroll > 0 && st < maxScroll) ? Math.min(maxScroll - st, MASK_SIZE) : 0;
-  }
-
-  function handleScroll() {
-    if (container) {
-      scrollTop = container.scrollTop;
-      if (useFadeMask) updateMaskStyle();
-    }
-    onscroll?.();
-  }
-
-  let lastMeasuredWidth = 0;
-
-  function measureItems() {
-    if (!innerContainer || !container) return;
-    
-    if (getItemSize && visibleItems.length > 0) {
-        let allExplicit = true;
-        for (const { index, item } of visibleItems) {
-            if (getItemSize(index, item) === undefined) {
-                allExplicit = false;
-                break;
-            }
-        }
-        if (allExplicit) return;
-    }
-
-    const currentWidth = container.clientWidth;
-    const isWidthSame = Math.abs(currentWidth - lastMeasuredWidth) < 1;
-    
-    if (!isWidthSame) {
-        lastMeasuredWidth = currentWidth;
-    }
-
-    const itemElements = innerContainer.querySelectorAll('[data-virtual-key]');
-    let hasChanges = false;
-
-    itemElements.forEach((el) => {
-      const key = el.getAttribute('data-virtual-key');
-      if (key === null) return;
-
-      if (isWidthSame && heightCache.has(key)) return;
-      
-      const rect = el.getBoundingClientRect();
-      const height = rect.height;
-
-      if (height > 0) {
-        const existingHeight = heightCache.get(key);
-        if (existingHeight === undefined || Math.abs(existingHeight - height) > 1) {
-          heightCache.set(key, height);
-          hasChanges = true;
-        }
-      }
-    });
-
-    if (hasChanges) {
-      invalidatePrefixSums();
-      renderTrigger++;
-    }
-  }
-
-  let measureScheduled = false;
-  function scheduleMeasurement() {
-    if (measureScheduled) return;
-    measureScheduled = true;
-    requestAnimationFrame(() => {
-      measureScheduled = false;
-      measureItems();
-    });
+    bottomMaskHeight = maxScroll > 0 && st < maxScroll ? Math.min(maxScroll - st, MASK_SIZE) : 0;
   }
 
   $effect(() => {
-    if (visibleItems.length > 0) {
-      tick().then(scheduleMeasurement);
+    if (scrollElement && useFadeMask) {
+      updateMaskStyle();
     }
   });
 
-  $effect(() => {
-    const currentCount = items.length;
-    invalidatePrefixSums();
-    
-    if (currentCount === 0) {
-      heightCache.clear();
-    } else if (
-      heightCache.size > MAX_HEIGHT_CACHE_SIZE ||
-      Math.abs(currentCount - lastItemCount) > 50
-    ) {
-      const currentKeys = new Set<string | number>();
-      for (let i = 0; i < items.length; i++) {
-        currentKeys.add(getItemKey(items[i], i));
-      }
-      for (const key of heightCache.keys()) {
-        if (!currentKeys.has(key)) {
-          heightCache.delete(key);
-        }
-      }
-    }
-    lastItemCount = currentCount;
-  });
-
-  let resizeObserver: ResizeObserver | null = null;
-  let lastContainerWidth = 0;
-
-  onMount(() => {
-    if (container) {
-      containerHeight = container.clientHeight;
-      lastContainerWidth = container.clientWidth;
-
-      resizeObserver = new ResizeObserver((entries) => {
-        let widthChanged = false;
-        
-        for (const entry of entries) {
-          if (entry.target === container) {
-            const h = entry.contentRect.height;
-            
-            if (h > containerHeight || Math.abs(h - containerHeight) > 5) {
-                containerHeight = h;
-            }
-            
-            if (Math.abs(entry.contentRect.width - lastContainerWidth) > 1) {
-              lastContainerWidth = entry.contentRect.width;
-              widthChanged = true;
-            }
-
-            if (useFadeMask) requestAnimationFrame(updateMaskStyle);
-          }
-        }
-        
-        if (widthChanged) {
-          scheduleMeasurement();
-        }
-      });
-      resizeObserver.observe(container);
-    }
-    
-    if (useFadeMask) {
-      setTimeout(updateMaskStyle, 50);
-    }
-  });
-
-  onDestroy(() => {
-    resizeObserver?.disconnect();
-  });
+  function onScrollHandler() {
+    if (useFadeMask) updateMaskStyle();
+    handleScroll();
+  }
 
   export function scrollToTop() {
-    if (container) {
-      container.scrollTop = 0;
-    }
+    $virtualizer.scrollToIndex(0, { align: 'start' });
   }
 
   export function scrollToBottom() {
-    if (container) {
-      container.scrollTop = container.scrollHeight;
-    }
+    $virtualizer.scrollToIndex(items.length - 1, { align: 'end' });
+  }
+
+  export function scrollToIndex(index: number, options?: { align?: 'start' | 'center' | 'end' }) {
+    $virtualizer.scrollToIndex(index, options);
   }
 
   export function getScrollTop(): number {
-    return container?.scrollTop ?? 0;
+    return scrollElement?.scrollTop ?? 0;
   }
 
   export function setScrollTop(value: number) {
-    if (container) {
-      container.scrollTop = value;
+    if (scrollElement) {
+      scrollElement.scrollTop = value;
     }
   }
 
   export function refresh() {
-    renderTrigger++;
+    $virtualizer.measure();
+  }
+
+  export function invalidateHeights(_keys?: (string | number)[]) {
+    $virtualizer.measure();
   }
 </script>
 
@@ -358,27 +186,37 @@
     </div>
   {/if}
 
-  <div 
+  <div
     class="virtual-list-scroll"
-    bind:this={container} 
-    onscroll={handleScroll}
+    bind:this={scrollElement}
+    onscroll={onScrollHandler}
     class:custom-scrollbar={useCustomScrollbar}
     style="--mask-t: {topMaskHeight}px; --mask-b: {bottomMaskHeight}px;"
+    use:preserveScroll={preserveScrollKey
+      ? { key: preserveScrollKey, throttleMs: preserveScrollThrottleMs }
+      : undefined}
   >
     <div
       class="virtual-list-inner"
-      style="height: {totalHeight}px; padding-top: {topPadding}px;"
-      bind:this={innerContainer}
+      style="height: {$virtualizer.getTotalSize()}px; width: 100%; position: relative;"
     >
-      {#each visibleItems as { item, index, key } (key)}
-        <div class="virtual-list-item" data-virtual-key={key}>
-          {@render children(item, index)}
-        </div>
+      {#each $virtualizer.getVirtualItems() as row (row.key)}
+        {@const item = items[row.index]}
+        {#if item}
+          <div
+            class="virtual-list-item"
+            data-index={row.index}
+            style="position: absolute; top: 0; left: 0; width: 100%; transform: translateY({row.start}px);"
+            use:measure={measureItems}
+          >
+            {@render children(item, row.index)}
+          </div>
+        {/if}
       {/each}
     </div>
 
     {#if footer}
-      <div class="virtual-list-footer">
+      <div class="virtual-list-footer" style="position: relative;">
         {@render footer()}
       </div>
     {/if}
@@ -401,7 +239,7 @@
     overflow-x: hidden;
     position: relative;
     will-change: scroll-position;
-    
+
     mask-image: linear-gradient(
       to bottom,
       transparent 0px,
@@ -419,31 +257,38 @@
   }
 
   .virtual-list-scroll.custom-scrollbar {
-    padding-right: 6px;
-    margin-right: 4px;
+    padding-right: 2px;
+    margin-right: 0;
   }
 
   .virtual-list-header {
     flex: 0 0 auto;
     z-index: 10;
-    position: relative; 
+    position: relative;
   }
 
   .virtual-list-header.custom-scrollbar {
-    padding-right: 6px;
-    margin-right: 4px;
+    padding-right: 4px;
+    margin-right: 0;
   }
-
-  /* No explicit sticky needed for header in flex column layout */
 
   .virtual-list-inner {
     position: relative;
     box-sizing: border-box;
-    contain: strict;
   }
 
   .virtual-list-item {
     box-sizing: border-box;
-    contain: layout style;
+  }
+
+  .virtual-list-footer {
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 700px) {
+    .virtual-list-scroll.custom-scrollbar,
+    .virtual-list-header.custom-scrollbar {
+      padding-right: 0;
+    }
   }
 </style>

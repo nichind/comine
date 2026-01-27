@@ -1,12 +1,10 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
   import { t } from '$lib/i18n';
   import { tooltip } from '$lib/actions/tooltip';
   import { settings, type DownloadMode, getProxyConfig, getSettings } from '$lib/stores/settings';
   import ThumbnailGlow from './ThumbnailGlow.svelte';
   import { deps } from '$lib/stores/deps';
-  import { isAndroid, getPlaylistInfoOnAndroid } from '$lib/utils/android';
   import { formatDuration, getDisplayThumbnailUrl } from '$lib/utils/format';
   import Icon from './Icon.svelte';
   import Checkbox from './Checkbox.svelte';
@@ -17,13 +15,8 @@
     type MediaItemData,
     type MediaItemSettings,
   } from './MediaGrid.svelte';
-  import {
-    mediaCache,
-    convertBackendChannelInfo,
-    type ChannelInfo,
-    type ChannelEntry,
-  } from '$lib/stores/mediaCache';
-  import { viewStateCache, type PlaylistViewState } from '$lib/stores/viewState';
+  import { mediaCache, type ChannelInfo, type ChannelEntry } from '$lib/stores/mediaCache';
+  import { resolveUrl, convertProxyConfig } from '$lib/backend/mediaBackend';
   import { navigation } from '$lib/stores/navigation';
 
   export type { ChannelEntry };
@@ -171,7 +164,6 @@
   let destroyed = false;
   let thumbnailError = $state(false);
 
-  // If thumbnail src changes (e.g. normalization), don't keep a stale error state.
   let lastThumbnailSrc = $state<string | null>(null);
   $effect(() => {
     const next = displayThumbnail ?? null;
@@ -438,68 +430,46 @@
     useChannelFolder = $settings.usePlaylistFolders ?? true;
 
     try {
-      let rawInfo: any;
-
-      if (isAndroid()) {
-        const currentSettings = getSettings();
-        const playerClient = currentSettings.usePlayerClientForExtraction
-          ? currentSettings.youtubePlayerClient
-          : currentSettings.extractionPlayerClient || null;
-        rawInfo = await getPlaylistInfoOnAndroid(url, playerClient);
-        if (destroyed) return;
-      } else {
-        const currentSettings = getSettings();
-        rawInfo = await invoke<any>('get_playlist_info', {
-          url,
-          offset: 0,
-          limit: 200,
-          cookiesFromBrowser: cookiesFromBrowser || null,
-          customCookies: customCookies || null,
-          proxyConfig: getProxyConfig(),
-          youtubePlayerClient: currentSettings.usePlayerClientForExtraction
-            ? currentSettings.youtubePlayerClient
-            : null,
-        });
-        if (destroyed) return;
-
-        const allEntries = (rawInfo.entries ?? []) as any[];
-        rawInfo.entries = allEntries;
-        while (rawInfo.has_more && rawInfo.total_count > 0 && !destroyed) {
-          const currentOffset = allEntries.length;
-          const moreInfo = await invoke<any>('get_playlist_info', {
-            url,
-            offset: currentOffset,
-            limit: 200,
-            cookiesFromBrowser: cookiesFromBrowser || null,
-            customCookies: customCookies || null,
-            proxyConfig: getProxyConfig(),
-            youtubePlayerClient: currentSettings.usePlayerClientForExtraction
-              ? currentSettings.youtubePlayerClient
-              : null,
-          });
-          if (destroyed) return;
-
-          if (moreInfo?.entries?.length) {
-            allEntries.push(...moreInfo.entries);
-          }
-          rawInfo.has_more = moreInfo.has_more;
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        }
-      }
+      const currentSettings = getSettings();
+      const resolveResult = await resolveUrl(url, {
+        cookies_from_browser: cookiesFromBrowser || null,
+        custom_cookies: customCookies || null,
+        proxy: convertProxyConfig(getProxyConfig()),
+        youtube_player_client: currentSettings.usePlayerClientForExtraction
+          ? currentSettings.youtubePlayerClient || null
+          : null,
+        flat_playlist: true,
+      });
 
       if (destroyed) return;
 
-      const seen = new Set<string>();
-      const uniqueEntries = (rawInfo.entries ?? []).filter((e: any) => {
-        if (!e.id || seen.has(e.id)) return false;
-        seen.add(e.id);
-        return true;
-      });
+      const info = resolveResult.info;
 
-      rawInfo.entries = uniqueEntries;
-      rawInfo.total_count = uniqueEntries.length;
+      const mappedEntries: ChannelEntry[] = (info.entries || []).map((e) => ({
+        id: e.id,
+        url: e.url,
+        title: e.title || '',
+        duration: typeof e.duration === 'bigint' ? Number(e.duration) : (e.duration ?? null),
+        thumbnail: e.thumbnail ?? null,
+        viewCount: null,
+        uploadDate: null,
+        isShort: false,
+        isLive: false,
+      }));
 
-      const unified = convertBackendChannelInfo(rawInfo);
+      const unified: ChannelInfo = {
+        id: info.channelId ?? null,
+        name: info.channel || info.title || '',
+        handle: null,
+        description: info.description ?? null,
+        thumbnail: info.thumbnail ?? null,
+        banner: null,
+        subscriberCount: null,
+        totalCount: mappedEntries.length,
+        entries: mappedEntries,
+        hasMore: false,
+      };
+
       channelInfo = unified;
 
       const videoIds = unified.entries.filter((e) => !e.isShort && !e.isLive).map((e) => e.id);
@@ -676,7 +646,6 @@
         </button>
       </div>
     {:else}
-      <!-- Main row: avatar + info + mode selector -->
       <div class="main-row">
         <div class="left">
           {#if displayThumbnail && !thumbnailError}
@@ -774,7 +743,6 @@
         </div>
       </div>
 
-      <!-- Extras row: folder checkbox, more options, entries toggle -->
       <div class="extras-row">
         <Checkbox
           checked={useChannelFolder}
@@ -802,7 +770,6 @@
         </button>
       </div>
 
-      <!-- More options panel -->
       {#if showMoreOptions}
         <div class="more-options">
           <div class="options-row">
@@ -835,18 +802,39 @@
           <div class="options-sections">
             <CollapsibleBlock title="SponsorBlock" expanded={true}>
               <div class="option-grid">
-                <Checkbox bind:checked={globalSkipSponsors} label={$t('download.tracks.skipSponsors')} />
-                <Checkbox bind:checked={globalSkipIntros} label={$t('download.tracks.skipIntros')} />
-                <Checkbox bind:checked={globalSkipSelfPromo} label={$t('download.tracks.skipSelfPromo')} />
-                <Checkbox bind:checked={globalSkipInteraction} label={$t('download.tracks.skipInteraction')} />
+                <Checkbox
+                  bind:checked={globalSkipSponsors}
+                  label={$t('download.tracks.skipSponsors')}
+                />
+                <Checkbox
+                  bind:checked={globalSkipIntros}
+                  label={$t('download.tracks.skipIntros')}
+                />
+                <Checkbox
+                  bind:checked={globalSkipSelfPromo}
+                  label={$t('download.tracks.skipSelfPromo')}
+                />
+                <Checkbox
+                  bind:checked={globalSkipInteraction}
+                  label={$t('download.tracks.skipInteraction')}
+                />
               </div>
             </CollapsibleBlock>
 
             <CollapsibleBlock title={$t('download.tracks.embedOptions')} expanded={true}>
               <div class="option-grid">
-                <Checkbox bind:checked={globalEmbedChapters} label={$t('download.tracks.embedChapters')} />
-                <Checkbox bind:checked={globalEmbedThumbnail} label={$t('download.tracks.embedThumbnail')} />
-                <Checkbox bind:checked={globalEmbedMetadata} label={$t('download.tracks.embedMetadata')} />
+                <Checkbox
+                  bind:checked={globalEmbedChapters}
+                  label={$t('download.tracks.embedChapters')}
+                />
+                <Checkbox
+                  bind:checked={globalEmbedThumbnail}
+                  label={$t('download.tracks.embedThumbnail')}
+                />
+                <Checkbox
+                  bind:checked={globalEmbedMetadata}
+                  label={$t('download.tracks.embedMetadata')}
+                />
               </div>
             </CollapsibleBlock>
 
@@ -854,11 +842,7 @@
               <div class="subs-row">
                 <Checkbox bind:checked={globalEmbedSubs} label={$t('download.tracks.embedSubs')} />
                 {#if globalEmbedSubs}
-                  <input
-                    type="text"
-                    class="lang-input"
-                    bind:value={globalSubLangs}
-                  />
+                  <input type="text" class="lang-input" bind:value={globalSubLangs} />
                 {/if}
               </div>
             </CollapsibleBlock>
@@ -866,10 +850,8 @@
         </div>
       {/if}
 
-      <!-- Entries panel -->
       {#if showEntries && (channelInfo || loading)}
         <div class="entries-panel">
-          <!-- Tab bar -->
           {#if channelInfo}
             <div class="tab-bar">
               <button
@@ -902,7 +884,6 @@
             </div>
           {/if}
 
-          <!-- Toolbar -->
           <div class="entries-toolbar">
             <div class="search-box">
               <Icon name="search" size={14} />
@@ -945,7 +926,6 @@
             </div>
           </div>
 
-          <!-- Entries grid -->
           <div
             class="entries-container"
             bind:this={entriesContainerEl}
@@ -995,7 +975,6 @@
         </div>
       {/if}
 
-      <!-- Footer download button (non-header mode) -->
       {#if !showHeader && ondownload}
         <div class="footer-actions">
           <div class="spacer"></div>
@@ -1025,7 +1004,6 @@
   }
 
   .channel-builder.full-bleed {
-    /* margin: 0 -8px 0 -16px; */
     padding: 0 8px 0 0;
     height: 100%;
     display: flex;
@@ -1072,7 +1050,6 @@
     max-height: none;
     border-radius: 0;
     background: transparent;
-    /* margin: 0 -16px; */
     padding: 0;
     flex: 1;
     min-height: 0;
@@ -1099,7 +1076,7 @@
     padding: 6px 10px;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.6);
     font-size: 13px;
     font-weight: 500;
@@ -1128,7 +1105,7 @@
     padding: 6px 12px;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: rgba(255, 255, 255, 0.6);
     font-size: 12px;
     font-weight: 500;
@@ -1141,7 +1118,7 @@
     gap: 5px;
     padding: 4px 10px;
     background: rgba(99, 102, 241, 0.12);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: #818cf8;
     font-size: 11px;
     font-weight: 600;
@@ -1170,7 +1147,7 @@
     padding: 8px 14px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: white;
     font-size: 13px;
     font-weight: 500;
@@ -1213,7 +1190,7 @@
   .card {
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
+    border-radius: var(--radius-lg, 12px);
     padding: 12px;
   }
 
@@ -1223,7 +1200,7 @@
     gap: 8px;
     padding: 12px;
     background: rgba(239, 68, 68, 0.1);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: #ef4444;
     font-size: 13px;
   }
@@ -1235,7 +1212,7 @@
     padding: 6px;
     background: rgba(255, 255, 255, 0.1);
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: white;
     cursor: pointer;
     margin-left: auto;
@@ -1245,7 +1222,6 @@
     background: rgba(255, 255, 255, 0.15);
   }
 
-  /* Main row: thumbnail + info + mode selector */
   .main-row {
     display: flex;
     align-items: flex-start;
@@ -1317,7 +1293,7 @@
     height: 22px;
     background: rgba(255, 255, 255, 0.08);
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     color: rgba(255, 255, 255, 0.5);
     cursor: pointer;
     transition: all 0.15s ease;
@@ -1365,13 +1341,13 @@
   .title-skel {
     width: 180px;
     height: 18px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
   }
 
   .meta-skel {
     width: 120px;
     height: 14px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
   }
 
   .right {
@@ -1383,7 +1359,7 @@
     gap: 3px;
     background: rgba(255, 255, 255, 0.03);
     padding: 3px;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
   }
 
   .mode-btn {
@@ -1393,7 +1369,7 @@
     padding: 6px 10px;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.5);
     font-size: 12px;
     font-weight: 500;
@@ -1416,7 +1392,6 @@
     cursor: not-allowed;
   }
 
-  /* Extras row */
   .extras-row {
     display: flex;
     align-items: center;
@@ -1438,7 +1413,7 @@
     padding: 5px 10px;
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.6);
     font-size: 12px;
     font-weight: 500;
@@ -1459,7 +1434,7 @@
     padding: 5px 10px;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.7);
     font-size: 12px;
     font-weight: 500;
@@ -1480,19 +1455,18 @@
   .selected-badge {
     padding: 2px 8px;
     background: var(--accent, #6366f1);
-    border-radius: 10px;
+    border-radius: var(--radius, 10px);
     font-size: 11px;
     font-weight: 600;
     color: white;
   }
 
-  /* More options panel */
   .more-options {
     margin-top: 10px;
     padding: 10px;
     background: rgba(255, 255, 255, 0.02);
     border: 1px solid rgba(255, 255, 255, 0.04);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -1549,7 +1523,7 @@
     padding: 6px 10px;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: white;
     font-size: 12px;
     font-family: inherit;
@@ -1565,13 +1539,12 @@
     border-color: var(--accent, #6366f1);
   }
 
-  /* Tab bar */
   .tab-bar {
     display: flex;
     gap: 3px;
     padding: 3px;
     background: rgba(255, 255, 255, 0.03);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     overflow-x: auto;
     margin-bottom: 8px;
   }
@@ -1583,7 +1556,7 @@
     padding: 8px 12px;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.5);
     font-size: 13px;
     font-weight: 500;
@@ -1605,7 +1578,7 @@
   .tab-count {
     padding: 2px 6px;
     background: rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
+    border-radius: var(--radius, 10px);
     font-size: 11px;
     color: rgba(255, 255, 255, 0.7);
   }
@@ -1615,7 +1588,6 @@
     color: white;
   }
 
-  /* Entries panel */
   .entries-panel {
     margin-top: 10px;
     padding-top: 10px;
@@ -1646,7 +1618,7 @@
     padding: 6px 10px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
   }
 
   .search-box input {
@@ -1670,7 +1642,7 @@
     padding: 2px;
     background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     color: rgba(255, 255, 255, 0.4);
     cursor: pointer;
   }
@@ -1691,7 +1663,7 @@
     gap: 2px;
     background: rgba(255, 255, 255, 0.03);
     padding: 3px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
   }
 
   .view-btn {
@@ -1701,7 +1673,7 @@
     padding: 6px;
     background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     color: rgba(255, 255, 255, 0.4);
     cursor: pointer;
     transition: all 0.15s;
@@ -1724,7 +1696,7 @@
     padding: 6px 10px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: rgba(255, 255, 255, 0.7);
     font-size: 12px;
     cursor: pointer;
@@ -1745,7 +1717,7 @@
     height: 400px;
     max-height: 400px;
     overflow: hidden;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     background: rgba(0, 0, 0, 0.2);
     padding: 6px;
     display: flex;
@@ -1805,7 +1777,6 @@
     animation: pulse 1.5s ease-in-out infinite;
   }
 
-  /* Footer */
   .footer-actions {
     margin-top: 8px;
     padding-top: 10px;
@@ -1822,7 +1793,7 @@
     padding: 10px 20px;
     background: var(--accent, #6366f1);
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: white;
     font-size: 14px;
     font-weight: 600;

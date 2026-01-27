@@ -73,7 +73,7 @@
   });
 
   function isLocalFilePath(value: string): boolean {
-    return /^[A-Za-z]:[\\\//]/.test(value) || (value.startsWith('/') && !value.startsWith('//'))
+    return /^[A-Za-z]:[\\\//]/.test(value) || (value.startsWith('/') && !value.startsWith('//'));
   }
 
   function toAssetUrl(path: string): string {

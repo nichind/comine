@@ -1,6 +1,7 @@
 import { writable, derived } from 'svelte/store';
 import { load, type Store } from '@tauri-apps/plugin-store';
 import { LRUCache } from '$lib/utils/LRUCache';
+import type { Chapter, Storyboard, Fragment } from '$lib/bindings';
 
 const PERSISTENCE_CONFIG = {
   storeFile: 'media-cache.json',
@@ -27,21 +28,7 @@ export interface MediaPreview {
   isMusic?: boolean;
 }
 
-export interface Chapter {
-  title: string;
-  start_time: number;
-  end_time: number;
-}
-
-export interface Storyboard {
-  url: string;
-  width: number;
-  height: number;
-  cols: number;
-  rows: number;
-  fragment_count: number;
-  fragment_duration: number;
-}
+export type { Chapter, Storyboard };
 
 export interface SponsorBlockSegment {
   category: string;
@@ -82,6 +69,10 @@ export interface VideoFormat {
   formatNote: string | null;
   hasVideo: boolean;
   hasAudio: boolean;
+  quality: number | null;
+  rows: number | null;
+  columns: number | null;
+  fragments: Fragment[] | null;
 }
 
 export interface PlaylistEntry {
@@ -269,7 +260,6 @@ function detectType(url: string): 'video' | 'playlist' | 'channel' | 'unknown' {
 function isExpired(timestamp: number | null, ttl: number): boolean {
   return !timestamp || Date.now() - timestamp > ttl;
 }
-
 
 interface DiskCacheData {
   metadata: Array<[string, MetadataEntry]>;
@@ -761,198 +751,4 @@ export function getCachedPreview(url: string) {
   return derived(mediaCache, () => {
     return mediaCache.getBestPreview(url);
   });
-}
-
-export function convertBackendVideoInfo(backend: {
-  title: string;
-  uploader?: string | null;
-  channel?: string | null;
-  creator?: string | null;
-  thumbnail?: string | null;
-  duration?: number | null;
-  channel_url?: string | null;
-  channel_id?: string | null;
-  chapters?: Chapter[] | null;
-  storyboards?: Storyboard[] | null;
-}): VideoInfo {
-  return {
-    title: backend.title,
-    author: backend.uploader ?? backend.channel ?? backend.creator ?? null,
-    thumbnail: backend.thumbnail ?? null,
-    duration: backend.duration ?? null,
-    viewCount: null,
-    likeCount: null,
-    uploadDate: null,
-    description: null,
-    channelUrl: backend.channel_url ?? null,
-    channelId: backend.channel_id ?? null,
-    chapters: backend.chapters ?? null,
-    storyboards: backend.storyboards ?? null,
-    sponsorSegments: null,
-  };
-}
-
-export function convertBackendFormats(backend: {
-  title: string;
-  author?: string | null;
-  thumbnail?: string | null;
-  duration?: number | null;
-  formats: Array<{
-    format_id: string;
-    ext: string;
-    resolution?: string | null;
-    fps?: number | null;
-    vcodec?: string | null;
-    acodec?: string | null;
-    filesize?: number | null;
-    filesize_approx?: number | null;
-    tbr?: number | null;
-    vbr?: number | null;
-    abr?: number | null;
-    asr?: number | null;
-    format_note?: string | null;
-    has_video: boolean;
-    has_audio: boolean;
-  }>;
-  view_count?: number | null;
-  like_count?: number | null;
-  description?: string | null;
-  upload_date?: string | null;
-  channel_url?: string | null;
-  channel_id?: string | null;
-  chapters?: Chapter[] | null;
-  storyboards?: Storyboard[] | null;
-}): { info: VideoInfo; formats: VideoFormat[] } {
-  return {
-    info: {
-      title: backend.title,
-      author: backend.author ?? null,
-      thumbnail: backend.thumbnail ?? null,
-      duration: backend.duration ?? null,
-      viewCount: backend.view_count ?? null,
-      likeCount: backend.like_count ?? null,
-      uploadDate: backend.upload_date ?? null,
-      description: backend.description ?? null,
-      channelUrl: backend.channel_url ?? null,
-      channelId: backend.channel_id ?? null,
-      chapters: backend.chapters ?? null,
-      storyboards: backend.storyboards ?? null,
-      sponsorSegments: null,
-    },
-    formats: backend.formats.map((f) => ({
-      formatId: f.format_id,
-      ext: f.ext,
-      resolution: f.resolution ?? null,
-      fps: f.fps ?? null,
-      vcodec: f.vcodec ?? null,
-      acodec: f.acodec ?? null,
-      filesize: f.filesize ?? null,
-      filesizeApprox: f.filesize_approx ?? null,
-      tbr: f.tbr ?? null,
-      vbr: f.vbr ?? null,
-      abr: f.abr ?? null,
-      asr: f.asr ?? null,
-      formatNote: f.format_note ?? null,
-      hasVideo: f.has_video,
-      hasAudio: f.has_audio,
-    })),
-  };
-}
-
-export function convertBackendPlaylistInfo(backend: {
-  is_playlist: boolean;
-  id?: string | null;
-  title: string;
-  uploader?: string | null;
-  thumbnail?: string | null;
-  total_count: number;
-  entries: Array<{
-    id: string;
-    url: string;
-    title: string;
-    duration?: number | null;
-    thumbnail?: string | null;
-    uploader?: string | null;
-    is_music: boolean;
-  }>;
-  has_more: boolean;
-}): PlaylistInfo {
-  return {
-    isPlaylist: backend.is_playlist,
-    id: backend.id ?? null,
-    title: backend.title,
-    uploader: backend.uploader ?? null,
-    thumbnail: backend.thumbnail ?? null,
-    totalCount: backend.total_count,
-    entries: backend.entries.map((e) => ({
-      id: e.id,
-      url: e.url,
-      title: e.title,
-      duration: e.duration ?? null,
-      thumbnail: e.thumbnail ?? null,
-      uploader: e.uploader ?? null,
-      isMusic: e.is_music,
-    })),
-    hasMore: backend.has_more,
-  };
-}
-
-export function convertBackendChannelInfo(backend: {
-  id?: string | null;
-  title?: string | null;
-  channel?: string | null;
-  uploader?: string | null;
-  uploader_id?: string | null;
-  channel_id?: string | null;
-  description?: string | null;
-  thumbnail?: string | null;
-  thumbnails?: Array<{ url?: string }> | null;
-  channel_follower_count?: number | null;
-  entries?: Array<{
-    id: string;
-    url?: string;
-    title?: string;
-    duration?: number | null;
-    thumbnail?: string | null;
-    thumbnails?: Array<{ url?: string }> | null;
-    view_count?: number | null;
-    upload_date?: string | null;
-    original_url?: string | null;
-  }>;
-  playlist_count?: number | null;
-}): ChannelInfo {
-  const entries = backend.entries ?? [];
-  const name = backend.channel ?? backend.uploader ?? backend.title ?? 'Unknown Channel';
-  const handle = backend.uploader_id ?? null;
-  const thumbnail = backend.thumbnail ?? backend.thumbnails?.[0]?.url ?? null;
-
-  return {
-    id: backend.channel_id ?? backend.id ?? null,
-    name,
-    handle,
-    description: backend.description ?? null,
-    thumbnail,
-    banner: null,
-    subscriberCount: backend.channel_follower_count ?? null,
-    totalCount: backend.playlist_count ?? entries.length,
-    entries: entries.map((e) => {
-      const videoUrl =
-        e.url ?? e.original_url ?? (e.id ? `https://www.youtube.com/watch?v=${e.id}` : '');
-      const isShort = videoUrl.includes('/shorts/') || (e.duration != null && e.duration < 61);
-      const isLive = e.duration === null && e.view_count != null;
-
-      return {
-        id: e.id,
-        url: videoUrl,
-        title: e.title ?? 'Untitled',
-        duration: e.duration ?? null,
-        thumbnail: e.thumbnail ?? e.thumbnails?.[0]?.url ?? null,
-        viewCount: e.view_count ?? null,
-        uploadDate: e.upload_date ?? null,
-        isShort,
-        isLive,
-      };
-    }),
-    hasMore: false,
-  };
 }

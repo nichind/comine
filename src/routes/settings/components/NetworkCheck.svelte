@@ -20,13 +20,11 @@
     checkingIp = true;
     currentIp = null;
     try {
-      // Structure matches Rust expected args for check_ip
       const result = await invoke<{ ip: string; proxyUsed: boolean }>('check_ip', {
-          proxyConfig: {
-            mode: $settings.proxyMode,
-            customUrl: $settings.customProxyUrl,
-            // Add other fields if Rust side expects them, likely optional
-          }
+        proxyConfig: {
+          mode: $settings.proxyMode,
+          customUrl: $settings.customProxyUrl,
+        },
       });
       currentIp = result.ip;
       ipProxyUsed = result.proxyUsed;
@@ -81,15 +79,20 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: white;
     padding: 6px 12px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     cursor: pointer;
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     display: flex;
     align-items: center;
     gap: 8px;
   }
-  .check-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.15); }
-  .check-btn:disabled { opacity: 0.5; cursor: wait; }
+  .check-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.15);
+  }
+  .check-btn:disabled {
+    opacity: 0.5;
+    cursor: wait;
+  }
 
   .btn-spinner {
     width: 14px;
@@ -99,36 +102,49 @@
     border-radius: 50%;
     animation: spin 1s linear infinite;
   }
-  
-  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
 
   .setting-sub-row {
-    margin-left: 56px; 
+    margin-left: 56px;
     margin-top: 5px;
   }
-  
+
   .ip-result-content {
     display: flex;
     align-items: center;
     gap: 12px;
-    font-size: 13px;
-    background: rgba(0,0,0,0.2);
+    font-size: var(--text-base, 13px);
+    background: rgba(0, 0, 0, 0.2);
     padding: 8px 12px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     display: inline-flex;
   }
-  
-  .ip-address { font-family: monospace; opacity: 0.9; }
-  
+
+  .ip-address {
+    font-family: monospace;
+    opacity: 0.9;
+  }
+
   .ip-badge {
     font-size: 11px;
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     display: flex;
     align-items: center;
     gap: 4px;
     font-weight: 500;
   }
-  .ip-badge.proxy { background: rgba(74, 222, 128, 0.1); color: #4ade80; }
-  .ip-badge.direct { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+  .ip-badge.proxy {
+    background: rgba(74, 222, 128, 0.1);
+    color: #4ade80;
+  }
+  .ip-badge.direct {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+  }
 </style>

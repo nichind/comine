@@ -43,7 +43,7 @@
     height: 32px;
     padding: 2px;
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     background: rgba(255, 255, 255, 0.05);
     cursor: pointer;
   }
@@ -54,7 +54,7 @@
 
   .color-picker::-webkit-color-swatch {
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
   }
 
   .color-picker:disabled,
@@ -70,7 +70,7 @@
     font-size: 12px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: white;
     outline: none;
     transition: all 0.2s;

@@ -71,7 +71,7 @@
     min-width: 20px;
     min-height: 20px;
     border: 2px solid rgba(255, 255, 255, 0);
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     background: rgba(255, 255, 255, 0.05);
     transition: all 0.2s;
     display: flex;
@@ -114,7 +114,7 @@
 
   .label {
     color: rgba(255, 255, 255, 0.9);
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
     line-height: 20px;
   }
 </style>

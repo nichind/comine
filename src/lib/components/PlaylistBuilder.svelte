@@ -1,12 +1,10 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
   import { t } from '$lib/i18n';
   import { tooltip } from '$lib/actions/tooltip';
   import { settings, type DownloadMode, getProxyConfig, getSettings } from '$lib/stores/settings';
   import ThumbnailGlow from './ThumbnailGlow.svelte';
   import { deps } from '$lib/stores/deps';
-  import { isAndroid, getPlaylistInfoOnAndroid } from '$lib/utils/android';
   import { formatDuration, formatSize, getDisplayThumbnailUrl } from '$lib/utils/format';
   import Icon from './Icon.svelte';
   import Checkbox from './Checkbox.svelte';
@@ -17,13 +15,12 @@
     type MediaItemData,
     type MediaItemSettings,
   } from './MediaGrid.svelte';
-  import { viewStateCache, androidDataCache, type PlaylistViewState } from '$lib/stores/viewState';
   import {
     mediaCache,
-    convertBackendPlaylistInfo,
     type PlaylistInfo as UnifiedPlaylistInfo,
     type PlaylistEntry as UnifiedPlaylistEntry,
   } from '$lib/stores/mediaCache';
+  import { resolveUrl, convertProxyConfig } from '$lib/backend/mediaBackend';
 
   const CACHE_TTL = 10 * 60 * 1000;
 
@@ -43,27 +40,6 @@
   export type PlaylistEntry = UnifiedPlaylistEntry;
 
   type PlaylistInfo = UnifiedPlaylistInfo;
-
-  interface BackendPlaylistEntry {
-    id: string;
-    url: string;
-    title: string;
-    duration?: number | null;
-    thumbnail?: string | null;
-    uploader?: string | null;
-    is_music: boolean;
-  }
-
-  interface BackendPlaylistInfo {
-    is_playlist: boolean;
-    id: string | null;
-    title: string;
-    uploader: string | null;
-    thumbnail: string | null;
-    total_count: number;
-    entries: BackendPlaylistEntry[];
-    has_more: boolean;
-  }
 
   export interface EntrySettings {
     downloadMode: DownloadMode;
@@ -138,24 +114,13 @@
 
   function getInitialState() {
     const uiState = mediaCache.getUIState(url);
-    const cachedPlaylistInfo = mediaCache.getPlaylistInfo(url);
-    const legacyCached = viewStateCache.get<PlaylistViewState>('playlist', url);
-    const androidCachedData = isAndroid() ? androidDataCache.getPlaylist(url) : null;
-
-    let playlistInfo: PlaylistInfo | null = null;
-    if (cachedPlaylistInfo) {
-      playlistInfo = cachedPlaylistInfo;
-    } else if (androidCachedData) {
-      playlistInfo = convertBackendPlaylistInfo(androidCachedData as BackendPlaylistInfo);
-    }
-
+    const playlistInfo = mediaCache.getPlaylistInfo(url);
     const hasFullData = !!playlistInfo;
 
-    if (uiState || legacyCached) {
-      const legacySelected = legacyCached?.selectedIds ?? [];
-      const rawSelectedMode = uiState?.selectedMode;
-      const rawSelectedIds = uiState?.selectedIds ?? legacySelected;
-      const rawDeselectedIds = uiState?.deselectedIds ?? [];
+    if (uiState) {
+      const rawSelectedMode = uiState.selectedMode;
+      const rawSelectedIds = uiState.selectedIds ?? [];
+      const rawDeselectedIds = uiState.deselectedIds ?? [];
 
       const inferredMode: 'all' | 'some' = (() => {
         if (rawSelectedMode) return rawSelectedMode;
@@ -170,12 +135,13 @@
         selectedMode: inferredMode,
         selectedIds: inferredMode === 'some' ? rawSelectedIds : [],
         deselectedIds: inferredMode === 'all' ? rawDeselectedIds : [],
-        perItemSettingsObj: (uiState?.perItemSettings ??
-          legacyCached?.perItemSettings ??
-          {}) as Record<string, Partial<MediaItemSettings>>,
-        scrollTop: uiState?.scrollTop ?? legacyCached?.scrollTop ?? 0,
-        viewMode: (uiState?.viewMode ?? legacyCached?.viewMode ?? 'list') as ViewMode,
-        searchQuery: uiState?.searchQuery ?? legacyCached?.searchQuery ?? '',
+        perItemSettingsObj: (uiState.perItemSettings ?? {}) as Record<
+          string,
+          Partial<MediaItemSettings>
+        >,
+        scrollTop: uiState.scrollTop ?? 0,
+        viewMode: (uiState.viewMode ?? 'list') as ViewMode,
+        searchQuery: uiState.searchQuery ?? '',
         loading: !hasFullData,
         lastLoadedUrl: hasFullData ? url : '',
         fromCache: hasFullData,
@@ -208,7 +174,6 @@
   let destroyed = false;
   let thumbnailError = $state(false);
 
-  // If thumbnail src changes (e.g. normalization), don't keep a stale error state.
   let lastThumbnailSrc = $state<string | null>(null);
   $effect(() => {
     const next = displayThumbnail ?? null;
@@ -468,19 +433,6 @@
         viewMode,
         searchQuery,
       });
-
-      if (playlistInfo) {
-        viewStateCache.set<PlaylistViewState>({
-          type: 'playlist',
-          url,
-          selectedIds: selectedMode === 'some' ? [...selectedSomeIds] : [],
-          perItemSettings: perItemSettingsObj,
-          scrollTop: currentScrollTop,
-          viewMode,
-          searchQuery,
-          timestamp: Date.now(),
-        });
-      }
     }
   }
 
@@ -514,68 +466,48 @@
     usePlaylistFolder = $settings.usePlaylistFolders ?? true;
 
     try {
-      let info: BackendPlaylistInfo;
-
-      if (isAndroid()) {
-        const currentSettings = getSettings();
-        const playerClient = currentSettings.usePlayerClientForExtraction
-          ? currentSettings.youtubePlayerClient
-          : currentSettings.extractionPlayerClient || null;
-        info = (await getPlaylistInfoOnAndroid(url, playerClient)) as BackendPlaylistInfo;
-        if (destroyed) return;
-      } else {
-        const currentSettings = getSettings();
-        info = await invoke<BackendPlaylistInfo>('get_playlist_info', {
-          url,
-          offset: 0,
-          limit: 100,
-          cookiesFromBrowser: cookiesFromBrowser || null,
-          customCookies: customCookies || null,
-          proxyConfig: getProxyConfig(),
-          youtubePlayerClient: currentSettings.usePlayerClientForExtraction
-            ? currentSettings.youtubePlayerClient
-            : null,
-        });
-        if (destroyed) return;
-
-        const allEntries = info.entries;
-        while (info.has_more && info.total_count > 0 && !destroyed) {
-          const currentOffset = allEntries.length;
-          const moreInfo = await invoke<BackendPlaylistInfo>('get_playlist_info', {
-            url,
-            offset: currentOffset,
-            limit: 100,
-            cookiesFromBrowser: cookiesFromBrowser || null,
-            customCookies: customCookies || null,
-            proxyConfig: getProxyConfig(),
-            youtubePlayerClient: currentSettings.usePlayerClientForExtraction
-              ? currentSettings.youtubePlayerClient
-              : null,
-          });
-          if (destroyed) return;
-
-          if (moreInfo.entries?.length) {
-            allEntries.push(...moreInfo.entries);
-          }
-          info.has_more = moreInfo.has_more;
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        }
-      }
+      const currentSettings = getSettings();
+      const resolveResult = await resolveUrl(url, {
+        cookies_from_browser: cookiesFromBrowser || null,
+        custom_cookies: customCookies || null,
+        proxy: convertProxyConfig(getProxyConfig()),
+        youtube_player_client: currentSettings.usePlayerClientForExtraction
+          ? currentSettings.youtubePlayerClient || null
+          : null,
+        flat_playlist: true,
+      });
 
       if (destroyed) return;
 
+      const info = resolveResult.info;
+
+      const mappedEntries = (info.entries || []).map((e) => ({
+        id: e.id,
+        url: e.url,
+        title: e.title || '',
+        duration: typeof e.duration === 'bigint' ? Number(e.duration) : (e.duration ?? null),
+        thumbnail: e.thumbnail ?? null,
+        uploader: e.uploader ?? null,
+        isMusic: e.isMusic ?? false,
+      }));
+
       const seen = new Set<string>();
-      const uniqueEntries = info.entries.filter((e) => {
+      const uniqueEntries = mappedEntries.filter((e) => {
         if (seen.has(e.id)) return false;
         seen.add(e.id);
         return true;
       });
 
-      const unified = convertBackendPlaylistInfo({
-        ...info,
+      const unified: PlaylistInfo = {
+        isPlaylist: true,
+        id: null,
+        title: info.title || $t('common.playlist'),
+        uploader: info.uploader || null,
+        thumbnail: info.thumbnail || null,
+        totalCount: uniqueEntries.length,
         entries: uniqueEntries,
-        total_count: uniqueEntries.length,
-      });
+        hasMore: false,
+      };
 
       playlistInfo = unified;
       selectedMode = 'all';
@@ -888,18 +820,39 @@
           <div class="options-sections">
             <CollapsibleBlock title="SponsorBlock" expanded={true}>
               <div class="option-grid">
-                <Checkbox bind:checked={globalSkipSponsors} label={$t('download.tracks.skipSponsors')} />
-                <Checkbox bind:checked={globalSkipIntros} label={$t('download.tracks.skipIntros')} />
-                <Checkbox bind:checked={globalSkipSelfPromo} label={$t('download.tracks.skipSelfPromo')} />
-                <Checkbox bind:checked={globalSkipInteraction} label={$t('download.tracks.skipInteraction')} />
+                <Checkbox
+                  bind:checked={globalSkipSponsors}
+                  label={$t('download.tracks.skipSponsors')}
+                />
+                <Checkbox
+                  bind:checked={globalSkipIntros}
+                  label={$t('download.tracks.skipIntros')}
+                />
+                <Checkbox
+                  bind:checked={globalSkipSelfPromo}
+                  label={$t('download.tracks.skipSelfPromo')}
+                />
+                <Checkbox
+                  bind:checked={globalSkipInteraction}
+                  label={$t('download.tracks.skipInteraction')}
+                />
               </div>
             </CollapsibleBlock>
 
             <CollapsibleBlock title={$t('download.tracks.embedOptions')} expanded={true}>
               <div class="option-grid">
-                <Checkbox bind:checked={globalEmbedChapters} label={$t('download.tracks.embedChapters')} />
-                <Checkbox bind:checked={globalEmbedThumbnail} label={$t('download.tracks.embedThumbnail')} />
-                <Checkbox bind:checked={globalEmbedMetadata} label={$t('download.tracks.embedMetadata')} />
+                <Checkbox
+                  bind:checked={globalEmbedChapters}
+                  label={$t('download.tracks.embedChapters')}
+                />
+                <Checkbox
+                  bind:checked={globalEmbedThumbnail}
+                  label={$t('download.tracks.embedThumbnail')}
+                />
+                <Checkbox
+                  bind:checked={globalEmbedMetadata}
+                  label={$t('download.tracks.embedMetadata')}
+                />
               </div>
             </CollapsibleBlock>
 
@@ -907,11 +860,7 @@
               <div class="subs-row">
                 <Checkbox bind:checked={globalEmbedSubs} label={$t('download.tracks.embedSubs')} />
                 {#if globalEmbedSubs}
-                  <input
-                    type="text"
-                    class="lang-input"
-                    bind:value={globalSubLangs}
-                  />
+                  <input type="text" class="lang-input" bind:value={globalSubLangs} />
                 {/if}
               </div>
             </CollapsibleBlock>
@@ -1084,7 +1033,6 @@
     flex-direction: column;
   }
 
-  /* View header with back and download buttons */
   .view-header {
     display: flex;
     align-items: center;
@@ -1103,9 +1051,9 @@
     padding: 6px 10px;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.6);
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;
@@ -1126,14 +1074,14 @@
   }
 
   .header-badge {
-    display: none; /* Hide on mobile, show via media query */
+    display: none;
     align-items: center;
     gap: 5px;
     padding: 4px 10px;
     background: rgba(255, 0, 0, 0.12);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: #ff6b6b;
-    font-size: 11px;
+    font-size: var(--text-xs, 11px);
     font-weight: 600;
   }
 
@@ -1154,7 +1102,7 @@
   }
 
   .size-estimate {
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     color: rgba(255, 255, 255, 0.5);
     font-weight: 500;
     flex-shrink: 0;
@@ -1167,9 +1115,9 @@
     padding: 8px 14px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: white;
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;
@@ -1203,9 +1151,9 @@
     padding: 10px 20px;
     background: var(--accent, #6366f1);
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: white;
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -1221,7 +1169,6 @@
     cursor: not-allowed;
   }
 
-  /* Footer actions */
   .footer-actions {
     margin-top: 12px;
     padding-top: 12px;
@@ -1251,9 +1198,9 @@
     gap: 6px;
     padding: 4px 10px;
     background: rgba(255, 0, 0, 0.15);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: #ff6b6b;
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     font-weight: 600;
     width: fit-content;
   }
@@ -1261,7 +1208,7 @@
   .card {
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
+    border-radius: var(--radius-lg, 12px);
     padding: 12px;
   }
 
@@ -1278,7 +1225,7 @@
     padding: 6px;
     background: rgba(255, 255, 255, 0.06);
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.6);
     cursor: pointer;
   }
@@ -1309,7 +1256,7 @@
   .thumb {
     width: 72px;
     height: 72px;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     object-fit: cover;
     flex-shrink: 0;
     background: rgba(255, 255, 255, 0.04);
@@ -1318,7 +1265,7 @@
   .playlist-builder.full-bleed .thumb {
     width: 120px;
     height: 120px;
-    border-radius: 10px;
+    border-radius: var(--radius, 10px);
   }
 
   .thumb.empty {
@@ -1348,7 +1295,7 @@
   }
 
   .title {
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     font-weight: 600;
     color: white;
     overflow: hidden;
@@ -1368,7 +1315,7 @@
     height: 22px;
     background: rgba(255, 255, 255, 0.08);
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     color: rgba(255, 255, 255, 0.5);
     cursor: pointer;
     transition: all 0.15s ease;
@@ -1438,12 +1385,11 @@
     align-items: center;
   }
 
-  /* Mode selector in main row */
   .mode-selector {
     display: flex;
     gap: 2px;
     background: rgba(255, 255, 255, 0.04);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     padding: 3px;
   }
 
@@ -1454,9 +1400,9 @@
     padding: 6px 12px;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.5);
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;
@@ -1478,7 +1424,6 @@
     color: white;
   }
 
-  /* Extras row */
   .extras-row {
     display: flex;
     align-items: center;
@@ -1499,9 +1444,9 @@
     padding: 4px 10px;
     background: rgba(255, 255, 255, 0.06);
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.7);
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -1519,13 +1464,12 @@
   .selected-badge {
     padding: 2px 6px;
     background: var(--accent, #6366f1);
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     font-size: 11px;
     font-weight: 600;
     color: white;
   }
 
-  /* Entries panel */
   .entries-panel {
     margin-top: 10px;
     padding-top: 10px;
@@ -1554,7 +1498,7 @@
     padding: 6px 10px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
   }
 
   .search-box :global(svg) {
@@ -1568,7 +1512,7 @@
     border: none;
     outline: none;
     color: white;
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     min-width: 0;
   }
 
@@ -1589,11 +1533,10 @@
     cursor: pointer;
   }
 
-  /* View toggle */
   .view-toggle {
     display: flex;
     background: rgba(255, 255, 255, 0.06);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     padding: 3px;
     gap: 2px;
   }
@@ -1606,7 +1549,7 @@
     justify-content: center;
     background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     color: rgba(255, 255, 255, 0.4);
     cursor: pointer;
     transition: all 0.15s;
@@ -1629,9 +1572,9 @@
     padding: 6px 10px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.7);
-    font-size: 11px;
+    font-size: var(--text-xs, 11px);
     cursor: pointer;
     white-space: nowrap;
     flex-shrink: 0;
@@ -1647,12 +1590,11 @@
     gap: 8px;
   }
 
-  /* Entries container */
   .entries-container {
     height: 400px;
     max-height: 400px;
     overflow: hidden;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     background: rgba(0, 0, 0, 0.2);
     padding: 6px;
     display: flex;
@@ -1660,7 +1602,6 @@
     min-height: 0;
   }
 
-  /* More options */
   .more-btn {
     display: flex;
     align-items: center;
@@ -1668,9 +1609,9 @@
     padding: 6px 10px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: rgba(255, 255, 255, 0.6);
-    font-size: 11px;
+    font-size: var(--text-xs, 11px);
     cursor: pointer;
     transition: all 0.15s;
     white-space: nowrap;
@@ -1693,7 +1634,7 @@
     gap: 12px;
     padding: 12px;
     background: rgba(0, 0, 0, 0.15);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     margin-top: 10px;
   }
 
@@ -1749,7 +1690,7 @@
     padding: 6px 10px;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: white;
     font-size: 12px;
     font-family: inherit;
@@ -1770,7 +1711,6 @@
     cursor: not-allowed;
   }
 
-  /* Skeleton */
   .skeleton {
     background: linear-gradient(
       90deg,
@@ -1780,7 +1720,7 @@
     );
     background-size: 200% 100%;
     animation: shimmer 1.5s infinite;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
   }
 
   @keyframes shimmer {
@@ -1802,7 +1742,6 @@
     width: 50%;
   }
 
-  /* Mobile */
   @media (max-width: 560px) {
     .main-row {
       flex-direction: column;
@@ -1861,7 +1800,6 @@
     }
   }
 
-  /* Utility classes */
   :global(.rotate-180) {
     transform: rotate(180deg);
   }

@@ -5,42 +5,123 @@
   import { queue } from '$lib/stores/queue';
   import Icon from '$lib/components/Icon.svelte';
   import HighlightText from '$lib/components/HighlightText.svelte';
+  import ContextMenu, { type MenuItem } from '$lib/components/ContextMenu.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { t } from '$lib/i18n';
   import { formatDuration } from '$lib/utils/format';
+  import { getConversionFormats } from '$lib/utils/conversion';
+  import {
+    buildContextMenuItems,
+    buildConvertMenuItems,
+    handleContextMenuAction,
+  } from '$lib/utils/contextMenuActions';
 
   interface Props {
     item: UnifiedDownloadItem;
     dState: DownloadsState;
   }
-  
+
   let { item, dState }: Props = $props();
   const ctx = getContext<DownloadsContext>(DOWNLOADS_CONTEXT_KEY);
-  
+
+  let contextMenuOpen = $state(false);
+  let contextMenuX = $state(0);
+  let contextMenuY = $state(0);
+
+  let convertMenuOpen = $state(false);
+  let convertMenuX = $state(0);
+  let convertMenuY = $state(0);
+
   let cardState = $derived.by(() => ({
     isHovered: dState.hoveredItemId === item.id,
     fileMissing: !item.isActive && dState.isFileMissing(item.id),
     thumbnailSrc: dState.getThumbnailSrc(item.thumbnail),
     colorStyle: dState.getItemColorStyle(item.thumbnail),
     isFailed: dState.isThumbnailFailed(item.id),
+    localThumbnail: dState.getLocalThumbnail(item.id),
   }));
 
   let isActiveDownload = $derived(item.isActive);
   let displayProgress = $derived(Math.max(0, Math.min(100, Math.round(item.progress ?? 0))));
   let isPending = $derived(item.status === 'pending');
   let isPaused = $derived(item.status === 'paused');
-  let isDownloading = $derived(item.status === 'downloading' || item.status === 'processing' || item.status === 'fetching-info');
+  let isDownloading = $derived(
+    item.status === 'downloading' ||
+      item.status === 'processing' ||
+      item.status === 'fetching-info' ||
+      item.status === 'converting'
+  );
   let isFailed = $derived(item.status === 'failed');
 
-  function handleImageLoad() {
-    dState.extractItemColor(cardState.thumbnailSrc);
+  let progressLabel = $derived.by(() => {
+    if (!item.isActive) return '';
+    if (item.status === 'pending') return $t('downloads.queue.waiting');
+    if (item.status === 'paused') return $t('downloads.queue.paused');
+    return item.statusMessage || $t(`downloads.status.${item.status}`, { default: '' }) || '';
+  });
+
+  let conversionFormats = $derived(getConversionFormats(item.extension));
+
+  let convertMenuItems = $derived.by((): MenuItem[] => {
+    return buildConvertMenuItems(conversionFormats);
+  });
+
+  $effect(() => {
     if (!item.isActive && item.filePath) {
       dState.checkFileExists(item.id, item.filePath);
     }
+  });
+
+  function handleImageLoad() {
+    dState.extractItemColor(cardState.thumbnailSrc);
   }
-  
-  function handleImageError() {
+
+  async function handleImageError() {
     dState.markThumbnailFailed(item.id);
+    if (item.filePath && !cardState.localThumbnail) {
+      await dState.generateLocalThumbnail(item.id, item.filePath);
+    }
+  }
+
+  function handleContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    contextMenuX = e.clientX;
+    contextMenuY = e.clientY;
+    contextMenuOpen = true;
+  }
+
+  function handleTap(e: MouseEvent) {
+    if (window.matchMedia('(hover: hover)').matches) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    contextMenuX = rect.left + rect.width / 2;
+    contextMenuY = rect.top + rect.height / 2;
+    contextMenuOpen = true;
+  }
+
+  let contextMenuItems = $derived.by((): MenuItem[] => {
+    const items = buildContextMenuItems(item, cardState.fileMissing, $t);
+    const isSelected = dState.isItemSelected(item.id);
+    const selectItem: MenuItem = isSelected
+      ? { id: 'deselect', label: $t('downloads.deselectItem'), icon: 'check' }
+      : { id: 'select', label: $t('downloads.selectItem'), icon: 'check' };
+    return [selectItem, { id: 'divider-select', label: '', divider: true }, ...items];
+  });
+
+  function handleContextMenuSelect(id: string) {
+    if (id === 'select' || id === 'deselect') {
+      dState.toggleSelection(item.id, true, false);
+      return;
+    }
+    handleContextMenuAction(id, item, ctx, () => {
+      convertMenuX = contextMenuX;
+      convertMenuY = contextMenuY;
+      convertMenuOpen = true;
+    });
   }
 </script>
 
@@ -55,14 +136,37 @@
   tabindex="0"
   onmouseenter={() => dState.setHoveredItem(item.id)}
   onmouseleave={() => dState.setHoveredItem(null)}
-  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!item.isActive) ctx.openItem(item as any); } }}
+  onclick={handleTap}
+  oncontextmenu={handleContextMenu}
+  onkeydown={(e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!item.isActive && !cardState.fileMissing) ctx.playItem(item as any);
+    } else if (e.key === 'Delete') {
+      e.preventDefault();
+      if (item.isActive) {
+        queue.cancel(item.id);
+      } else {
+        ctx.deleteItem(item.id);
+      }
+    }
+  }}
 >
   {#if isActiveDownload && !isFailed}
     <div class="progress-bg"></div>
   {/if}
 
   <div class="card-thumbnail">
-    {#if item.thumbnail && !cardState.isFailed}
+    {#if cardState.localThumbnail}
+      <img
+        src={cardState.localThumbnail}
+        alt=""
+        class="thumbnail"
+        loading="lazy"
+        decoding="async"
+        fetchpriority="low"
+      />
+    {:else if item.thumbnail && !cardState.isFailed}
       <img
         src={cardState.thumbnailSrc}
         alt=""
@@ -73,12 +177,37 @@
         onload={handleImageLoad}
         onerror={handleImageError}
       />
+    {:else if !item.thumbnail && item.filePath}
+      {#await dState.generateLocalThumbnail(item.id, item.filePath)}
+        <div class="card-thumb-placeholder">
+          <Icon name="image" size={32} />
+        </div>
+      {:then localThumb}
+        {#if localThumb}
+          <img
+            src={localThumb}
+            alt=""
+            class="thumbnail"
+            loading="lazy"
+            decoding="async"
+            fetchpriority="low"
+          />
+        {:else}
+          <div class="card-thumb-placeholder">
+            <Icon name="image" size={32} />
+          </div>
+        {/if}
+      {:catch}
+        <div class="card-thumb-placeholder">
+          <Icon name="image" size={32} />
+        </div>
+      {/await}
     {:else}
       <div class="card-thumb-placeholder">
         <Icon name="image" size={32} />
       </div>
     {/if}
-    
+
     {#if item.duration > 0}
       <div class="duration-badge">{formatDuration(item.duration)}</div>
     {/if}
@@ -90,11 +219,91 @@
     {#if isDownloading}
       <div class="downloading-overlay">
         <div class="spinner"></div>
-        <span class="progress-text">{displayProgress}%</span>
+        <span class="progress-text"
+          >{progressLabel ? `${progressLabel} ${displayProgress}%` : `${displayProgress}%`}</span
+        >
+        <div class="download-actions">
+          {#if item.source !== 'convert'}
+            <button
+              class="overlay-action-btn"
+              onclick={(e) => {
+                e.stopPropagation();
+                queue.pauseItem(item.id);
+              }}
+              use:tooltip={$t('downloads.queue.pauseItem')}
+            >
+              <Icon name="pause" size={16} />
+            </button>
+          {/if}
+          <button
+            class="overlay-action-btn danger"
+            onclick={(e) => {
+              e.stopPropagation();
+              queue.cancel(item.id);
+            }}
+            use:tooltip={$t('common.cancel')}
+          >
+            <Icon name="close" size={16} />
+          </button>
+        </div>
       </div>
     {:else if isPaused}
       <div class="paused-overlay">
         <Icon name="pause" size={24} />
+        <div class="download-actions">
+          {#if item.source !== 'convert'}
+            <button
+              class="overlay-action-btn"
+              onclick={(e) => {
+                e.stopPropagation();
+                queue.resumeItem(item.id);
+              }}
+              use:tooltip={$t('downloads.queue.resumeItem')}
+            >
+              <Icon name="play" size={16} />
+            </button>
+          {/if}
+          <button
+            class="overlay-action-btn danger"
+            onclick={(e) => {
+              e.stopPropagation();
+              queue.cancel(item.id);
+            }}
+            use:tooltip={$t('common.cancel')}
+          >
+            <Icon name="close" size={16} />
+          </button>
+        </div>
+      </div>
+    {:else if isPending && isActiveDownload}
+      <div class="pending-overlay">
+        <span class="pending-text">{$t('downloads.queue.waiting')}</span>
+        <div class="download-actions">
+          <button
+            class="overlay-action-btn danger"
+            onclick={(e) => {
+              e.stopPropagation();
+              queue.cancel(item.id);
+            }}
+            use:tooltip={$t('common.cancel')}
+          >
+            <Icon name="close" size={16} />
+          </button>
+        </div>
+      </div>
+    {:else if isFailed && isActiveDownload}
+      <div class="failed-overlay">
+        <button
+          class="retry-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            queue.retry(item.id);
+          }}
+          use:tooltip={$t('downloads.retry')}
+        >
+          <Icon name="refresh" size={18} />
+          <span>{$t('downloads.retry')}</span>
+        </button>
       </div>
     {:else if cardState.fileMissing}
       <div class="missing-file-overlay" use:tooltip={$t('downloads.fileMissing')}>
@@ -102,41 +311,60 @@
       </div>
     {:else if cardState.isHovered}
       <div class="card-overlay">
-        {#if isActiveDownload}
-          <div class="card-actions-bar">
-            {#if isPaused}
-              <button class="card-action-btn" onclick={(e) => { e.stopPropagation(); queue.resumeItem(item.id); }} use:tooltip={$t('downloads.queue.resumeItem')}>
-                <Icon name="play" size={14} />
-              </button>
-            {:else if isPending}
-              <button class="card-action-btn" onclick={(e) => { e.stopPropagation(); queue.pauseItem(item.id); }} use:tooltip={$t('downloads.queue.pauseItem')}>
-                <Icon name="pause" size={14} />
-              </button>
-            {/if}
-            <button class="card-action-btn delete" onclick={(e) => { e.stopPropagation(); queue.cancel(item.id); }} use:tooltip={$t('common.cancel')}>
-              <Icon name="close" size={14} />
-            </button>
-          </div>
-        {:else}
-          <button 
-            class="play-overlay" 
-            onclick={(e) => { e.stopPropagation(); ctx.playItem(item as any); }}
+        {#if !isActiveDownload}
+          <button
+            class="play-overlay"
+            onclick={(e) => {
+              e.stopPropagation();
+              ctx.playItem(item as any);
+            }}
             use:tooltip={$t('downloads.play')}
           >
             <Icon name="play" size={24} />
           </button>
-          
+
           <div class="card-actions-bar">
-            <button class="card-action-btn" onclick={(e) => { e.stopPropagation(); if (item.filePath) ctx.openFileLocation(item.filePath); }} use:tooltip={$t('downloads.openFolder')}>
+            <button
+              class="card-action-btn"
+              onclick={(e) => {
+                e.stopPropagation();
+                if (item.filePath) ctx.openFileLocation(item.filePath);
+              }}
+              use:tooltip={$t('downloads.openFolder')}
+            >
               <Icon name="folder" size={14} />
             </button>
-            <button class="card-action-btn" onclick={(e) => { e.stopPropagation(); ctx.redownloadItem(item.url); }} use:tooltip={$t('downloads.redownload')}>
+            <button
+              class="card-action-btn"
+              onclick={(e) => {
+                e.stopPropagation();
+                ctx.redownloadItem(item.url);
+              }}
+              use:tooltip={$t('downloads.redownload')}
+            >
               <Icon name="download" size={14} />
             </button>
-            <button class="card-action-btn" onclick={(e) => { e.stopPropagation(); ctx.openLink(item.url); }} use:tooltip={$t('downloads.openLink')}>
-              <Icon name="link" size={14} />
+            <button
+              class="card-action-btn"
+              onclick={(e) => {
+                e.stopPropagation();
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                contextMenuX = rect.left;
+                contextMenuY = rect.bottom + 4;
+                contextMenuOpen = true;
+              }}
+              use:tooltip={$t('common.more')}
+            >
+              <Icon name="dots" size={14} />
             </button>
-            <button class="card-action-btn delete" onclick={(e) => { e.stopPropagation(); ctx.deleteItem(item.id); }} use:tooltip={$t('downloads.delete')}>
+            <button
+              class="card-action-btn delete"
+              onclick={(e) => {
+                e.stopPropagation();
+                ctx.deleteItem(item.id);
+              }}
+              use:tooltip={$t('downloads.delete')}
+            >
               <Icon name="trash" size={14} />
             </button>
           </div>
@@ -144,17 +372,34 @@
       </div>
     {/if}
   </div>
-  
+
   <div class="card-info">
-    <button 
-      type="button"
-      class="card-title clickable" 
-      onclick={(e) => { e.stopPropagation(); if (!item.isActive) ctx.openItem(item as any); }} 
-      use:tooltip={item.isActive ? '' : $t('downloads.openInApp')}
-      disabled={item.isActive}
-    >
-      <HighlightText text={item.title} highlight={dState.searchQuery} />
-    </button>
+    <div class="card-title-row">
+      <button
+        type="button"
+        class="card-title clickable"
+        onclick={(e) => {
+          e.stopPropagation();
+          if (!item.isActive) ctx.openItem(item as any);
+        }}
+        use:tooltip={item.isActive ? '' : $t('downloads.openInApp')}
+        disabled={item.isActive}
+      >
+        <HighlightText text={item.title} highlight={dState.searchQuery} />
+      </button>
+      {#if item.convertedFormat}
+        <span
+          class="converted-tag"
+          use:tooltip={$t('downloads.convertedFrom', { format: item.convertedFormat })}
+          >{$t('downloads.converted')}</span
+        >
+      {/if}
+      {#if dState.showSourceTags && item.downloadSource}
+        <span class="source-tag"
+          >{$t(`downloads.source.${item.downloadSource}`, { default: item.downloadSource })}</span
+        >
+      {/if}
+    </div>
     <div class="card-meta">
       {#if isFailed && item.error}
         <span class="card-error" use:tooltip={item.error}>
@@ -165,21 +410,45 @@
         <span class="card-status">
           {isPaused ? $t('downloads.queue.paused') : $t('downloads.queue.waiting')}
         </span>
-      {:else}
-        <button 
+      {:else if item.authorUrl}
+        <button
           type="button"
-          class="card-author clickable" 
-          onclick={(e) => { e.stopPropagation(); if (!item.isActive) ctx.openAuthor(item as any); }} 
-          use:tooltip={item.isActive ? '' : $t('downloads.openAuthor')}
-          disabled={item.isActive}
+          class="card-author clickable"
+          onclick={(e) => {
+            e.stopPropagation();
+            ctx.openAuthor(item as any);
+          }}
+          use:tooltip={$t('downloads.viewChannel')}
         >
           <HighlightText text={item.author} highlight={dState.searchQuery} />
         </button>
+      {:else}
+        <span class="card-author">
+          <HighlightText text={item.author} highlight={dState.searchQuery} />
+        </span>
       {/if}
       <span class="card-size">{dState.getItemSizeDisplay(item)}</span>
     </div>
   </div>
 </div>
+
+<ContextMenu
+  bind:open={contextMenuOpen}
+  x={contextMenuX}
+  y={contextMenuY}
+  items={contextMenuItems}
+  onclose={() => (contextMenuOpen = false)}
+  onselect={handleContextMenuSelect}
+/>
+
+<ContextMenu
+  bind:open={convertMenuOpen}
+  x={convertMenuX}
+  y={convertMenuY}
+  items={convertMenuItems}
+  onclose={() => (convertMenuOpen = false)}
+  onselect={handleContextMenuSelect}
+/>
 
 <style>
   .grid-card {
@@ -187,7 +456,7 @@
     flex-direction: column;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 10px;
+    border-radius: var(--radius, 10px);
     overflow: hidden;
     transition: all 0.2s ease;
     height: 100%;
@@ -208,7 +477,6 @@
     border-color: rgba(239, 68, 68, 0.4);
   }
 
-  /* Progress background for active downloads */
   .progress-bg {
     position: absolute;
     bottom: 0;
@@ -224,7 +492,7 @@
     pointer-events: none;
     z-index: 0;
   }
-  
+
   .grid-card:hover {
     background: var(--item-color-hover, rgba(255, 255, 255, 0.06));
     border-color: rgba(255, 255, 255, 0.1);
@@ -235,44 +503,48 @@
   .grid-card:hover .thumbnail {
     transform: scale(1.05);
   }
-  
+
   .card-thumbnail {
     position: relative;
     aspect-ratio: 16/9;
-    background: rgba(0,0,0,0.3);
+    background: rgba(0, 0, 0, 0.3);
     overflow: hidden;
   }
-  
+
   .thumbnail {
     width: 100%;
     height: 100%;
     object-fit: cover;
     transition: transform 0.3s ease;
   }
-  
+
   .card-thumb-placeholder {
     width: 100%;
     height: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
-    color: rgba(255,255,255,0.25);
+    background: linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.05) 0%,
+      rgba(255, 255, 255, 0.02) 100%
+    );
+    color: rgba(255, 255, 255, 0.25);
   }
-  
+
   .duration-badge {
     position: absolute;
     bottom: 6px;
-    right: 6px;
-    background: rgba(0,0,0,0.85);
+    left: 6px;
+    background: rgba(0, 0, 0, 0.85);
     color: white;
     font-size: 10px;
     font-weight: 600;
     padding: 2px 5px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     z-index: 2;
     letter-spacing: 0.3px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
 
   .type-badge {
@@ -284,11 +556,11 @@
     font-size: 9px;
     font-weight: 700;
     padding: 2px 5px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     letter-spacing: 0.3px;
     z-index: 2;
   }
-  
+
   .play-overlay {
     position: absolute;
     top: 50%;
@@ -304,7 +576,7 @@
     border-radius: 50%;
     color: white;
     cursor: pointer;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     z-index: 10;
     transition: all 0.2s ease;
     animation: zoomIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
@@ -314,61 +586,73 @@
     transform: translate(-50%, -50%) scale(1.1);
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
   }
-  
+
   .card-overlay {
     position: absolute;
     inset: 0;
-    background: linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.4) 50%, rgba(0,0,0,0.5) 100%);
+    background: linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0.1) 0%,
+      rgba(0, 0, 0, 0.5) 60%,
+      rgba(0, 0, 0, 0.7) 100%
+    );
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: flex-end;
-    animation: fadeIn 0.15s ease;
+    animation: fadeIn 0.12s ease;
   }
-  
+
   .card-actions-bar {
     display: flex;
-    gap: 3px;
-    padding: 8px;
+    gap: 4px;
+    padding: 10px;
     width: 100%;
     justify-content: center;
+    background: linear-gradient(0deg, rgba(0, 0, 0, 0.5) 0%, transparent 100%);
   }
-  
+
   .card-action-btn {
     width: 28px;
     height: 28px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(40,40,40,0.95);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 6px;
-    color: rgba(255,255,255,0.9);
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-sm, 6px);
+    color: rgba(255, 255, 255, 0.85);
     cursor: pointer;
     transition: all 0.15s ease;
   }
-  
+
   .card-action-btn:hover {
-    background: rgba(255,255,255,0.25);
-    transform: scale(1.05);
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
   }
-  
+
+  .card-action-btn:active {
+    transform: scale(0.95);
+  }
+
   .card-action-btn.delete:hover {
-     background: rgba(239, 68, 68, 0.85);
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #f87171;
   }
-  
+
   .card-info {
     padding: 10px 10px 12px;
     display: flex;
     flex-direction: column;
     gap: 4px;
-    flex: 1; /* Match backup style slightly better */
+    flex: 1;
   }
-  
+
   .card-title {
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     font-weight: 500;
-    color: rgba(255,255,255,0.95);
+    color: rgba(255, 255, 255, 0.95);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -380,21 +664,51 @@
     width: 100%;
     cursor: pointer;
   }
-  
+
   .card-title:disabled {
     cursor: default;
   }
-  
+
+  .card-title-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .converted-tag {
+    flex-shrink: 0;
+    font-size: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 2px 4px;
+    border-radius: 3px;
+    background: var(--item-color, var(--accent, #6366f1));
+    color: white;
+    opacity: 0.85;
+  }
+
+  .source-tag {
+    flex-shrink: 0;
+    font-size: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 2px 4px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.7);
+  }
+
   .card-meta {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
   }
-  
+
   .card-author {
-    font-size: 11px;
-    color: rgba(255,255,255,0.45);
+    font-size: var(--text-xs, 11px);
+    color: rgba(255, 255, 255, 0.45);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -406,13 +720,13 @@
     text-align: left;
     cursor: pointer;
   }
-  
+
   .card-author:disabled {
     cursor: default;
   }
 
   .card-status {
-    font-size: 11px;
+    font-size: var(--text-xs, 11px);
     color: var(--item-color, var(--accent, #6366f1));
     font-weight: 500;
     flex: 1;
@@ -420,7 +734,7 @@
   }
 
   .card-error {
-    font-size: 11px;
+    font-size: var(--text-xs, 11px);
     color: #f87171;
     display: flex;
     align-items: center;
@@ -428,7 +742,7 @@
     flex: 1;
     min-width: 0;
   }
-  
+
   .card-size {
     font-size: 10px;
     color: rgba(255, 255, 255, 0.35);
@@ -436,37 +750,37 @@
   }
 
   .clickable {
-     transition: color 0.15s ease;
+    transition: color 0.15s ease;
   }
 
   .clickable:hover {
-      color: var(--item-color, var(--accent, #6366f1));
-      cursor: pointer;
+    color: var(--item-color, var(--accent, #6366f1));
+    cursor: pointer;
   }
-  
+
   .grid-card.file-missing {
-      opacity: 0.75;
+    opacity: 0.75;
   }
-  
+
   .grid-card.file-missing .thumbnail {
-      filter: grayscale(0.3) brightness(0.9);
+    filter: grayscale(0.3) brightness(0.9);
   }
-  
+
   .missing-file-overlay {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      width: 32px;
-      height: 32px;
-      background: rgba(239,68,68,0.7);
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: white;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-      z-index: 5;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 32px;
+    height: 32px;
+    background: rgba(239, 68, 68, 0.7);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    z-index: 5;
   }
 
   .downloading-overlay {
@@ -500,14 +814,121 @@
     position: absolute;
     inset: 0;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 8px;
     background: rgba(0, 0, 0, 0.6);
     color: rgba(255, 255, 255, 0.8);
     z-index: 5;
   }
-  
-  @keyframes zoomIn { from { transform: translate(-50%, -50%) scale(0); } to { transform: translate(-50%, -50%) scale(1); } }
-  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .pending-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 5;
+  }
+
+  .pending-text {
+    font-size: 11px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .download-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .overlay-action-btn {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: var(--radius, 8px);
+    color: white;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .overlay-action-btn:hover {
+    background: rgba(255, 255, 255, 0.25);
+    transform: scale(1.05);
+  }
+
+  .overlay-action-btn:active {
+    transform: scale(0.95);
+  }
+
+  .overlay-action-btn.danger:hover {
+    background: rgba(239, 68, 68, 0.4);
+    border-color: rgba(239, 68, 68, 0.5);
+  }
+
+  .failed-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(239, 68, 68, 0.2);
+    z-index: 5;
+  }
+
+  .failed-overlay .retry-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: rgba(99, 102, 241, 0.9);
+    border: none;
+    border-radius: var(--radius, 8px);
+    color: white;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+
+  .failed-overlay .retry-btn:hover {
+    background: var(--accent, #6366f1);
+    transform: scale(1.05);
+  }
+
+  .failed-overlay .retry-btn:active {
+    transform: scale(0.98);
+  }
+
+  @keyframes zoomIn {
+    from {
+      transform: translate(-50%, -50%) scale(0);
+    }
+    to {
+      transform: translate(-50%, -50%) scale(1);
+    }
+  }
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
 </style>

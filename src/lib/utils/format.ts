@@ -1,26 +1,22 @@
 import { get } from 'svelte/store';
 import { settings } from '$lib/stores/settings';
 
-/**
- * Extract YouTube video ID from various URL formats
- * Supports: youtube.com/watch?v=, youtu.be/, youtube.com/embed/, youtube.com/v/, youtube.com/shorts/, music.youtube.com
- */
 export function extractYouTubeVideoId(videoUrl: string): string | null {
   try {
     const urlObj = new URL(videoUrl);
     const hostname = urlObj.hostname.toLowerCase();
 
-    // youtube.com/watch?v=ID or music.youtube.com/watch?v=ID
-    if ((hostname.includes('youtube.com') || hostname === 'music.youtube.com') && urlObj.searchParams.has('v')) {
+    if (
+      (hostname.includes('youtube.com') || hostname === 'music.youtube.com') &&
+      urlObj.searchParams.has('v')
+    ) {
       return urlObj.searchParams.get('v');
     }
 
-    // youtu.be/ID
     if (hostname === 'youtu.be') {
       return urlObj.pathname.slice(1).split('?')[0] || null;
     }
 
-    // youtube.com/embed/ID, youtube.com/v/ID, or youtube.com/shorts/ID
     if (hostname.includes('youtube.com')) {
       const match = urlObj.pathname.match(/\/(embed|v|shorts)\/([^/?]+)/);
       if (match) return match[2];
@@ -31,14 +27,10 @@ export function extractYouTubeVideoId(videoUrl: string): string | null {
   return null;
 }
 
-/**
- * Format time in seconds to human readable string (M:SS or H:MM:SS)
- * @param seconds - Time in seconds
- * @param options - Formatting options
- * @param options.forceHours - Always show hours even if 0
- * @param options.showMs - Show milliseconds
- */
-export function formatTime(seconds: number, options?: { forceHours?: boolean; showMs?: boolean }): string {
+export function formatTime(
+  seconds: number,
+  options?: { forceHours?: boolean; showMs?: boolean }
+): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
 
   const h = Math.floor(seconds / 3600);
@@ -51,35 +43,25 @@ export function formatTime(seconds: number, options?: { forceHours?: boolean; sh
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-/**
- * Parse time string like "1:23", "01:23:45", "90" (seconds) into seconds
- */
 export function parseTimeString(input: string): number | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
 
-  // Try parsing as plain number (seconds)
   if (/^\d+(\.\d+)?$/.test(trimmed)) {
     return parseFloat(trimmed);
   }
 
-  // Try parsing as M:SS or H:MM:SS
   const parts = trimmed.split(':').map((p) => parseFloat(p.trim()));
   if (parts.some((p) => isNaN(p))) return null;
 
   if (parts.length === 2) {
-    // M:SS
     return parts[0] * 60 + parts[1];
   } else if (parts.length === 3) {
-    // H:MM:SS
     return parts[0] * 3600 + parts[1] * 60 + parts[2];
   }
   return null;
 }
 
-/**
- * Format ETA from milliseconds to human readable string
- */
 export function formatEta(ms: number | null): string {
   if (!ms || !Number.isFinite(ms) || ms <= 0) return '';
   const totalSec = Math.floor(ms / 1000);
@@ -90,10 +72,6 @@ export function formatEta(ms: number | null): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-/**
- * Format bytes to human readable string
- * Uses settings to determine binary (KiB/MiB) or decimal (kB/MB) units
- */
 export function formatSize(bytes: number): string {
   const { sizeUnit } = get(settings);
   const base = sizeUnit === 'binary' ? 1024 : 1000;
@@ -110,9 +88,6 @@ export function formatSize(bytes: number): string {
   return `${size.toFixed(decimals)} ${units[i]}`;
 }
 
-/**
- * Format speed (bytes per second) to human readable string
- */
 export function formatSpeed(bytesPerSecond: number): string {
   const { sizeUnit } = get(settings);
   const base = sizeUnit === 'binary' ? 1024 : 1000;
@@ -129,10 +104,6 @@ export function formatSpeed(bytesPerSecond: number): string {
   return `${speed.toFixed(decimals)} ${units[Math.min(i, units.length - 1)]}`;
 }
 
-/**
- * Format duration in seconds to human readable string
- * Returns '--:--' for null/undefined, 'Live' for 0 or negative (live streams)
- */
 export function formatDuration(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined) return '--:--';
   if (seconds <= 0) return 'Live';
@@ -147,10 +118,6 @@ export function formatDuration(seconds: number | null | undefined): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-/**
- * Truncate a title to a maximum length, adding ellipsis if needed
- * Useful for social media captions (Twitter, TikTok, Instagram) that can be very long
- */
 export function truncateTitle(title: string, maxLength: number = 150): string {
   if (!title) return '';
   if (title.length <= maxLength) return title;
@@ -165,9 +132,6 @@ export function truncateTitle(title: string, maxLength: number = 150): string {
   return truncated + '…';
 }
 
-/**
- * Calculate ETA based on downloaded bytes, total bytes, and speed
- */
 export function calculateETA(downloaded: number, total: number, speed: number): string {
   if (speed <= 0 || downloaded >= total) return '--:--';
 
@@ -177,10 +141,6 @@ export function calculateETA(downloaded: number, total: number, speed: number): 
   return formatDuration(seconds);
 }
 
-/**
- * Check if a YouTube URL is a mix/radio playlist (auto-generated)
- * Mix playlists start with RD, RDMM, RDAMVM, RDGMEM prefixes
- */
 export function isYouTubeMix(urlStr: string): boolean {
   try {
     const urlObj = new URL(urlStr);
@@ -204,13 +164,6 @@ export function isYouTubeMix(urlStr: string): boolean {
   }
 }
 
-/**
- * Check if a URL is likely a playlist or multi-video collection
- * Works across all major platforms supported by yt-dlp
- * @param urlStr - The URL to check
- * @param options - Optional settings
- * @param options.ignoreMixes - If true, YouTube mixes won't be considered playlists
- */
 export function isLikelyPlaylist(urlStr: string, options?: { ignoreMixes?: boolean }): boolean {
   try {
     const urlObj = new URL(urlStr);
@@ -219,7 +172,6 @@ export function isLikelyPlaylist(urlStr: string, options?: { ignoreMixes?: boole
 
     if (hostname.includes('youtube.com') || hostname.includes('youtu.be')) {
       if (!urlObj.searchParams.has('list')) return false;
-      // If ignoreMixes is enabled, don't treat mixes as playlists
       if (options?.ignoreMixes && isYouTubeMix(urlStr)) return false;
       return true;
     }
@@ -305,13 +257,18 @@ export function isLikelyChannel(urlStr: string): boolean {
     if (hostname.includes('space.bilibili.com')) return true;
 
     // TikTok/Douyin profiles
-    if (hostname.includes('tiktok.com') || hostname.includes('douyin.com') || hostname.includes('iesdouyin.com')) {
+    if (
+      hostname.includes('tiktok.com') ||
+      hostname.includes('douyin.com') ||
+      hostname.includes('iesdouyin.com')
+    ) {
       if (pathname.match(/^\/@[\w.-]+\/?$/) && !pathname.includes('/video/')) return true;
     }
 
     // Instagram profiles
     if (hostname.includes('instagram.com')) {
-      if (pathname.match(/^\/[\w.-]+\/?$/) && !pathname.match(/^\/(p|reel|stories|tv)\//)) return true;
+      if (pathname.match(/^\/[\w.-]+\/?$/) && !pathname.match(/^\/(p|reel|stories|tv)\//))
+        return true;
     }
 
     // Twitter/X profiles
@@ -321,7 +278,11 @@ export function isLikelyChannel(urlStr: string): boolean {
 
     // Twitch channels (top-level username)
     if (hostname.includes('twitch.tv')) {
-      if (pathname.match(/^\/[\w-]+\/?$/) && !pathname.match(/^\/(videos|directory|downloads|p|settings)\b/)) return true;
+      if (
+        pathname.match(/^\/[\w-]+\/?$/) &&
+        !pathname.match(/^\/(videos|directory|downloads|p|settings)\b/)
+      )
+        return true;
     }
 
     // SoundCloud user profile pages

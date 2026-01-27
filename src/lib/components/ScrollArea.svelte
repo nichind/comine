@@ -6,9 +6,7 @@
     children?: Snippet;
     class?: string;
     maskSize?: number;
-    /** Initial scroll position to restore */
     initialScrollTop?: number;
-    /** Callback when scroll position changes (throttled) */
     onscroll?: (position: number) => void;
   }
 
@@ -147,14 +145,9 @@
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-    /* Reserve scrollbar space to prevent layout shift during animations */
     scrollbar-gutter: stable;
-    /* 4px from right/bottom edge of window */
-    margin-right: 4px;
     margin-bottom: 4px;
-    /* 6px gap between content and scrollbar */
     padding-right: 6px;
-    /* Improve scroll performance */
     will-change: scroll-position;
     -webkit-overflow-scrolling: touch;
     contain: strict;

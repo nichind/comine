@@ -1,10 +1,7 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
-  import {
-    settings,
-    updateSetting,
-    defaultSettings,
-  } from '$lib/stores/settings';
+  import { settings, updateSetting, defaultSettings, type AppSettings } from '$lib/stores/settings';
+  import { pushState } from '$app/navigation';
   import {
     SECTIONS,
     SETTINGS,
@@ -12,7 +9,7 @@
     isVisibleOnPlatform,
     type SettingDef,
     type Platform,
-    type PlatformGroup
+    type PlatformGroup,
   } from '$lib/settings/schema';
   import { isAndroid, isDesktop } from '$lib/utils/android';
   import { onMount, onDestroy, tick } from 'svelte';
@@ -37,6 +34,13 @@
   import NetworkCheck from './components/NetworkCheck.svelte';
   import AppUpdates from './components/AppUpdates.svelte';
   import { calculateMatchScore } from '$lib/utils/search';
+  import {
+    hasOpenAriaMenu,
+    hasOpenAriaModal,
+    isPrintableKey,
+    isTypingTarget,
+    matchesShortcut,
+  } from '$lib/utils/keyboard';
 
   const APP_VERSION = __APP_VERSION__;
   const COMMIT_HASH = __COMMIT_HASH__;
@@ -86,7 +90,7 @@
   let searchExpanded = $state(false);
   let onDesktop = $state(true);
   let platform = $state<Platform>('windows');
-  
+
   let scrollAreaRef: ScrollAreaInstance | undefined = $state(undefined);
   let searchInputRef: HTMLInputElement | null = $state(null);
   let initialScrollTop: number | undefined = $state(undefined);
@@ -95,10 +99,10 @@
 
   const initializeState = (() => {
     if (typeof window === 'undefined') return;
-    
+
     const desktop = isDesktop();
     onDesktop = desktop;
-    
+
     if (desktop && typeof navigator !== 'undefined') {
       const userAgent = navigator.userAgent.toLowerCase();
       if (userAgent.includes('mac')) platform = 'macos';
@@ -111,12 +115,12 @@
     try {
       const raw = sessionStorage.getItem(SCROLL_STORAGE_KEY);
       if (raw) scrollCache = JSON.parse(raw);
-    } catch { /* ignore */ }
+    } catch {}
 
     const initial = getHashSection() ?? getSavedSection();
     const section = desktop ? (initial ?? 'general') : (initial ?? '');
     activeSection = section;
-    
+
     if (desktop && !getHashSection()) {
       setHashSection(section);
     }
@@ -131,7 +135,7 @@
   function handleScrollChange(position: number) {
     if (!activeSection) return;
     scrollCache[activeSection] = position;
-    
+
     if (scrollSaveTimer) clearTimeout(scrollSaveTimer);
     scrollSaveTimer = setTimeout(() => {
       try {
@@ -150,13 +154,13 @@
     if (!section) return;
     try {
       sessionStorage.setItem(SECTION_STORAGE_KEY, section);
-    } catch { /* SessionStorage may fail in private mode - non-critical */ }
+    } catch {}
   }
 
   function getSavedSection(): string | null {
     try {
       const saved = sessionStorage.getItem(SECTION_STORAGE_KEY);
-      return saved && SECTIONS.some(s => s.id === saved) ? saved : null;
+      return saved && SECTIONS.some((s) => s.id === saved) ? saved : null;
     } catch {
       return null;
     }
@@ -215,13 +219,15 @@
   function getHashSection(): string | null {
     if (typeof window === 'undefined') return null;
     const h = window.location.hash.slice(1);
-    return h && SECTIONS.some(s => s.id === h) ? h : null;
+    return h && SECTIONS.some((s) => s.id === h) ? h : null;
   }
 
   function setHashSection(section: string) {
     if (typeof window === 'undefined') return;
     if (window.location.hash === `#${section}`) return;
-    window.history.pushState(null, '', `#${section}`);
+    const url = new URL(window.location.href);
+    url.hash = section;
+    pushState(url, {});
   }
 
   onMount(() => {
@@ -256,30 +262,47 @@
       if (e.defaultPrevented) return;
       if (isTypingTarget(document.activeElement)) return;
 
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
-        e.preventDefault();
-        searchExpanded = true;
-        tick().then(() => searchInputRef?.focus());
+      if (hasOpenAriaModal()) return;
+
+      if (hasOpenAriaMenu()) return;
+
+      const bindings: Array<{
+        match: (e: KeyboardEvent) => boolean;
+        run: (e: KeyboardEvent) => void | Promise<void>;
+        preventDefault?: boolean;
+      }> = [
+        {
+          match: (e) => matchesShortcut(e, { key: 'f', mod: true }),
+          run: async () => {
+            searchExpanded = true;
+            await tick();
+            searchInputRef?.focus();
+          },
+        },
+        {
+          match: (e) => !e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Escape',
+          run: () => {
+            if (searchQuery.trim() || searchExpanded) {
+              searchQuery = '';
+              searchExpanded = false;
+              queueSidebarIndicatorUpdate();
+            }
+          },
+        },
+        {
+          match: (e) => isPrintableKey(e, { excludeSpace: true }),
+          run: (e) => {
+            if (!searchQuery.trim() && e.key.trim() === '') return;
+            void openSearch(e.key);
+          },
+        },
+      ];
+
+      for (const binding of bindings) {
+        if (!binding.match(e)) continue;
+        if (binding.preventDefault !== false) e.preventDefault();
+        void binding.run(e);
         return;
-      }
-
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-
-      if (e.key === ' ' || e.code === 'Space' || e.key === 'Spacebar') return;
-
-      if (e.key === 'Escape') {
-        if (searchQuery.trim() || searchExpanded) {
-          searchQuery = '';
-          searchExpanded = false;
-          e.preventDefault();
-        }
-        return;
-      }
-
-      if (e.key.length === 1 && e.key !== '\n' && e.key !== '\r' && e.key !== '\t') {
-        if (!searchQuery.trim() && e.key.trim() === '') return;
-        e.preventDefault();
-        void openSearch(e.key);
       }
     };
 
@@ -294,15 +317,6 @@
     };
   });
 
-  function isTypingTarget(el: Element | null): boolean {
-    if (!el) return false;
-    const node = el as HTMLElement;
-    const tag = node.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-    if (node.isContentEditable) return true;
-    return false;
-  }
-
   async function openSearch(initialText?: string) {
     if (!onDesktop) return;
     searchExpanded = true;
@@ -315,7 +329,7 @@
     try {
       const len = searchQuery.length;
       searchInputRef?.setSelectionRange(len, len);
-    } catch { /* setSelectionRange may fail on some input types */ }
+    } catch {}
   }
 
   function collapseSearchIfEmpty() {
@@ -326,24 +340,26 @@
   }
 
   let visibleSections = $derived(
-    SECTIONS.filter((s: any) => isVisibleOnPlatform(s.platforms, platform))
+    SECTIONS.filter((s) =>
+      isVisibleOnPlatform('platforms' in s ? s.platforms : undefined, platform)
+    )
   );
 
   let filteredSettings = $derived(
-    SETTINGS.filter(def => {
+    SETTINGS.filter((def) => {
       if (searchQuery.trim()) {
         const query = searchQuery.trim();
         const title = $t(def.titleKey);
         const desc = def.descriptionKey ? $t(def.descriptionKey) : '';
-        const keywords = ('keywords' in def && def.keywords) ? def.keywords.join(' ') : '';
-        
+        const keywords = 'keywords' in def && def.keywords ? def.keywords.join(' ') : '';
+
         if ('platforms' in def && !isVisibleOnPlatform(def.platforms, platform)) return false;
         if (def.visible && !def.visible($settings)) return false;
 
         const titleScore = calculateMatchScore(title, query);
         const descScore = calculateMatchScore(desc, query) * 0.5;
         const keywordScore = calculateMatchScore(keywords, query) * 0.8;
-        
+
         return Math.max(titleScore, descScore, keywordScore) > 0;
       }
 
@@ -355,33 +371,37 @@
     })
   );
 
-  type SubsectionGroup = { subsection: string | undefined; titleKey: string | undefined; items: SettingDef[] };
+  type SubsectionGroup = {
+    subsection: string | undefined;
+    titleKey: string | undefined;
+    items: SettingDef[];
+  };
   type SectionGroup = { id: string; title: string; icon: string; subsections: SubsectionGroup[] };
-  
+
   let groupedSettings = $derived.by(() => {
     const sections: Record<string, SectionGroup> = {};
 
     for (const def of filteredSettings) {
       const secId = def.section;
       const subId = def.subsection || DEFAULT_SUBSECTION;
-      
+
       if (!sections[secId]) {
-        const secDef = SECTIONS.find(s => s.id === secId);
+        const secDef = SECTIONS.find((s) => s.id === secId);
         sections[secId] = {
           id: secId,
           title: secDef ? $t(secDef.titleKey) : secId,
           icon: secDef ? secDef.icon : 'settings',
-          subsections: []
+          subsections: [],
         };
       }
-      
-      let subsec = sections[secId].subsections.find(s => s.subsection === subId);
+
+      let subsec = sections[secId].subsections.find((s) => s.subsection === subId);
       if (!subsec) {
         const titleKey = def.subsection ? getSubsectionTitle(secId, def.subsection) : undefined;
-        subsec = { 
-          subsection: subId === DEFAULT_SUBSECTION ? undefined : subId, 
+        subsec = {
+          subsection: subId === DEFAULT_SUBSECTION ? undefined : subId,
           titleKey,
-          items: [] 
+          items: [],
         };
         sections[secId].subsections.push(subsec);
       }
@@ -391,11 +411,11 @@
   });
 
   function handleSectionChange(id: string) {
-    const sectionIds = visibleSections.map(s => s.id as string);
+    const sectionIds = visibleSections.map((s) => s.id as string);
     const oldIndex = sectionIds.indexOf(activeSection);
     const newIndex = sectionIds.indexOf(id);
     sectionTransitionDir = newIndex >= oldIndex ? 1 : -1;
-    
+
     activeSection = id;
     setHashSection(id);
     saveActiveSection(id);
@@ -405,12 +425,12 @@
     queueSidebarIndicatorUpdate();
   }
 
-  const pendingSliderUpdates = new Map<string, { key: string; value: any; def: SettingDef }>();
+  const pendingSliderUpdates = new Map<string, { key: string; value: unknown; def: SettingDef }>();
   let sliderDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   function flushSliderUpdates() {
     for (const { key, value, def } of pendingSliderUpdates.values()) {
-      updateSetting(key as any, value);
+      updateSetting(key as keyof AppSettings, value as AppSettings[keyof AppSettings]);
       if ('onSet' in def && def.onSet) def.onSet(value);
     }
     pendingSliderUpdates.clear();
@@ -421,7 +441,11 @@
     settings.update((s) => {
       if (key.includes('.')) {
         const [parent, child] = key.split('.');
-        return { ...s, [parent]: { ...(s as any)[parent], [child]: value } };
+        const parentObj = s[parent as keyof AppSettings];
+        if (typeof parentObj === 'object' && parentObj !== null) {
+          return { ...s, [parent]: { ...parentObj, [child]: value } };
+        }
+        return s;
       }
       return { ...s, [key]: value };
     });
@@ -436,7 +460,7 @@
       sliderDebounceTimer = null;
     }
     pendingSliderUpdates.delete(def.key);
-    updateSetting(def.key as any, value);
+    updateSetting(def.key as keyof AppSettings, value as AppSettings[keyof AppSettings]);
     if ('onSet' in def && def.onSet) def.onSet(value);
   }
 
@@ -447,17 +471,21 @@
     if (sidebarIndicatorRaf !== null) cancelAnimationFrame(sidebarIndicatorRaf);
   });
 
-  function handleSettingChange(def: SettingDef, value: any) {
+  function handleSettingChange(def: SettingDef, value: unknown) {
     if ('type' in def && (def.type === 'action' || def.type === 'custom')) return;
     const key = def.key;
     settings.update((s) => {
       if (key.includes('.')) {
         const [parent, child] = key.split('.');
-        return { ...s, [parent]: { ...(s as any)[parent], [child]: value } };
+        const parentObj = s[parent as keyof AppSettings];
+        if (typeof parentObj === 'object' && parentObj !== null) {
+          return { ...s, [parent]: { ...parentObj, [child]: value } };
+        }
+        return s;
       }
       return { ...s, [key]: value };
     });
-    updateSetting(key as any, value);
+    updateSetting(key as keyof AppSettings, value as AppSettings[keyof AppSettings]);
     if ('onSet' in def && def.onSet) def.onSet(value);
   }
 
@@ -498,12 +526,12 @@
   }
 
   function titleKeyForSection(sectionId: string): string {
-    const sec = SECTIONS.find(s => s.id === sectionId);
+    const sec = SECTIONS.find((s) => s.id === sectionId);
     return sec ? sec.titleKey : 'settings.title';
   }
 
   function isSubsectionModified(items: SettingDef[]): boolean {
-    return items.some(def => {
+    return items.some((def) => {
       if (def.type === 'action' || def.type === 'custom') return false;
       const current = getSettingValue($settings, def.key);
       const defaultVal = getSettingValue(defaultSettings, def.key);
@@ -537,10 +565,7 @@
   >
     {#if onDesktop}
       <aside class="settings-sidebar">
-        <div
-          class="search-bar"
-          class:collapsed={!searchExpanded && !searchQuery.trim()}
-        >
+        <div class="search-bar" class:collapsed={!searchExpanded && !searchQuery.trim()}>
           <Icon name="search" size={18} />
           <input
             bind:this={searchInputRef}
@@ -566,12 +591,17 @@
           {/if}
         </div>
 
-        <div class="sidebar-sections" bind:this={sidebarSectionsEl} onscroll={() => queueSidebarIndicatorUpdate()}>
+        <div
+          class="sidebar-sections"
+          bind:this={sidebarSectionsEl}
+          onscroll={() => queueSidebarIndicatorUpdate()}
+        >
           {#if sidebarIndicatorVisible}
             <div class="sidebar-active-indicator" style={sidebarIndicatorStyle}></div>
           {/if}
           {#each visibleSections as section (section.id)}
-            {@const hasMatches = !searchQuery.trim() || groupedSettings.some(g => g.id === section.id)}
+            {@const hasMatches =
+              !searchQuery.trim() || groupedSettings.some((g) => g.id === section.id)}
             <button
               class="sidebar-item"
               class:active={activeSection === section.id}
@@ -594,31 +624,29 @@
           </div>
         </div>
       </aside>
-    {:else}
-      {#if !activeSection}
-        <ScrollArea>
-          <div class="mobile-sections">
-            {#each visibleSections as section (section.id)}
-              <button class="mobile-section-btn" onclick={() => handleSectionChange(section.id)}>
-                <Icon name={section.icon as any} size={18} />
-                <span class="mobile-section-label">{$t(section.titleKey)}</span>
-                <Icon name="arrow_right" size={16} />
-              </button>
-            {/each}
-          </div>
-        </ScrollArea>
-      {:else}
-        <div class="mobile-section-topbar">
-          <button class="mobile-back-btn" onclick={clearHashSection}>
-            <span class="back-icon"><Icon name="arrow_right" size={16} /></span>
-          </button>
-          <h2 class="mobile-section-title">{$t(titleKeyForSection(activeSection))}</h2>
+    {:else if !activeSection}
+      <ScrollArea>
+        <div class="mobile-sections">
+          {#each visibleSections as section (section.id)}
+            <button class="mobile-section-btn" onclick={() => handleSectionChange(section.id)}>
+              <Icon name={section.icon as any} size={18} />
+              <span class="mobile-section-label">{$t(section.titleKey)}</span>
+              <Icon name="arrow_right" size={16} />
+            </button>
+          {/each}
         </div>
-      {/if}
+      </ScrollArea>
+    {:else}
+      <div class="mobile-section-topbar">
+        <button class="mobile-back-btn" onclick={clearHashSection}>
+          <span class="back-icon"><Icon name="arrow_right" size={16} /></span>
+        </button>
+        <h2 class="mobile-section-title">{$t(titleKeyForSection(activeSection))}</h2>
+      </div>
     {/if}
 
     <div class="settings-pane">
-      <ScrollArea bind:this={scrollAreaRef} onscroll={handleScrollChange} initialScrollTop={initialScrollTop}>
+      <ScrollArea bind:this={scrollAreaRef} onscroll={handleScrollChange} {initialScrollTop}>
         <div class="settings-content">
           {#key activeSection}
             <div
@@ -626,51 +654,59 @@
               in:fly={{ x: 22 * sectionTransitionDir, duration: 220, easing: cubicOut }}
               out:fly={{ x: -18 * sectionTransitionDir, duration: 160, easing: cubicOut }}
             >
-          {#if searchQuery}
-            <div class="search-results-header">
-              <h2>{$t('settings.searchResults')} "{searchQuery}"</h2>
-            </div>
-          {/if}
+              {#if searchQuery}
+                <div class="search-results-header">
+                  <h2>{$t('settings.searchResults')} "{searchQuery}"</h2>
+                </div>
+              {/if}
 
-          {#each groupedSettings as group}
-            <SettingsBlock title={group.title} icon={group.icon as any} showHeader={!!searchQuery || !onDesktop}>
-              {#each group.subsections as subsec}
-                {#if subsec.titleKey}
-                  <div class="settings-subsection">
-                    <div class="settings-subsection-header">
-                      <div class="settings-subsection-title">{subsec.titleKey.includes('.') ? $t(subsec.titleKey) : subsec.titleKey}</div>
-                      {#if isSubsectionModified(subsec.items)}
-                        <button
-                          class="subsection-reset-btn"
-                          onclick={() => resetSubsection(subsec.items)}
-                          use:tooltip={$t('settings.resetSectionTooltip')}
-                        >
-                          <Icon name="undo" size={14} />
-                          <span class="subsection-reset-text">{$t('settings.resetSection')}</span>
-                        </button>
-                      {/if}
-                    </div>
-                    <div class="settings-subsection-body">
+              {#each groupedSettings as group}
+                <SettingsBlock
+                  title={group.title}
+                  icon={group.icon as any}
+                  showHeader={!!searchQuery || !onDesktop}
+                >
+                  {#each group.subsections as subsec}
+                    {#if subsec.titleKey}
+                      <div class="settings-subsection">
+                        <div class="settings-subsection-header">
+                          <div class="settings-subsection-title">
+                            {subsec.titleKey.includes('.') ? $t(subsec.titleKey) : subsec.titleKey}
+                          </div>
+                          {#if isSubsectionModified(subsec.items)}
+                            <button
+                              class="subsection-reset-btn"
+                              onclick={() => resetSubsection(subsec.items)}
+                              use:tooltip={$t('settings.resetSectionTooltip')}
+                            >
+                              <Icon name="undo" size={14} />
+                              <span class="subsection-reset-text"
+                                >{$t('settings.resetSection')}</span
+                              >
+                            </button>
+                          {/if}
+                        </div>
+                        <div class="settings-subsection-body">
+                          {#each subsec.items as def}
+                            {@render settingRenderer(def)}
+                          {/each}
+                        </div>
+                      </div>
+                    {:else}
                       {#each subsec.items as def}
                         {@render settingRenderer(def)}
                       {/each}
-                    </div>
-                  </div>
-                {:else}
-                  {#each subsec.items as def}
-                    {@render settingRenderer(def)}
+                    {/if}
                   {/each}
-                {/if}
+                </SettingsBlock>
               {/each}
-            </SettingsBlock>
-          {/each}
 
-          {#if groupedSettings.length === 0}
-             <div class="no-results">
-                <Icon name="search" size={32} />
-                <p>{$t('settings.noResults')} "{searchQuery}"</p>
-             </div>
-          {/if}
+              {#if groupedSettings.length === 0}
+                <div class="no-results">
+                  <Icon name="search" size={32} />
+                  <p>{$t('settings.noResults')} "{searchQuery}"</p>
+                </div>
+              {/if}
             </div>
           {/key}
         </div>
@@ -701,7 +737,6 @@
         <ExtensionIntegrationSettings {searchQuery} />
       {/if}
     </div>
-
   {:else if def.type === 'action'}
     <div class="setting-wrapper" class:disabled={isDisabled}>
       <SettingItem
@@ -719,7 +754,6 @@
         </button>
       </SettingItem>
     </div>
-
   {:else}
     <div class="setting-wrapper" class:disabled={isDisabled}>
       <SettingItem
@@ -732,14 +766,14 @@
         onReset={() => handleSettingChange(def, getSettingValue(defaultSettings, def.key))}
       >
         {#if def.type === 'toggle'}
-          <Toggle 
-            checked={getSettingValue($settings, def.key) as boolean} 
+          <Toggle
+            checked={getSettingValue($settings, def.key) as boolean}
             onchange={(v) => handleSettingChange(def, v)}
             disabled={isDisabled}
           />
         {:else if def.type === 'select'}
           <div class="w-200">
-            <Select 
+            <Select
               options={typeof def.options === 'function' ? def.options(platform) : def.options}
               value={getSettingValue($settings, def.key) as string}
               onchange={(v) => handleSettingChange(def, v)}
@@ -748,56 +782,58 @@
           </div>
         {:else if def.type === 'slider'}
           <div class="slider-with-value">
-             <input 
-                class="blur-slider"
-                type="range"
-                min={def.min}
-                max={def.max}
-                step={def.step}
-                value={getSettingValue($settings, def.key) as number}
-                oninput={(e) => handleSliderInput(def, parseFloat((e.currentTarget as HTMLInputElement).value))}
-                onchange={(e) => handleSliderCommit(def, parseFloat((e.currentTarget as HTMLInputElement).value))}
-                disabled={isDisabled}
-             />
-             <span class="slider-value">
-               {getSettingValue($settings, def.key)}{def.suffix || ''}
-             </span>
+            <input
+              class="blur-slider"
+              type="range"
+              min={def.min}
+              max={def.max}
+              step={def.step}
+              value={getSettingValue($settings, def.key) as number}
+              oninput={(e) =>
+                handleSliderInput(def, parseFloat((e.currentTarget as HTMLInputElement).value))}
+              onchange={(e) =>
+                handleSliderCommit(def, parseFloat((e.currentTarget as HTMLInputElement).value))}
+              disabled={isDisabled}
+            />
+            <span class="slider-value">
+              {getSettingValue($settings, def.key)}{def.suffix || ''}
+            </span>
           </div>
         {:else if def.type === 'input'}
           <div class="input-container" style:width={def.width || '200px'}>
-            <Input 
+            <Input
               value={getSettingValue($settings, def.key) as string}
               placeholder={def.placeholder}
               oninput={(e) => handleSettingChange(def, (e.currentTarget as HTMLInputElement).value)}
               disabled={isDisabled}
             />
           </div>
-         {:else if def.type === 'color'}
-           <div class="color-controls">
-              <input 
-                type="color"
-                class="color-picker"
-                value={getSettingValue($settings, def.key) as string}
-                oninput={(e) => handleSettingChange(def, (e.currentTarget as HTMLInputElement).value)}
-                disabled={isDisabled}
-              />
-              <input 
-                type="text"
-                class="color-text-input"
-                value={getSettingValue($settings, def.key) as string}
-                oninput={(e) => handleSettingChange(def, (e.currentTarget as HTMLInputElement).value)}
-                disabled={isDisabled}
-              />
-           </div>
+        {:else if def.type === 'color'}
+          <div class="color-controls">
+            <input
+              type="color"
+              class="color-picker"
+              value={getSettingValue($settings, def.key) as string}
+              oninput={(e) => handleSettingChange(def, (e.currentTarget as HTMLInputElement).value)}
+              disabled={isDisabled}
+            />
+            <input
+              type="text"
+              class="color-text-input"
+              value={getSettingValue($settings, def.key) as string}
+              oninput={(e) => handleSettingChange(def, (e.currentTarget as HTMLInputElement).value)}
+              disabled={isDisabled}
+            />
+          </div>
         {:else if def.type === 'path'}
           <div class="path-controls">
-            <Input 
+            <Input
               value={getSettingValue($settings, def.key) as string}
               placeholder={def.pickType === 'folder' ? $t('settings.general.browse') : ''}
               oninput={(e) => handleSettingChange(def, (e.currentTarget as HTMLInputElement).value)}
               disabled={isDisabled}
             />
-            <button 
+            <button
               class="picker-btn"
               onclick={() => pickPath(def)}
               disabled={isDisabled}
@@ -813,7 +849,9 @@
 {/snippet}
 
 <style>
-  .w-200 { width: 200px; }
+  .w-200 {
+    width: 200px;
+  }
 
   .setting-wrapper {
     display: contents;
@@ -830,7 +868,7 @@
   }
 
   .page {
-    padding: 0 var(--page-padding-inline);
+    padding: 0 4px 0 var(--page-padding-inline);
     height: 100%;
     display: flex;
     flex-direction: column;
@@ -900,7 +938,7 @@
     top: 0;
     left: 0;
     right: 4px;
-    border-radius: 10px;
+    border-radius: var(--radius, 10px);
     background: rgba(255, 255, 255, 0.12);
     transition:
       transform 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
@@ -919,13 +957,17 @@
     align-items: center;
     gap: 10px;
     padding: 10px 12px;
-    border-radius: 10px;
+    border-radius: var(--radius, 10px);
     background: transparent;
     border: 1px solid transparent;
     color: rgba(255, 255, 255, 0.75);
     cursor: pointer;
     text-align: left;
-    transition: background 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease;
+    transition:
+      background 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease,
+      opacity 120ms ease;
   }
 
   .sidebar-item:hover {
@@ -942,7 +984,7 @@
   }
 
   .sidebar-label {
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     font-weight: 450;
     letter-spacing: 0.1px;
   }
@@ -975,7 +1017,7 @@
     padding: 10px 12px;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
+    border-radius: var(--radius, 10px);
     flex-shrink: 0;
     overflow: hidden;
     max-height: 44px;
@@ -1009,7 +1051,7 @@
     background: transparent;
     border: none;
     color: white;
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
     outline: none;
   }
 
@@ -1023,7 +1065,7 @@
     justify-content: center;
     width: 28px;
     height: 28px;
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     border: none;
     background: transparent;
     color: rgba(255, 255, 255, 0.45);
@@ -1097,7 +1139,7 @@
     align-items: center;
     gap: 14px;
     padding: 16px 18px;
-    border-radius: 14px;
+    border-radius: var(--radius-xl, 14px);
     background: rgba(255, 255, 255, 0.05);
     border: none;
     color: rgba(255, 255, 255, 0.9);
@@ -1118,7 +1160,7 @@
   .mobile-section-label {
     flex: 1;
     text-align: left;
-    font-size: 15px;
+    font-size: var(--text-lg, 15px);
     font-weight: 500;
   }
 
@@ -1152,7 +1194,7 @@
   .mobile-section-title {
     flex: 1;
     min-width: 0;
-    font-size: 16px;
+    font-size: var(--text-lg, 16px);
     font-weight: 650;
     color: rgba(255, 255, 255, 0.95);
     text-align: left;
@@ -1206,7 +1248,7 @@
     align-items: center;
     gap: 6px;
     padding: 4px 8px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     background: rgba(255, 255, 255, 0.05);
     border: none;
     color: rgba(255, 255, 255, 0.55);
@@ -1260,7 +1302,9 @@
     background: var(--accent, #6366f1);
     border-radius: 50%;
     cursor: pointer;
-    transition: background 0.15s, transform 0.15s;
+    transition:
+      background 0.15s,
+      transform 0.15s;
   }
 
   .blur-slider::-webkit-slider-thumb:hover {
@@ -1275,7 +1319,9 @@
     border: none;
     border-radius: 50%;
     cursor: pointer;
-    transition: background 0.15s, transform 0.15s;
+    transition:
+      background 0.15s,
+      transform 0.15s;
   }
 
   .blur-slider::-moz-range-thumb:hover {
@@ -1302,7 +1348,7 @@
     height: 32px;
     padding: 2px;
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     background: rgba(255, 255, 255, 0.05);
     cursor: pointer;
   }
@@ -1313,7 +1359,7 @@
 
   .color-picker::-webkit-color-swatch {
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
   }
 
   .color-text-input {
@@ -1323,7 +1369,7 @@
     font-size: 12px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 6px;
+    border-radius: var(--radius-sm, 6px);
     color: white;
     outline: none;
     transition: all 0.2s;
@@ -1350,7 +1396,7 @@
     padding: 0;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: rgba(255, 255, 255, 0.7);
     cursor: pointer;
     transition: all 0.15s;
@@ -1374,7 +1420,7 @@
     padding: 6px 14px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     color: white;
     font-size: 13px;
     font-weight: 500;
@@ -1398,7 +1444,9 @@
   }
 
   @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .no-results {

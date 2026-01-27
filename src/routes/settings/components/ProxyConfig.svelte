@@ -16,22 +16,21 @@
 
   let detectingSystemProxy = $state(false);
   let systemProxyStatus = $state<string | null>(null);
-  
+
   let customProxyInput = $state($settings.customProxyUrl || defaultSettings.customProxyUrl);
   let proxyValidationError = $state<string | null>(null);
 
-  // Sync local state when external settings change (e.g., reset, sync)
   $effect(() => {
-    // Only sync if we're not actively editing (no validation error) and value differs
     const externalValue = $settings.customProxyUrl || '';
     if (!proxyValidationError && customProxyInput !== externalValue) {
       customProxyInput = externalValue;
     }
-  }); 
-  
+  });
+
   function validateProxyUrl(url: string): boolean {
     if (!url.trim()) return true;
-    const proxyRegex = /^(https?|socks5?):\/\/([a-zA-Z0-9.-]+|\[[a-fA-F0-9:]+\])(:\d{1,5})?(\/.*)?$/;
+    const proxyRegex =
+      /^(https?|socks5?):\/\/([a-zA-Z0-9.-]+|\[[a-fA-F0-9:]+\])(:\d{1,5})?(\/.*)?$/;
     return proxyRegex.test(url.trim());
   }
 
@@ -43,10 +42,10 @@
       return;
     }
     if (validateProxyUrl(value)) {
-       proxyValidationError = null;
-       updateSetting('customProxyUrl', value.trim());
+      proxyValidationError = null;
+      updateSetting('customProxyUrl', value.trim());
     } else {
-       proxyValidationError = $t('settings.network.proxyInvalid');
+      proxyValidationError = $t('settings.network.proxyInvalid');
     }
   }
 
@@ -55,7 +54,9 @@
     detectingSystemProxy = true;
     systemProxyStatus = null;
     try {
-      const result = await invoke<{ url: string; source: string; description: string }>('detect_system_proxy');
+      const result = await invoke<{ url: string; source: string; description: string }>(
+        'detect_system_proxy'
+      );
       if (result?.url && result.url.length > 0) {
         systemProxyStatus = `${result.url} (${result.source})`;
       } else {
@@ -142,9 +143,9 @@
     justify-content: space-between;
     padding: 8px 12px;
     background: rgba(255, 255, 255, 0.03);
-    border-radius: 8px;
+    border-radius: var(--radius, 8px);
     margin-top: 8px;
-    margin-left: 36px; /* Indent to match setting content */
+    margin-left: 36px;
   }
 
   .proxy-status-content {
@@ -155,9 +156,24 @@
     gap: 8px;
   }
 
-  .proxy-detected { color: #4ade80; display: flex; align-items: center; gap: 6px; }
-  .proxy-none { opacity: 0.6; display: flex; align-items: center; gap: 6px; }
-  .proxy-detecting { opacity: 0.8; display: flex; align-items: center; gap: 8px; }
+  .proxy-detected {
+    color: #4ade80;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .proxy-none {
+    opacity: 0.6;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .proxy-detecting {
+    opacity: 0.8;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
 
   .dep-btn {
     background: rgba(255, 255, 255, 0.1);
@@ -165,13 +181,15 @@
     color: white;
     width: 28px;
     height: 28px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
   }
-  .dep-btn:hover { background: rgba(255, 255, 255, 0.2); }
+  .dep-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
 
   .btn-spinner {
     width: 12px;
@@ -182,10 +200,16 @@
     animation: spin 1s linear infinite;
     display: block;
   }
-  
-  @keyframes spin { to { transform: rotate(360deg); } }
 
-  .w-250 { width: 250px; }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .w-250 {
+    width: 250px;
+  }
   .proxy-input-wrapper.error :global(input) {
     border-color: #ef4444;
     background: rgba(239, 68, 68, 0.1);
@@ -198,6 +222,15 @@
     justify-content: flex-start;
     gap: 12px;
   }
-  .error-text { color: #ef4444; font-size: 12px; display: flex; align-items: center; gap: 4px; }
-  .error-hint { opacity: 0.5; font-size: 12px; }
+  .error-text {
+    color: #ef4444;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .error-hint {
+    opacity: 0.5;
+    font-size: 12px;
+  }
 </style>

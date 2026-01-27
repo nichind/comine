@@ -8,8 +8,8 @@
     title: string;
     description?: string;
     icon?: IconName;
-    value?: any;
-    defaultValue?: any;
+    value?: unknown;
+    defaultValue?: unknown;
     onReset?: () => void;
     class?: string;
     children?: import('svelte').Snippet;
@@ -44,7 +44,6 @@
     const target = event.target as Element | null;
     if (!target) return;
 
-    // If the user clicked an interactive element, don't intercept.
     if (
       target.closest(
         'a,button,input,select,textarea,[role="button"],[role="switch"],[contenteditable="true"],[data-no-settingitem-activate]'
@@ -70,6 +69,7 @@
   }
 </script>
 
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   class="setting-item {className}"
   bind:this={rootEl}
@@ -123,7 +123,7 @@
     gap: 12px;
     background: rgba(255, 255, 255, 0.04);
     border: none;
-    border-radius: 12px;
+    border-radius: var(--radius-lg, 12px);
     min-height: 44px;
     cursor: pointer;
   }
@@ -152,14 +152,14 @@
   }
 
   .title {
-    font-size: 14px;
+    font-size: var(--text-md, 14px);
     font-weight: 450;
     color: rgba(255, 255, 255, 0.9);
     line-height: 1.3;
   }
 
   .description {
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     font-weight: 350;
     color: rgba(255, 255, 255, 0.5);
     line-height: 1.3;
@@ -184,7 +184,7 @@
     justify-content: center;
     width: 22px;
     height: 22px;
-    border-radius: 5px;
+    border-radius: var(--radius-sm, 5px);
     background: transparent;
     border: 1px solid transparent;
     color: rgba(255, 255, 255, 0.4);

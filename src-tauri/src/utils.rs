@@ -13,6 +13,7 @@ pub fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DiskSpaceInfo {
     pub available_bytes: u64,
     pub total_bytes: u64,

@@ -1,7 +1,3 @@
-/**
- * Portal action - teleports an element to a target container (default: document.body)
- * This is useful for modals, tooltips, and dropdowns that need to escape overflow constraints
- */
 export function portal(node: HTMLElement, target: HTMLElement | string = 'body') {
   let targetEl: HTMLElement;
 

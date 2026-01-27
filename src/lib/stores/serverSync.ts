@@ -4,8 +4,9 @@ import { history, type HistoryItem } from './history';
 import { logs } from './logs';
 import { get } from 'svelte/store';
 
-const isDesktop = typeof window !== 'undefined' && 
-  !navigator.userAgent.includes('Android') && 
+const isDesktop =
+  typeof window !== 'undefined' &&
+  !navigator.userAgent.includes('Android') &&
   !navigator.userAgent.includes('Mobile');
 
 let queueDebounce: ReturnType<typeof setTimeout> | null = null;
@@ -46,7 +47,7 @@ function serializeHistoryItem(item: HistoryItem) {
 
 async function pushQueueToServer(items: QueueItem[]) {
   if (!isDesktop) return;
-  
+
   try {
     const serialized = items.map(serializeQueueItem);
     await invoke('push_queue_status', { items: serialized });
@@ -57,7 +58,7 @@ async function pushQueueToServer(items: QueueItem[]) {
 
 async function pushHistoryToServer(items: HistoryItem[]) {
   if (!isDesktop) return;
-  
+
   try {
     const recent = items.slice(0, 50);
     const serialized = recent.map(serializeHistoryItem);
@@ -70,7 +71,7 @@ async function pushHistoryToServer(items: HistoryItem[]) {
 export function setupServerSync() {
   if (!isDesktop) return;
 
-  queue.subscribe(state => {
+  queue.subscribe((state) => {
     if (queueDebounce) {
       clearTimeout(queueDebounce);
     }
@@ -79,7 +80,7 @@ export function setupServerSync() {
     }, DEBOUNCE_MS);
   });
 
-  history.subscribe(state => {
+  history.subscribe((state) => {
     if (historyDebounce) {
       clearTimeout(historyDebounce);
     }
@@ -98,11 +99,8 @@ export function setupServerSync() {
 
 export async function forceSync() {
   if (!isDesktop) return;
-  
+
   const queueState = get(queue);
   const historyState = get(history);
-  await Promise.all([
-    pushQueueToServer(queueState.items),
-    pushHistoryToServer(historyState.items),
-  ]);
+  await Promise.all([pushQueueToServer(queueState.items), pushHistoryToServer(historyState.items)]);
 }
