@@ -5,7 +5,6 @@ mod orchestrator;
 mod proxy;
 // #[cfg(not(target_os = "android"))]
 // mod relay;
-#[cfg(not(target_os = "android"))]
 mod server;
 mod thumbnail_color;
 #[cfg(not(target_os = "android"))]
@@ -857,31 +856,26 @@ async fn download_and_install_update(
     Err("Use Android update mechanism".to_string())
 }
 
-#[cfg(not(target_os = "android"))]
 #[tauri::command]
-fn server_start(app: AppHandle, port: u16) {
-    server::start_server(app, port);
+fn server_start(app: AppHandle, port: u16, token: String) {
+    server::start_server(app, port, token);
 }
 
-#[cfg(not(target_os = "android"))]
 #[tauri::command]
 fn server_stop() {
     server::stop_server();
 }
 
-#[cfg(not(target_os = "android"))]
 #[tauri::command]
 fn server_is_running() -> bool {
     server::is_running()
 }
 
-#[cfg(not(target_os = "android"))]
 #[tauri::command]
 fn push_queue_status(items: Vec<server::QueueItem>) {
     server::update_queue(items);
 }
 
-#[cfg(not(target_os = "android"))]
 #[tauri::command]
 fn push_history_status(items: Vec<server::HistoryItem>) {
     server::update_history(items);
@@ -967,6 +961,11 @@ pub fn run() {
         autostart_enable,
         autostart_disable,
         autostart_is_enabled,
+        server_start,
+        server_stop,
+        server_is_running,
+        push_queue_status,
+        push_history_status,
         orchestrator::resolve_url,
         orchestrator::start_job,
         orchestrator::get_jobs,

@@ -344,7 +344,7 @@
       try {
         const isRunning = await invoke<boolean>('server_is_running');
         if (!isRunning) {
-          await invoke('server_start', { port });
+          await invoke('server_start', { port, token: $settings.extensionServerToken });
           logs.info('server', `Extension server auto-started on port ${port}`);
         }
       } catch (e) {
@@ -403,8 +403,8 @@
 
     if (!isAndroid()) {
       setupServerSync();
-      autoStartExtensionServer();
     }
+    autoStartExtensionServer();
 
     setTimeout(async () => {
       await deps.checkAll();

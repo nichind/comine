@@ -29,6 +29,7 @@
   let showInstallModal = $state(false);
 
   let localEndpoint = $derived(normalizeLocalEndpoint(serverPort));
+  let serverToken = $derived($settings.extensionServerToken || '');
 
   let cookieReceipts = $derived($settings.extensionCookiesReceived || []);
 
@@ -55,6 +56,18 @@
 
   function normalizeLocalEndpoint(port: number) {
     return `http://127.0.0.1:${port}`;
+  }
+
+  function generateToken(bytesLength = 32): string {
+    const bytes = new Uint8Array(bytesLength);
+    if (globalThis.crypto?.getRandomValues) {
+      globalThis.crypto.getRandomValues(bytes);
+    } else {
+      for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    }
+    return Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
   }
 
   function extractPortFromInput(input: string): number | null {
@@ -97,7 +110,7 @@
     if (serverRunning) {
       try {
         await invoke('server_stop');
-        await invoke('server_start', { port: serverPort });
+        await invoke('server_start', { port: serverPort, token: serverToken });
         serverRunning = true;
       } catch {
         serverPort = prevPort;
@@ -125,7 +138,7 @@
     serverRunning = next;
     try {
       if (next) {
-        await invoke('server_start', { port: serverPort });
+        await invoke('server_start', { port: serverPort, token: serverToken });
       } else {
         await invoke('server_stop');
       }
@@ -133,6 +146,21 @@
     } catch {
       serverRunning = !next;
       toast.error('Failed to change local server state');
+    }
+  }
+
+  async function regenerateServerToken() {
+    const nextToken = generateToken();
+    try {
+      await updateSetting('extensionServerToken', nextToken);
+      if (serverRunning) {
+        await invoke('server_stop');
+        await invoke('server_start', { port: serverPort, token: nextToken });
+        serverRunning = true;
+      }
+      toast.success(($t('common.copied') || 'Updated') + ': token');
+    } catch {
+      toast.error('Failed to regenerate token');
     }
   }
 
@@ -218,6 +246,39 @@
           }}
         >
           <Icon name="copy" size={14} />
+        </Button>
+      </div>
+    </div>
+
+    <div class="setting-sub-row">
+      <div class="sub-row-left">
+        <Icon name="lock" size={14} />
+        <span>{$t('settings.integration.serverToken') || 'Server token'}</span>
+      </div>
+      <div class="sub-row-right">
+        <Input value={serverToken} placeholder="token" disabled={true} />
+        <Button
+          variant="ghost"
+          size="sm"
+          onclick={async () => {
+            try {
+              await writeText(serverToken);
+              toast.success($t('common.copied'));
+            } catch {
+              try {
+                await navigator.clipboard.writeText(serverToken);
+                toast.success($t('common.copied'));
+              } catch {
+                toast.error($t('common.copyError') || 'Failed to copy');
+              }
+            }
+          }}
+          disabled={!serverToken}
+        >
+          <Icon name="copy" size={14} />
+        </Button>
+        <Button variant="ghost" size="sm" onclick={regenerateServerToken}>
+          <Icon name="refresh" size={14} />
         </Button>
       </div>
     </div>

@@ -11,6 +11,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 static SERVER_RUNNING: AtomicBool = AtomicBool::new(false);
 static SERVER_PORT: AtomicU16 = AtomicU16::new(0);
+static SERVER_TOKEN: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::new()));
 
 static QUEUE_ITEMS: LazyLock<Mutex<Vec<QueueItem>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 static HISTORY_ITEMS: LazyLock<Mutex<Vec<HistoryItem>>> = LazyLock::new(|| Mutex::new(Vec::new()));
@@ -142,13 +143,22 @@ struct Cookie {
     expiration_date: Option<f64>,
 }
 
-pub fn start_server(app: AppHandle, port: u16) {
+pub fn start_server(app: AppHandle, port: u16, token: String) {
+    if token.trim().is_empty() {
+        log::error!("[Server] Refusing to start without auth token");
+        return;
+    }
+
     if SERVER_RUNNING.swap(true, Ordering::SeqCst) {
         log::warn!("[Server] Already running");
         return;
     }
 
     SERVER_PORT.store(port, Ordering::SeqCst);
+
+    if let Ok(mut t) = SERVER_TOKEN.lock() {
+        *t = token;
+    }
 
     let addr = format!("127.0.0.1:{}", port);
     log::info!("[Server] Starting on {}", addr);
@@ -199,12 +209,22 @@ fn handle_request(app: &AppHandle, mut request: Request) {
     let cors_headers = vec![
         Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap(),
         Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, OPTIONS").unwrap(),
-        Header::from_bytes("Access-Control-Allow-Headers", "Content-Type").unwrap(),
+        Header::from_bytes("Access-Control-Allow-Headers", "Content-Type, X-Comine-Token").unwrap(),
         Header::from_bytes("Content-Type", "application/json").unwrap(),
     ];
 
     if request.method() == &Method::Options {
         let mut response = Response::empty(200);
+        for h in cors_headers {
+            response.add_header(h);
+        }
+        let _ = request.respond(response);
+        return;
+    }
+
+    if !is_authorized(&request) {
+        let (status, body) = (401, r#"{"error":"Unauthorized"}"#.to_string());
+        let mut response = Response::from_string(body).with_status_code(status);
         for h in cors_headers {
             response.add_header(h);
         }
@@ -254,6 +274,29 @@ fn handle_request(app: &AppHandle, mut request: Request) {
         response.add_header(h);
     }
     let _ = request.respond(response);
+}
+
+fn is_authorized(request: &Request) -> bool {
+    let expected = SERVER_TOKEN
+        .lock()
+        .ok()
+        .map(|t| t.clone())
+        .unwrap_or_default();
+
+    if expected.trim().is_empty() {
+        return false;
+    }
+
+    let provided = request
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("X-Comine-Token"))
+        .map(|h| h.value.as_str());
+
+    match provided {
+        Some(p) => p == expected,
+        None => false,
+    }
 }
 
 fn read_body(request: &mut Request) -> String {

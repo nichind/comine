@@ -177,6 +177,7 @@ export interface AppSettings {
 
   extensionServerEnabled: boolean;
   extensionLocalPort: number;
+  extensionServerToken: string;
 
   notificationsEnabled: boolean;
   notificationPosition: NotificationPosition;
@@ -307,6 +308,21 @@ export interface AppSettings {
   ytdlpAdvanced: YtDlpAdvancedSettings;
 }
 
+function generateExtensionServerToken(bytesLength = 32): string {
+  const bytes = new Uint8Array(bytesLength);
+  const cryptoObj = (globalThis as unknown as { crypto?: Crypto }).crypto;
+  if (cryptoObj?.getRandomValues) {
+    cryptoObj.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 export const defaultSettings: AppSettings = {
   onboardingCompleted: false,
   onboardingVersion: 1,
@@ -348,6 +364,7 @@ export const defaultSettings: AppSettings = {
 
   extensionServerEnabled: true,
   extensionLocalPort: 9549,
+  extensionServerToken: '',
 
   notificationsEnabled: true,
   notificationPosition: 'bottom-right',
@@ -499,7 +516,24 @@ export async function initSettings(): Promise<void> {
       }
     });
 
+    // Ensure the local extension server has a stable shared-secret token.
+    const tokenIdx = keys.indexOf('extensionServerToken');
+    const rawToken = tokenIdx >= 0 ? values[tokenIdx] : null;
+    if (!rawToken || typeof rawToken !== 'string' || !rawToken.trim()) {
+      loaded.extensionServerToken = generateExtensionServerToken();
+      await store!.set('extensionServerToken', loaded.extensionServerToken);
+      await store!.save();
+    }
+
     if (isAndroid()) {
+      const extensionEnabledIdx = keys.indexOf('extensionServerEnabled');
+      if (
+        extensionEnabledIdx >= 0 &&
+        (values[extensionEnabledIdx] === null || values[extensionEnabledIdx] === undefined)
+      ) {
+        loaded.extensionServerEnabled = false;
+      }
+
       if (
         values[keys.indexOf('toastPosition')] === null ||
         values[keys.indexOf('toastPosition')] === undefined
