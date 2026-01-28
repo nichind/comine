@@ -26,6 +26,7 @@
         "title": "Comine",
         "width": 1080,
         "height": 760,
+        "visible": false,
         "transparent": true,
         "decorations": false,
         "shadow": true,

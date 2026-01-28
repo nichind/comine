@@ -30,9 +30,10 @@
 
       #splash-screen {
         position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         z-index: 99999;
         pointer-events: none;
         opacity: 1;
@@ -55,6 +56,53 @@
         100% {
           transform: scale(1);
           opacity: 1;
+        }
+      }
+
+      #app-root {
+        height: 100%;
+        width: 100%;
+        opacity: 0;
+        transition: opacity 0.18s ease-out;
+      }
+
+      #app-root.is-visible {
+        opacity: 1;
+      }
+
+      :root {
+        --focus-ring-color: rgba(99, 102, 241, 0.9);
+        --focus-ring-width: 2px;
+      }
+
+      :where(a, button, input, textarea, select, summary, [role='button'], [tabindex]):focus {
+        outline: none;
+      }
+
+      html.using-keyboard
+        :where(a, button, input, textarea, select, summary, [role='button'], [tabindex]):focus {
+        box-shadow:
+          0 0 0 var(--focus-ring-width) var(--focus-ring-color) inset,
+          0 0 0 1px rgba(0, 0, 0, 0.35) inset;
+        border-radius: inherit;
+      }
+
+      @media (prefers-contrast: more) {
+        :root {
+          --focus-ring-color: rgba(255, 255, 255, 0.95);
+          --focus-ring-width: 3px;
+        }
+      }
+
+      @media (hover: none) and (pointer: coarse) {
+        * {
+          -webkit-tap-highlight-color: transparent;
+          -webkit-touch-callout: none;
+        }
+
+        :where(a, button, input, textarea, select, [role='button'], [tabindex]):focus {
+          outline: none !important;
+          box-shadow: none !important;
         }
       }
     </style>
@@ -83,16 +131,43 @@
         </defs>
       </svg>
     </div>
+    <div id="app-root">%sveltekit.body%</div>
     <script>
       (function () {
         try {
+          const root = document.documentElement;
+          const enable = () => root.classList.add('using-keyboard');
+          const disable = () => root.classList.remove('using-keyboard');
+
+          window.addEventListener(
+            'keydown',
+            (e) => {
+              const k = e.key;
+              if (
+                k === 'Tab' ||
+                k === 'ArrowUp' ||
+                k === 'ArrowDown' ||
+                k === 'ArrowLeft' ||
+                k === 'ArrowRight'
+              ) {
+                enable();
+              }
+            },
+            { passive: true }
+          );
+          window.addEventListener('pointerdown', disable, { passive: true });
+          window.addEventListener('mousedown', disable, { passive: true });
+          window.addEventListener('touchstart', disable, { passive: true });
+
           if (window.location.pathname.startsWith('/notification')) {
             const splash = document.getElementById('splash-screen');
             if (splash) splash.remove();
+
+            const appRoot = document.getElementById('app-root');
+            if (appRoot) appRoot.classList.add('is-visible');
           }
         } catch (e) {}
       })();
     </script>
-    <div style="display: contents; height: 100%;">%sveltekit.body%</div>
   </body>
 </html>

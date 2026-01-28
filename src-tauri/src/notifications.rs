@@ -300,7 +300,8 @@ pub async fn show_notification_window(
         {
             use windows::Win32::Foundation::HWND;
             use windows::Win32::UI::WindowsAndMessaging::{
-                GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+                GetWindowLongW, SetWindowLongPtrW, SetWindowLongW, GWL_EXSTYLE, GWLP_HWNDPARENT,
+                WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
             };
 
             if let Some(window) = app.get_webview_window(&window_label) {
@@ -314,11 +315,33 @@ pub async fn show_notification_window(
                         SetWindowLongW(
                             hwnd,
                             GWL_EXSTYLE,
-                            ex_style | WS_EX_TOOLWINDOW.0 as i32 | WS_EX_NOACTIVATE.0 as i32,
+                            (ex_style & !(WS_EX_APPWINDOW.0 as i32))
+                                | WS_EX_TOOLWINDOW.0 as i32
+                                | WS_EX_NOACTIVATE.0 as i32,
                         );
+
+                        if let Some(main_window) = app.get_webview_window("main") {
+                            if let Ok(main_hwnd_raw) = main_window.hwnd() {
+                                let main_hwnd = HWND(main_hwnd_raw.0 as *mut _);
+                                let _ = SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, main_hwnd.0 as isize);
+                            }
+                        }
                     }
                 }
             }
+        }
+
+        {
+            let app_handle = app.clone();
+            let window_id = window_label.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(750)).await;
+                if let Some(window) = app_handle.get_webview_window(&window_id) {
+                    if window.is_visible().ok() == Some(false) {
+                        let _ = window.show();
+                    }
+                }
+            });
         }
 
         info!("Notification window created: {}", window_label);
@@ -332,6 +355,52 @@ pub async fn reveal_notification_window(app: AppHandle, window_id: String) -> Re
     {
         info!("Revealing notification window: {}", window_id);
         if let Some(window) = app.get_webview_window(&window_id) {
+            #[cfg(target_os = "windows")]
+            {
+                use windows::Win32::Foundation::HWND;
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    GetWindowLongW, SetWindowLongPtrW, SetWindowLongW, SetWindowPos, GWL_EXSTYLE,
+                    GWLP_HWNDPARENT, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
+                    SWP_NOZORDER, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+                };
+
+                if let Ok(raw_hwnd) = window.hwnd() {
+                    unsafe {
+                        let hwnd = HWND(raw_hwnd.0 as *mut _);
+                        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                        SetWindowLongW(
+                            hwnd,
+                            GWL_EXSTYLE,
+                            (ex_style & !(WS_EX_APPWINDOW.0 as i32))
+                                | WS_EX_TOOLWINDOW.0 as i32
+                                | WS_EX_NOACTIVATE.0 as i32,
+                        );
+
+                        if let Some(main_window) = app.get_webview_window("main") {
+                            if let Ok(main_hwnd_raw) = main_window.hwnd() {
+                                let main_hwnd = HWND(main_hwnd_raw.0 as *mut _);
+                                let _ = SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, main_hwnd.0 as isize);
+                            }
+                        }
+
+                        let _ = SetWindowPos(
+                            hwnd,
+                            HWND(std::ptr::null_mut()),
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOMOVE
+                                | SWP_NOSIZE
+                                | SWP_NOZORDER
+                                | SWP_NOOWNERZORDER
+                                | SWP_FRAMECHANGED,
+                        );
+                    }
+                }
+            }
+
+            let _ = window.set_always_on_top(true);
             let _ = window.show();
             info!("Notification window revealed");
         }

@@ -3,7 +3,7 @@
   import { get } from 'svelte/store';
   import { browser } from '$app/environment';
   import { getCurrentWindow, type Window as TauriWindow } from '@tauri-apps/api/window';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event';
   import { readText } from '@tauri-apps/plugin-clipboard-manager';
   import { attachLogger } from '@tauri-apps/plugin-log';
   import { invoke } from '@tauri-apps/api/core';
@@ -401,8 +401,23 @@
       if (isNotificationRoute) {
         splash.remove();
       } else {
-        splash.classList.add('fade-out');
-        setTimeout(() => splash.remove(), 400);
+        const appRoot = document.getElementById('app-root');
+        const holdMs = 500;
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (!isAndroid()) {
+              try {
+                emit('frontend-ready');
+              } catch (e) {
+              }
+            }
+            setTimeout(() => {
+              splash.classList.add('fade-out');
+              if (appRoot) appRoot.classList.add('is-visible');
+              setTimeout(() => splash.remove(), 400);
+            }, holdMs);
+          });
+        });
       }
     }
 

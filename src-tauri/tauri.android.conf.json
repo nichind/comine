@@ -1,5 +1,21 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Comine",
+        "width": 1080,
+        "height": 760,
+        "visible": true,
+        "transparent": true,
+        "decorations": false,
+        "shadow": true,
+        "resizable": true,
+        "center": true
+      }
+    ]
+  },
   "build": {
     "beforeDevCommand": {
       "script": "pnpm dev --host 127.0.0.1",

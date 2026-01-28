@@ -19,6 +19,7 @@ use log::{error, info};
 
 use tauri::AppHandle;
 use tauri::Emitter;
+use tauri::Listener;
 use tauri::Manager;
 
 #[cfg(target_os = "windows")]
@@ -1054,18 +1055,90 @@ pub fn run() {
             {
                 tray::setup(app.handle())?;
 
-                let start_minimized = std::env::args().any(|arg| arg == "--minimized");
-                if start_minimized {
-                    if let Some(window) = app.get_webview_window("main") {
-                        use tauri_plugin_store::StoreExt;
-                        let should_minimize = app
+                let start_minimized_arg = std::env::args().any(|arg| arg == "--minimized");
+                use tauri_plugin_store::StoreExt;
+                let start_minimized_setting = app
+                    .store("settings.json")
+                    .ok()
+                    .and_then(|store| store.get("startMinimized"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+
+                let should_show_on_ready = !(start_minimized_arg && start_minimized_setting);
+
+                {
+                    let app_handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        let effect_type = app_handle
                             .store("settings.json")
                             .ok()
-                            .and_then(|store| store.get("startMinimized"))
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(true);
+                            .and_then(|store| store.get("backgroundType"))
+                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                            .unwrap_or_else(|| "acrylic".to_string());
 
-                        if should_minimize {
+                        let effect_type = match effect_type.as_str() {
+                            "acrylic"
+                            | "blur"
+                            | "mica"
+                            | "mica-dark"
+                            | "mica-light"
+                            | "tabbed"
+                            | "tabbed-dark"
+                            | "tabbed-light" => effect_type,
+                            _ if effect_type.starts_with("vibrancy-") => effect_type,
+                            _ => "none".to_string(),
+                        };
+
+                        let _ = set_window_effect(app_handle, effect_type).await;
+                    });
+                }
+
+                {
+                    use std::sync::atomic::{AtomicBool, Ordering};
+                    use std::sync::Arc;
+                    use std::time::Duration;
+                    use tokio::time::sleep;
+
+                    let was_shown = Arc::new(AtomicBool::new(false));
+
+                    let app_handle = app.handle().clone();
+                    let app_handle_for_listener = app_handle.clone();
+                    let app_handle_for_event = app_handle.clone();
+                    let was_shown_for_event = Arc::clone(&was_shown);
+                    app_handle_for_listener.listen("frontend-ready", move |_| {
+                        if !should_show_on_ready {
+                            return;
+                        }
+                        if was_shown_for_event.swap(true, Ordering::SeqCst) {
+                            return;
+                        }
+
+                        if let Some(window) = app_handle_for_event.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    });
+
+                    let app_handle = app.handle().clone();
+                    let was_shown_for_timeout = Arc::clone(&was_shown);
+                    tauri::async_runtime::spawn(async move {
+                        sleep(Duration::from_millis(3500)).await;
+                        if !should_show_on_ready {
+                            return;
+                        }
+                        if was_shown_for_timeout.swap(true, Ordering::SeqCst) {
+                            return;
+                        }
+
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.show();
+                        }
+                    });
+                }
+
+                if start_minimized_arg {
+                    if let Some(window) = app.get_webview_window("main") {
+                        if start_minimized_setting {
                             let _ = window.hide();
                         }
                     }
