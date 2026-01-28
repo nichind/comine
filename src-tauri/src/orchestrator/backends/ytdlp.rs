@@ -1,7 +1,7 @@
 //! yt-dlp backend (desktop child process / Android JNI).
 
-use std::collections::HashMap;
-use std::sync::Mutex;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use log::{debug, info, warn};
@@ -148,6 +148,7 @@ fn normalize_url_for_ytdlp(url: &str) -> String {
 
     url.to_string()
 }
+
 
 #[cfg(target_os = "android")]
 pub enum AndroidJobResult {
@@ -450,6 +451,18 @@ impl YtdlpBackend {
         cmd.env("PYTHONIOENCODING", "utf-8");
         cmd.arg("--encoding").arg("utf-8");
 
+        // Prefer app-managed ffmpeg if available.
+        if let Ok(ffmpeg_path) = crate::deps::get_ffmpeg_path(&self.app) {
+            if ffmpeg_path.exists() {
+                let ffmpeg_location = ffmpeg_path
+                    .parent()
+                    .unwrap_or(ffmpeg_path.as_path())
+                    .to_string_lossy()
+                    .to_string();
+                cmd.args(["--ffmpeg-location", &ffmpeg_location]);
+            }
+        }
+
         let req = &job.request;
         let opts = &req.options;
 
@@ -474,11 +487,7 @@ impl YtdlpBackend {
             }
         }
 
-        // For audio-only downloads, we handle thumbnail embedding ourselves (with letterbox cropping)
-        // so don't let yt-dlp embed the uncropped thumbnail
-        if opts.embed_thumbnail && !req.quality.audio_only {
-            cmd.arg("--embed-thumbnail");
-        }
+        // Thumbnails are embedded post-download (best-effort).
         if opts.embed_metadata {
             cmd.arg("--embed-metadata");
         }
@@ -567,6 +576,14 @@ impl YtdlpBackend {
 
     #[cfg(not(target_os = "android"))]
     async fn spawn_desktop(&self, ctx: SpawnContext) -> Result<String, BackendError> {
+        self.spawn_desktop_once(ctx).await
+    }
+
+    #[cfg(not(target_os = "android"))]
+    async fn spawn_desktop_once(
+        &self,
+        ctx: SpawnContext,
+    ) -> Result<String, BackendError> {
         info!(target: "ytdlp", "Starting download job {} for URL: {}", ctx.job.id, ctx.job.request.url);
         info!(target: "ytdlp", "Quality settings: format={}, max_height={:?}, audio_only={}", 
               ctx.job.request.quality.format, ctx.job.request.quality.max_height, ctx.job.request.quality.audio_only);
@@ -601,10 +618,22 @@ impl YtdlpBackend {
             .take()
             .ok_or_else(|| BackendError::ProcessError("Failed to capture stderr".to_string()))?;
 
+        // Keep a tail of stderr to include in error messages and to detect known postprocessing failures.
+        let stderr_tail: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::with_capacity(80)));
+        let stderr_tail_clone = stderr_tail.clone();
         tokio::spawn(async move {
             let mut reader = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = reader.next_line().await {
                 warn!(target: "ytdlp", "ERR: {}", line);
+
+                let mut guard = match stderr_tail_clone.lock() {
+                    Ok(g) => g,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                if guard.len() >= 80 {
+                    guard.pop_front();
+                }
+                guard.push_back(line);
             }
         });
 
@@ -612,7 +641,7 @@ impl YtdlpBackend {
         let mut reader = BufReader::new(stdout);
         let mut captured_output_path: Option<String> = None;
         let mut _captured_title: Option<String> = None;
-        let mut _captured_thumbnail: Option<String> = None;
+        let mut captured_thumbnail_url: Option<String> = None;
 
         loop {
             tokio::select! {
@@ -661,7 +690,7 @@ impl YtdlpBackend {
                             }
                             if let Some(thumb) = parse_thumbnail_line(&line) {
                                 if !thumb.is_empty() && thumb != "NA" {
-                                    _captured_thumbnail = Some(thumb.clone());
+                                    captured_thumbnail_url = Some(thumb.clone());
                                     use tauri::Manager;
                                     let manager = self.app.state::<std::sync::Arc<crate::orchestrator::manager::JobManager>>();
                                     manager.update_job_metadata(&ctx.job.id, None, Some(&thumb));
@@ -685,10 +714,23 @@ impl YtdlpBackend {
             .map_err(|e| BackendError::ProcessError(e.to_string()))?;
 
         if !status.success() {
-            cleanup_progress_tracker(&ctx.job.id);
+            let tail = {
+                let guard = match stderr_tail.lock() {
+                    Ok(g) => g,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                guard.iter().cloned().collect::<Vec<_>>().join("\n")
+            };
+            let tail_msg = if tail.trim().is_empty() {
+                String::new()
+            } else {
+                format!("\n\nyt-dlp stderr tail:\n{}", tail)
+            };
+
             return Err(BackendError::ProcessError(format!(
-                "yt-dlp exited with code {:?}",
-                status.code()
+                "yt-dlp exited with code {:?}{}",
+                status.code(),
+                tail_msg
             )));
         }
 
@@ -705,30 +747,39 @@ impl YtdlpBackend {
             )
         });
 
-        // For audio-only downloads with thumbnail embedding, we handle it ourselves
-        // (with letterbox cropping) since yt-dlp doesn't do cropping
-        let final_output_path =
-            if ctx.job.request.quality.audio_only && ctx.job.request.options.embed_thumbnail {
-                if let Some(thumbnail_url) = resolved_thumb.as_deref() {
-                    match crate::orchestrator::thumbnail::embed_thumbnail(
-                        &self.app,
-                        &output_path,
-                        thumbnail_url,
-                    )
-                    .await
-                    {
-                        Ok(new_path) => new_path,
-                        Err(e) => {
-                            warn!("Thumbnail embedding failed: {}", e);
-                            output_path.clone()
-                        }
-                    }
-                } else {
-                    output_path.clone()
+        let mut final_output_path = output_path.clone();
+
+        // Audio-only: best-effort cover art.
+        if ctx.job.request.quality.audio_only && ctx.job.request.options.embed_thumbnail {
+            if let Some(thumbnail_url) = resolved_thumb.as_deref() {
+                match crate::orchestrator::thumbnail::embed_cover_art(
+                    &self.app,
+                    &final_output_path,
+                    thumbnail_url,
+                )
+                .await
+                {
+                    Ok(new_path) => final_output_path = new_path,
+                    Err(e) => warn!("Thumbnail embedding failed (audio-only): {}", e),
                 }
-            } else {
-                output_path.clone()
-            };
+            }
+        }
+
+        // Video: best-effort cover art.
+        if !ctx.job.request.quality.audio_only && ctx.job.request.options.embed_thumbnail {
+            if let Some(thumbnail_url) = captured_thumbnail_url.as_deref() {
+                match crate::orchestrator::thumbnail::embed_cover_art(
+                    &self.app,
+                    &final_output_path,
+                    thumbnail_url,
+                )
+                .await
+                {
+                    Ok(new_path) => final_output_path = new_path,
+                    Err(e) => warn!("Thumbnail embedding failed (video): {}", e),
+                }
+            }
+        }
 
         Ok(final_output_path)
     }

@@ -311,13 +311,7 @@ object YtDlp {
                 cookiePath?.let { addOption("--cookies", it) }
 
                 if (ffmpegAvailable) {
-                    // Match desktop behavior:
-                    // - non-audio: let yt-dlp embed thumbnail
-                    // - audio-only: embed ourselves after download
-                    if (embedThumbnail && !audioOnly) {
-                        addOption("--embed-thumbnail")
-                        addOption("--convert-thumbnails", "jpg")
-                    }
+                    // Embed thumbnails post-download (best-effort).
                     if (embedMetadata) addOption("--embed-metadata")
                     if (embedSubtitles) {
                         addOption("--write-subs"); addOption("--write-auto-subs")
@@ -391,11 +385,9 @@ object YtDlp {
                         .takeIf { it.isNotBlank() && it != "%(title)s" }
                 }
 
-            // Desktop embeds thumbnails for audio-only as a separate step.
-            // Do the same here using FFmpegExecutor.
+            // Best-effort cover art embedding.
             if (
                 response.exitCode == 0 &&
-                audioOnly &&
                 embedThumbnail &&
                 ffmpegAvailable &&
                 !outputPath.isNullOrBlank()
@@ -445,7 +437,13 @@ object YtDlp {
         if (!inputAudio.exists()) return audioPath
 
         val ext = inputAudio.extension.lowercase()
-        val outputExt = if (ext == "opus") "ogg" else ext
+        // opus doesn't support cover art in opus muxer; prefer ogg.
+        // webm doesn't support attached pictures; prefer mkv.
+        val outputExt = when (ext) {
+            "opus" -> "ogg"
+            "webm" -> "mkv"
+            else -> ext
+        }
 
         val cacheDir = File(app.cacheDir, "thumb").apply { mkdirs() }
         val thumbSrc = File(cacheDir, "${jobId}_src")
@@ -488,7 +486,11 @@ object YtDlp {
         }
 
         val tempOut = File(inputAudio.parentFile, "${inputAudio.nameWithoutExtension}.temp.$outputExt")
-        val finalOut = if (ext == "opus") File(inputAudio.parentFile, "${inputAudio.nameWithoutExtension}.ogg") else inputAudio
+        val finalOut = when (ext) {
+            "opus" -> File(inputAudio.parentFile, "${inputAudio.nameWithoutExtension}.ogg")
+            "webm" -> File(inputAudio.parentFile, "${inputAudio.nameWithoutExtension}.mkv")
+            else -> inputAudio
+        }
 
         val embedArgs = buildList {
             add("-y")

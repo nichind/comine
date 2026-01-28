@@ -13,16 +13,33 @@ use image::GenericImageView;
 #[cfg(target_os = "windows")]
 use crate::utils::CommandHideConsole;
 
-/// Embeds cover art; may change container (e.g. opus -> ogg).
+/// Embed cover art (best-effort).
 #[cfg(not(target_os = "android"))]
 pub async fn embed_thumbnail(
     app: &AppHandle,
     audio_path: &str,
     thumbnail_url: &str,
 ) -> Result<String, BackendError> {
-    embed_thumbnail_from_url(app, audio_path, thumbnail_url)
-        .await
-        .map_err(BackendError::Other)
+    embed_cover_art(app, audio_path, thumbnail_url).await
+}
+
+/// Embed cover art (best-effort).
+#[cfg(not(target_os = "android"))]
+pub async fn embed_video_thumbnail(
+    app: &AppHandle,
+    video_path: &str,
+    thumbnail_url: &str,
+) -> Result<String, BackendError> {
+    embed_cover_art(app, video_path, thumbnail_url).await
+}
+
+#[cfg(target_os = "android")]
+pub async fn embed_video_thumbnail(
+    _app: &AppHandle,
+    video_path: &str,
+    _thumbnail_url: &str,
+) -> Result<String, BackendError> {
+    Ok(video_path.to_string())
 }
 
 #[cfg(target_os = "android")]
@@ -32,6 +49,57 @@ pub async fn embed_thumbnail(
     _thumbnail_url: &str,
 ) -> Result<String, BackendError> {
     Ok(audio_path.to_string())
+}
+
+/// Single entrypoint for cover art embedding.
+/// May remux: opus→ogg, webm→mkv.
+#[cfg(not(target_os = "android"))]
+pub async fn embed_cover_art(
+    app: &AppHandle,
+    media_path: &str,
+    thumbnail_url: &str,
+) -> Result<String, BackendError> {
+    let ext = std::path::Path::new(media_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // Rough classification by common container extensions.
+    let is_audio = matches!(
+        ext.as_str(),
+        "mp3" | "m4a" | "aac" | "flac" | "wav" | "ogg" | "opus" | "mka"
+    );
+    let is_video = matches!(
+        ext.as_str(),
+        "mp4" | "mkv" | "webm" | "mov" | "avi" | "m4v" | "ts" | "mts" | "flv" | "wmv" | "3gp"
+    );
+
+    let result = if is_video {
+        embed_video_thumbnail_from_url(app, media_path, thumbnail_url).await
+    } else if is_audio {
+        embed_thumbnail_from_url(app, media_path, thumbnail_url).await
+    } else {
+        // Unknown container: prefer audio path first (more conservative), then video.
+        match embed_thumbnail_from_url(app, media_path, thumbnail_url).await {
+            Ok(p) => Ok(p),
+            Err(e1) => match embed_video_thumbnail_from_url(app, media_path, thumbnail_url).await {
+                Ok(p) => Ok(p),
+                Err(_e2) => Err(e1),
+            },
+        }
+    };
+
+    result.map_err(BackendError::Other)
+}
+
+#[cfg(target_os = "android")]
+pub async fn embed_cover_art(
+    _app: &AppHandle,
+    media_path: &str,
+    _thumbnail_url: &str,
+) -> Result<String, BackendError> {
+    Ok(media_path.to_string())
 }
 
 #[cfg(not(target_os = "android"))]
@@ -163,6 +231,148 @@ async fn embed_thumbnail_from_url(
         .map_err(|e| format!("Failed to encode thumbnail as JPEG: {}", e))?;
 
     embed_thumbnail_jpeg_bytes(app, audio_path, &jpeg_bytes).await
+}
+
+#[cfg(not(target_os = "android"))]
+async fn embed_video_thumbnail_from_url(
+    app: &AppHandle,
+    video_path: &str,
+    thumbnail_url: &str,
+) -> Result<String, String> {
+    use std::io::Cursor;
+
+    if thumbnail_url.is_empty() {
+        return Err("Empty thumbnail URL".to_string());
+    }
+
+    let response = reqwest::get(thumbnail_url)
+        .await
+        .map_err(|e| format!("Failed to download thumbnail: {}", e))?;
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read thumbnail bytes: {}", e))?;
+
+    let img =
+        image::load_from_memory(&bytes).map_err(|e| format!("Failed to decode image: {}", e))?;
+
+    let processed = if is_letterboxed_thumbnail(&img) {
+        crop_to_center_square(img)
+    } else {
+        img
+    };
+
+    let mut jpeg_bytes: Vec<u8> = Vec::new();
+    let mut cursor = Cursor::new(&mut jpeg_bytes);
+    processed
+        .write_to(&mut cursor, image::ImageFormat::Jpeg)
+        .map_err(|e| format!("Failed to encode thumbnail as JPEG: {}", e))?;
+
+    embed_video_thumbnail_jpeg_bytes(app, video_path, &jpeg_bytes).await
+}
+
+#[cfg(not(target_os = "android"))]
+async fn embed_video_thumbnail_jpeg_bytes(
+    app: &AppHandle,
+    video_path: &str,
+    jpeg_bytes: &[u8],
+) -> Result<String, String> {
+    use std::process::Stdio;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let video_path_buf = std::path::PathBuf::from(video_path);
+    let video_ext = video_path_buf
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("Failed to get cache dir: {}", e))?;
+    tokio::fs::create_dir_all(&cache_dir)
+        .await
+        .map_err(|e| format!("Failed to create cache dir: {}", e))?;
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let thumb_path = cache_dir.join(format!("cover_{}.jpg", stamp));
+    tokio::fs::write(&thumb_path, jpeg_bytes)
+        .await
+        .map_err(|e| format!("Failed to write thumbnail file: {}", e))?;
+
+    let ffmpeg_path = crate::deps::get_ffmpeg_path(app)?;
+    if !ffmpeg_path.exists() {
+        let _ = tokio::fs::remove_file(&thumb_path).await;
+        return Err("FFmpeg not found".to_string());
+    }
+
+    // webm doesn't support attached pictures; remux to mkv for cover art.
+    let output_ext = if video_ext == "webm" { "mkv" } else { video_ext.as_str() };
+
+    let temp_output = video_path_buf.with_extension(format!("temp.{}", output_ext));
+    let final_output = if video_ext == "webm" {
+        video_path_buf.with_extension("mkv")
+    } else {
+        video_path_buf.clone()
+    };
+
+    let mut cmd = tokio::process::Command::new(&ffmpeg_path);
+    cmd.args([
+        "-y",
+        "-i",
+        video_path,
+        "-i",
+        thumb_path
+            .to_str()
+            .ok_or("Invalid thumbnail path encoding")?,
+        "-map",
+        "0",
+        "-map",
+        "1",
+        "-c",
+        "copy",
+        "-c:v:1",
+        "mjpeg",
+        "-disposition:v:1",
+        "attached_pic",
+        "-metadata:s:v:1",
+        "title=Album cover",
+        "-metadata:s:v:1",
+        "comment=Cover (front)",
+    ]);
+
+    cmd.arg(temp_output.to_str().ok_or("Invalid output path encoding")?);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    cmd.hide_console();
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run ffmpeg: {}", e))?;
+
+    let _ = tokio::fs::remove_file(&thumb_path).await;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let _ = tokio::fs::remove_file(&temp_output).await;
+        return Err(format!("FFmpeg failed to embed video thumbnail: {}", stderr));
+    }
+
+    tokio::fs::rename(&temp_output, &final_output)
+        .await
+        .map_err(|e| format!("Failed to rename temp file: {}", e))?;
+
+    if video_ext == "webm" {
+        let _ = tokio::fs::remove_file(video_path).await;
+    }
+
+    Ok(final_output.to_string_lossy().to_string())
 }
 
 #[cfg(not(target_os = "android"))]
