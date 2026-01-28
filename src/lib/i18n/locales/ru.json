@@ -468,6 +468,7 @@
     "noResults": "Настройки не найдены для",
     "resetSection": "Сбросить",
     "resetSectionTooltip": "Сбросить настройки раздела",
+    "backToSections": "Назад к настройкам",
     "search": {
       "placeholder": "Поиск настроек..."
     },
@@ -572,6 +573,10 @@
     },
     "app": {
       "title": "Приложение",
+      "groups": {
+        "appearance": "Внешний вид",
+        "privacy": "Конфиденциальность"
+      },
       "updates": "Обновления",
       "currentVersion": "Текущая версия: {version}",
       "checkForUpdates": "Проверить обновления",
@@ -701,6 +706,8 @@
       "proxyFallbackTooltip": "При ошибке прокси попробовать системный, затем прямое подключение",
       "proxyInvalid": "Неверный формат URL прокси",
       "proxyValidFormats": "Допустимые форматы: http://host:port, https://host:port, socks5://host:port",
+      "systemProxy": "Системный прокси",
+      "systemProxyDescription": "Определить и показать настройки системного прокси",
       "systemProxyDetected": "Системный прокси обнаружен",
       "noSystemProxy": "Системный прокси не настроен",
       "detectingProxy": "Поиск системного прокси...",
@@ -757,6 +764,7 @@
     },
     "deps": {
       "title": "Зависимости",
+      "description": "Управление обязательными и дополнительными компонентами для загрузки",
       "required": "Обязательно",
       "optional": "Опционально",
       "recommended": "Рекомендуется",
@@ -786,6 +794,7 @@
     },
     "data": {
       "title": "Данные",
+      "description": "Управление данными приложения, историей и настройками",
       "resetSettings": "Сбросить все настройки",
       "resetSettingsDescription": "Восстановить все настройки по умолчанию",
       "resetSettingsConfirm": "Вы уверены, что хотите сбросить все настройки? Это действие нельзя отменить.",

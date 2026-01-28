@@ -22,6 +22,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.content.pm.PackageManager
 import android.Manifest
 import androidx.core.content.FileProvider
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import org.json.JSONArray
@@ -33,6 +36,7 @@ import java.net.URL
 import java.net.URLConnection
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class MainActivity : TauriActivity() {
     companion object {
@@ -49,6 +53,7 @@ class MainActivity : TauriActivity() {
     private val infoExecutor = Executors.newCachedThreadPool()
 
     private var pendingShareUrl: String? = null
+    private var pendingNavigateTo: String? = null
     private var folderPickerCallback: String? = null
     private var filePickerCallback: String? = null
 
@@ -77,7 +82,9 @@ class MainActivity : TauriActivity() {
     instance = this
 
     DownloadNotifications.init(this)
+    UpdateNotifications.init(this)
     maybeRequestPostNotifications()
+    scheduleUpdateChecker()
 
     folderPickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
       val callbackName = folderPickerCallback
@@ -174,6 +181,12 @@ class MainActivity : TauriActivity() {
             pendingShareUrl = null
             dispatchShareIntent(url)
         }
+        
+        val navigateTo = pendingNavigateTo
+        if (!navigateTo.isNullOrBlank()) {
+            pendingNavigateTo = null
+            mainHandler.postDelayed({ dispatchNavigateTo(navigateTo) }, 500)
+        }
     }
 
     override fun onDestroy() {
@@ -190,6 +203,17 @@ class MainActivity : TauriActivity() {
 
   private fun handleIntent(intent: Intent?) {
     if (intent == null) return
+    
+    if (intent.action == UpdateNotifications.ACTION_OPEN_UPDATES) {
+      val navigateTo = intent.getStringExtra(UpdateNotifications.EXTRA_NAVIGATE_TO)
+      if (!navigateTo.isNullOrBlank()) {
+        if (webView == null) pendingNavigateTo = navigateTo
+        else dispatchNavigateTo(navigateTo)
+      }
+      UpdateNotifications.dismiss()
+      return
+    }
+    
     val url: String? = when (intent.action) {
       Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
       Intent.ACTION_VIEW -> intent.dataString
@@ -206,6 +230,28 @@ class MainActivity : TauriActivity() {
   private fun dispatchShareIntent(url: String) {
     val urlLit = JSONObject.quote(url)
     evalJs("(function(){try{window.dispatchEvent(new CustomEvent('share-intent',{detail:{url:$urlLit}}));}catch(e){}})();")
+  }
+
+  private fun dispatchNavigateTo(path: String) {
+    val pathLit = JSONObject.quote(path)
+    evalJs("(function(){try{window.dispatchEvent(new CustomEvent('navigate-to',{detail:{path:$pathLit}}));}catch(e){}})();")
+  }
+
+  private fun scheduleUpdateChecker() {
+    try {
+      val updateCheckRequest = PeriodicWorkRequestBuilder<UpdateCheckWorker>(
+        6, TimeUnit.HOURS, 15, TimeUnit.MINUTES
+      ).build()
+
+      WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+        UpdateCheckWorker.WORK_NAME,
+        ExistingPeriodicWorkPolicy.KEEP,
+        updateCheckRequest
+      )
+      Log.i(TAG, "Background update checker scheduled")
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to schedule update checker", e)
+    }
   }
 
   private fun dispatchYtdlpReady() {
@@ -844,6 +890,13 @@ class MainActivity : TauriActivity() {
           sendCallback(callbackName, JSONObject().apply { put("url", thumbnailUrl) }.toString())
         }
       }
+    }
+
+    @JavascriptInterface
+    fun syncUpdateSettings(autoUpdate: Boolean, allowPrereleases: Boolean) {
+      val settings = UpdateCheckWorker.Settings(applicationContext)
+      settings.setAutoUpdateEnabled(autoUpdate)
+      settings.setAllowPrereleases(allowPrereleases)
     }
   }
 

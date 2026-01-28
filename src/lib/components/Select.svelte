@@ -273,4 +273,23 @@
   .select-option.selected :global(svg) {
     color: var(--accent, #6366f1);
   }
+
+  @media (max-width: 640px) {
+    .select-trigger {
+      height: 44px;
+      padding: 0 16px;
+      border-radius: var(--radius-lg, 10px);
+    }
+
+    .select-dropdown {
+      padding: 4px;
+      border-radius: var(--radius, 8px);
+    }
+
+    .select-option {
+      padding: 14px 16px;
+      border-radius: var(--radius, 6px);
+      min-height: 48px;
+    }
+  }
 </style>

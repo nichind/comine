@@ -1117,9 +1117,9 @@
     align-items: center;
     gap: 5px;
     padding: 4px 10px;
-    background: rgba(99, 102, 241, 0.12);
+    background: var(--accent-alpha, rgba(99, 102, 241, 0.12));
     border-radius: var(--radius-sm, 6px);
-    color: #818cf8;
+    color: var(--accent-light, #818cf8);
     font-size: 11px;
     font-weight: 600;
   }
@@ -1131,8 +1131,8 @@
   }
 
   .header-badge.channel {
-    background: rgba(99, 102, 241, 0.12);
-    color: #818cf8;
+    background: var(--accent-alpha, rgba(99, 102, 241, 0.12));
+    color: var(--accent-light, #818cf8);
   }
 
   .header-spacer {

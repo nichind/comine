@@ -35,6 +35,10 @@ export interface ShareIntentEvent {
   url: string;
 }
 
+export interface NavigateToEvent {
+  path: string;
+}
+
 export function onShareIntent(callback: (url: string) => void): () => void {
   if (!isAndroid()) {
     return () => {};
@@ -50,6 +54,23 @@ export function onShareIntent(callback: (url: string) => void): () => void {
 
   window.addEventListener('share-intent', handler);
   return () => window.removeEventListener('share-intent', handler);
+}
+
+export function onNavigateTo(callback: (path: string) => void): () => void {
+  if (!isAndroid()) {
+    return () => {};
+  }
+
+  const handler = (event: Event) => {
+    const customEvent = event as CustomEvent<NavigateToEvent>;
+    const path = customEvent.detail?.path;
+    if (path) {
+      callback(path);
+    }
+  };
+
+  window.addEventListener('navigate-to', handler);
+  return () => window.removeEventListener('navigate-to', handler);
 }
 
 export async function openFileOnAndroid(filePath: string): Promise<boolean> {

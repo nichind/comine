@@ -44,11 +44,11 @@
   }
 
   let effectiveAccent = $derived.by(() => {
-    if (isRgbMode) {
-      return hslToHex(rgbHue / 360, 0.75, 0.5);
-    }
     if ($settings.useSystemAccent && systemAccentColor) {
       return systemAccentColor;
+    }
+    if (isRgbMode) {
+      return hslToHex(rgbHue / 360, 0.75, 0.5);
     }
     return $settings.accentColor || '#6366F1';
   });

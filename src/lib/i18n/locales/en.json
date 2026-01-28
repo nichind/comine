@@ -467,6 +467,7 @@
     "noResults": "No settings found for",
     "resetSection": "Reset",
     "resetSectionTooltip": "Reset section to defaults",
+    "backToSections": "Back to settings",
     "search": {
       "placeholder": "Search settings..."
     },
@@ -569,6 +570,10 @@
     },
     "app": {
       "title": "App",
+      "groups": {
+        "appearance": "Appearance",
+        "privacy": "Privacy"
+      },
       "updates": "Updates",
       "currentVersion": "Current version: {version}",
       "checkForUpdates": "Check for updates",
@@ -684,6 +689,7 @@
     },
     "deps": {
       "title": "Dependencies",
+      "description": "Manage required and optional components for downloading",
       "required": "Required",
       "optional": "Optional",
       "recommended": "Recommended",
@@ -713,6 +719,7 @@
     },
     "data": {
       "title": "Data",
+      "description": "Manage your app data, history, and settings",
       "resetSettings": "Reset all settings",
       "resetSettingsDescription": "Restore all settings to their default values",
       "resetSettingsConfirm": "Are you sure you want to reset all settings to defaults? This cannot be undone.",
@@ -790,6 +797,8 @@
       "retryWithoutProxyTooltip": "If proxy fails or returns errors (invalid proxy, timeout, HTTP 412), automatically retry without proxy or with system proxy. Works for both yt-dlp and lux downloads.",
       "proxyInvalid": "Invalid proxy URL format",
       "proxyValidFormats": "Valid formats: http://host:port, https://host:port, socks5://host:port",
+      "systemProxy": "System proxy",
+      "systemProxyDescription": "Detect and display your system's proxy configuration",
       "systemProxyDetected": "System proxy detected",
       "noSystemProxy": "No system proxy configured",
       "detectingProxy": "Detecting system proxy...",

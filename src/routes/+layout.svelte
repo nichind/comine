@@ -53,6 +53,7 @@
     isAndroid,
     openFileOnAndroid,
     onShareIntent,
+    onNavigateTo,
     setupAndroidLogHandler,
     cleanupAndroidCallbacks,
   } from '$lib/utils/android';
@@ -157,6 +158,7 @@
   let extensionProgressUnsub: (() => void) | null = null;
   let detachLogger: (() => void) | null = null;
   let cleanupShareIntent: (() => void) | null = null;
+  let cleanupNavigateTo: (() => void) | null = null;
 
   let broadcastPollTimer: ReturnType<typeof setInterval> | null = null;
   let broadcastsFetchInFlight = false;
@@ -459,6 +461,7 @@
 
     if (isAndroid()) {
       cleanupShareIntent = onShareIntent(handleAndroidShareIntent);
+      cleanupNavigateTo = onNavigateTo(handleAndroidNavigateTo);
 
       setupAndroidLogHandler((level, source, message) => {
         logs.log(level, source, message);
@@ -1119,6 +1122,9 @@
     if (cleanupShareIntent) {
       cleanupShareIntent();
     }
+    if (cleanupNavigateTo) {
+      cleanupNavigateTo();
+    }
     if (isAndroid()) {
       cleanupAndroidCallbacks();
     }
@@ -1383,6 +1389,10 @@
       goto(`/?url=${encodeURIComponent(url)}`);
       toast.info($t('clipboard.detected'));
     }
+  }
+
+  function handleAndroidNavigateTo(path: string) {
+    if (path) goto(`/${path}`);
   }
 
   async function releaseMemoryOnHide() {

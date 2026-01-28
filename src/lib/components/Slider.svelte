@@ -73,8 +73,8 @@
   .blur-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
     background: var(--accent, #6366f1);
     border-radius: 50%;
     cursor: pointer;
@@ -84,13 +84,13 @@
   }
 
   .blur-slider::-webkit-slider-thumb:hover {
-    background: #818cf8;
+    background: var(--accent-light, #818cf8);
     transform: scale(1.1);
   }
 
   .blur-slider::-moz-range-thumb {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
     background: var(--accent, #6366f1);
     border: none;
     border-radius: 50%;
@@ -101,15 +101,37 @@
   }
 
   .blur-slider::-moz-range-thumb:hover {
-    background: #818cf8;
+    background: var(--accent-light, #818cf8);
     transform: scale(1.1);
   }
 
   .slider-value {
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     font-family: 'JetBrains Mono', monospace;
     color: rgba(255, 255, 255, 0.7);
     min-width: 40px;
     text-align: right;
+  }
+
+  @media (max-width: 640px) {
+    .slider-with-value {
+      min-width: 0;
+      gap: 16px;
+    }
+
+    .blur-slider {
+      height: 8px;
+      border-radius: 4px;
+    }
+
+    .blur-slider::-webkit-slider-thumb {
+      width: 26px;
+      height: 26px;
+    }
+
+    .blur-slider::-moz-range-thumb {
+      width: 26px;
+      height: 26px;
+    }
   }
 </style>

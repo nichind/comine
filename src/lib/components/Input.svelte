@@ -119,4 +119,35 @@
     width: 18px;
     height: 18px;
   }
+
+  @media (max-width: 640px) {
+    .input {
+      padding: 12px 16px;
+      font-size: 16px;
+      border-radius: var(--radius-lg, 10px);
+      min-height: 44px;
+    }
+
+    .input.has-icon-left {
+      padding-left: 44px;
+    }
+
+    .input.has-icon-right {
+      padding-right: 44px;
+    }
+
+    .icon-left {
+      left: 14px;
+    }
+
+    .icon-right {
+      right: 14px;
+    }
+
+    .icon-left :global(svg),
+    .icon-right :global(svg) {
+      width: 20px;
+      height: 20px;
+    }
+  }
 </style>

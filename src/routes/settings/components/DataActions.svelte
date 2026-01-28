@@ -6,8 +6,8 @@
   import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
   import { invoke } from '@tauri-apps/api/core';
   import { toast } from '$lib/components/Toast.svelte';
-  import SettingItem from '$lib/components/SettingItem.svelte';
-  import Icon from '$lib/components/Icon.svelte';
+  import Icon, { type IconName } from '$lib/components/Icon.svelte';
+  import HighlightText from '$lib/components/HighlightText.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import { onMount } from 'svelte';
   import { isDesktop } from '$lib/utils/android';
@@ -22,7 +22,6 @@
   let showClearHistoryModal = $state(false);
   let onDesktop = $state(true);
   let clearingCache = $state(false);
-  let importMessage = $state<{ text: string; type: 'success' | 'error' } | null>(null);
 
   onMount(() => {
     onDesktop = isDesktop();
@@ -54,12 +53,7 @@
       );
 
       const filePath = await save({
-        filters: [
-          {
-            name: 'JSON',
-            extensions: ['json'],
-          },
-        ],
+        filters: [{ name: 'JSON', extensions: ['json'] }],
         defaultPath: `comine-backup-${new Date().toISOString().split('T')[0]}.json`,
       });
 
@@ -76,12 +70,7 @@
   async function handleImportHistory() {
     try {
       const filePath = await open({
-        filters: [
-          {
-            name: 'JSON',
-            extensions: ['json'],
-          },
-        ],
+        filters: [{ name: 'JSON', extensions: ['json'] }],
         multiple: false,
       });
 
@@ -99,9 +88,6 @@
 
           if (newItems.length > 0) {
             await history.restore(newItems);
-          }
-
-          if (newItems.length > 0) {
             toast.success($t('settings.importCount', { count: newItems.length }));
           } else {
             toast.info($t('settings.importNoNew'));
@@ -116,20 +102,10 @@
             updateSetting('downloadPath', newSettings.downloadPath);
           }
         }
-
-        importMessage = {
-          text: $t('settings.importSuccess'),
-          type: 'success',
-        };
-        setTimeout(() => (importMessage = null), 3000);
       }
     } catch (err) {
       console.error('Failed to import history:', err);
-      importMessage = {
-        text: $t('settings.importError'),
-        type: 'error',
-      };
-      setTimeout(() => (importMessage = null), 3000);
+      toast.error($t('settings.importError'));
     }
   }
 
@@ -145,83 +121,103 @@
       clearingCache = false;
     }
   }
+
+  interface ActionItem {
+    id: string;
+    icon: IconName;
+    titleKey: string;
+    descKey: string;
+    action: () => void;
+    danger?: boolean;
+    loading?: boolean;
+    desktopOnly?: boolean;
+  }
+
+  let actions = $derived<ActionItem[]>([
+    {
+      id: 'reset',
+      icon: 'undo',
+      titleKey: 'settings.data.resetSettings',
+      descKey: 'settings.data.resetSettingsDescription',
+      action: () => (showResetModal = true),
+      danger: true,
+    },
+    {
+      id: 'clear-history',
+      icon: 'trash',
+      titleKey: 'settings.data.clearHistory',
+      descKey: 'settings.data.clearHistoryDescription',
+      action: () => (showClearHistoryModal = true),
+      danger: true,
+    },
+    {
+      id: 'clear-cache',
+      icon: 'trash',
+      titleKey: 'settings.data.clearCache',
+      descKey: 'settings.data.clearCacheDescription',
+      action: handleClearCache,
+      loading: clearingCache,
+      desktopOnly: true,
+    },
+    {
+      id: 'export',
+      icon: 'download',
+      titleKey: 'settings.data.exportHistory',
+      descKey: 'settings.data.exportHistoryDescription',
+      action: handleExportHistory,
+    },
+    {
+      id: 'import',
+      icon: 'move_to_folder',
+      titleKey: 'settings.data.importHistory',
+      descKey: 'settings.data.importHistoryDescription',
+      action: handleImportHistory,
+    },
+  ]);
 </script>
 
-<SettingItem
-  title={$t('settings.data.resetSettings')}
-  description={$t('settings.data.resetSettingsDescription')}
-  icon="undo"
-  highlight={searchQuery}
->
-  <button class="data-btn danger" onclick={() => (showResetModal = true)}>
-    <Icon name="undo" size={16} />
-    {$t('settings.data.resetSettings')}
-  </button>
-</SettingItem>
+<div class="data-card">
+  <div class="header">
+    <div class="header-content">
+      <div class="icon-wrapper">
+        <Icon name="folder" size={18} />
+      </div>
+      <div class="text-content">
+        <div class="title">
+          <HighlightText text={$t('settings.data.title')} highlight={searchQuery} />
+        </div>
+        <div class="description">
+          <HighlightText text={$t('settings.data.description')} highlight={searchQuery} />
+        </div>
+      </div>
+    </div>
+  </div>
 
-<SettingItem
-  title={$t('settings.data.clearHistory')}
-  description={$t('settings.data.clearHistoryDescription')}
-  icon="trash"
-  highlight={searchQuery}
->
-  <button class="data-btn danger" onclick={() => (showClearHistoryModal = true)}>
-    <Icon name="trash" size={16} />
-    {$t('settings.data.clearHistory')}
-  </button>
-</SettingItem>
-
-{#if onDesktop}
-  <SettingItem
-    title={$t('settings.data.clearCache')}
-    description={$t('settings.data.clearCacheDescription')}
-    icon="trash"
-    highlight={searchQuery}
-  >
-    <button class="data-btn" onclick={handleClearCache} disabled={clearingCache}>
-      {#if clearingCache}
-        <span class="btn-spinner"></span>
-      {:else}
-        <Icon name="trash" size={16} />
+  <div class="actions-grid">
+    {#each actions as item (item.id)}
+      {#if !item.desktopOnly || onDesktop}
+        <button
+          class="action-item"
+          class:danger={item.danger}
+          onclick={item.action}
+          disabled={item.loading}
+        >
+          <div class="action-icon">
+            {#if item.loading}
+              <span class="btn-spinner"></span>
+            {:else}
+              <Icon name={item.icon} size={20} />
+            {/if}
+          </div>
+          <div class="action-text">
+            <span class="action-title">{$t(item.titleKey)}</span>
+            <span class="action-desc">{$t(item.descKey)}</span>
+          </div>
+        </button>
       {/if}
-      {$t('settings.data.clearCache')}
-    </button>
-  </SettingItem>
-{/if}
-
-<SettingItem
-  title={$t('settings.data.exportHistory')}
-  description={$t('settings.data.exportHistoryDescription')}
-  icon="download"
-  highlight={searchQuery}
->
-  <button class="data-btn" onclick={handleExportHistory}>
-    <Icon name="download" size={16} />
-    {$t('settings.data.exportHistory')}
-  </button>
-</SettingItem>
-
-<SettingItem
-  title={$t('settings.data.importHistory')}
-  description={$t('settings.data.importHistoryDescription')}
-  icon="move_to_folder"
-  highlight={searchQuery}
->
-  <button class="data-btn" onclick={handleImportHistory}>
-    <Icon name="move_to_folder" size={16} />
-    {$t('settings.data.importHistory')}
-  </button>
-</SettingItem>
-
-{#if importMessage}
-  <p
-    class="import-message"
-    class:success={importMessage.type === 'success'}
-    class:error={importMessage.type === 'error'}
-  >
-    {importMessage.text}
-  </p>
-{/if}
+    {/each}
+  </div>
+</div>
 
 <Modal bind:open={showResetModal} title={$t('settings.data.resetSettings')}>
   <p>{$t('settings.data.resetSettingsConfirm')}</p>
@@ -250,56 +246,136 @@
 </Modal>
 
 <style>
-  .data-btn {
+  .data-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: var(--radius-lg, 12px);
+  }
+
+  .header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .header-content {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .icon-wrapper {
     display: flex;
     align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.5);
+    flex-shrink: 0;
+    width: 24px;
+    padding-top: 2px;
+  }
+
+  .text-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .title {
+    font-size: var(--text-md, 14px);
+    font-weight: 450;
+    color: rgba(255, 255, 255, 0.9);
+    line-height: 1.3;
+  }
+
+  .description {
+    font-size: var(--text-sm, 12px);
+    font-weight: 350;
+    color: rgba(255, 255, 255, 0.5);
+    line-height: 1.4;
+  }
+
+  .actions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     gap: 8px;
-    padding: 8px 16px;
-    border-radius: var(--radius, 8px);
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    color: white;
-    font-size: var(--text-base, 13px);
-    font-weight: 500;
+  }
+
+  .action-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 16px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-md, 8px);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.15s ease;
+    text-align: center;
   }
 
-  .data-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.12);
+  .action-item:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.1);
   }
 
-  .data-btn.danger {
-    background: rgba(239, 68, 68, 0.1);
-    border-color: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
-  }
-
-  .data-btn.danger:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.2);
-  }
-
-  .data-btn:disabled {
+  .action-item:disabled {
     opacity: 0.6;
-    cursor: not-allowed;
+    cursor: wait;
   }
 
-  .import-message {
-    padding: 10px;
-    border-radius: var(--radius, 8px);
-    font-size: var(--text-base, 13px);
-    background: rgba(255, 255, 255, 0.05);
-    margin-top: 10px;
+  .action-item.danger {
+    border-color: rgba(239, 68, 68, 0.15);
   }
 
-  .import-message.success {
-    background: rgba(34, 197, 94, 0.15);
-    color: #22c55e;
+  .action-item.danger:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.25);
   }
 
-  .import-message.error {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
+  .action-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-md, 8px);
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .action-item.danger .action-icon {
+    background: rgba(239, 68, 68, 0.12);
+    color: #f87171;
+  }
+
+  .action-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .action-title {
+    font-size: var(--text-sm, 12px);
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .action-item.danger .action-title {
+    color: #f87171;
+  }
+
+  .action-desc {
+    font-size: var(--text-xs, 10px);
+    color: rgba(255, 255, 255, 0.4);
+    line-height: 1.3;
   }
 
   .modal-btn {
@@ -328,8 +404,8 @@
   }
 
   .btn-spinner {
-    width: 14px;
-    height: 14px;
+    width: 18px;
+    height: 18px;
     border: 2px solid rgba(255, 255, 255, 0.3);
     border-top-color: white;
     border-radius: 50%;
@@ -339,6 +415,27 @@
   @keyframes spin {
     to {
       transform: rotate(360deg);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .data-card {
+      padding: 14px 16px;
+      gap: 14px;
+    }
+
+    .actions-grid {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    .action-item {
+      padding: 14px 10px;
+    }
+
+    .action-icon {
+      width: 44px;
+      height: 44px;
     }
   }
 </style>

@@ -4,7 +4,7 @@
   import { isDesktop } from '$lib/utils/android';
   import { invoke } from '@tauri-apps/api/core';
   import Icon from '$lib/components/Icon.svelte';
-  import SettingItem from '$lib/components/SettingItem.svelte';
+  import HighlightText from '$lib/components/HighlightText.svelte';
 
   interface Props {
     searchQuery: string;
@@ -37,25 +37,37 @@
 </script>
 
 {#if $settings.proxyMode !== 'none' && isDesktop()}
-  <SettingItem
-    title={$t('settings.network.checkIp')}
-    description={$t('settings.network.checkIpDescription')}
-    icon="globe"
-    highlight={searchQuery}
-  >
-    <button class="check-btn" onclick={checkIp} disabled={checkingIp}>
-      {#if checkingIp}
-        <span class="btn-spinner"></span>
-      {:else}
-        <Icon name="globe" size={14} />
-      {/if}
-      {$t('settings.network.checkIpBtn')}
-    </button>
-  </SettingItem>
+  <div class="network-card">
+    <div class="header">
+      <div class="header-content">
+        <div class="icon-wrapper">
+          <Icon name="globe" size={18} />
+        </div>
+        <div class="text-content">
+          <div class="title">
+            <HighlightText text={$t('settings.network.checkIp')} highlight={searchQuery} />
+          </div>
+          <div class="description">
+            <HighlightText text={$t('settings.network.checkIpDescription')} highlight={searchQuery} />
+          </div>
+        </div>
+      </div>
+      <button
+        class="check-btn"
+        onclick={checkIp}
+        disabled={checkingIp}
+      >
+        {#if checkingIp}
+          <span class="btn-spinner"></span>
+        {:else}
+          <Icon name="globe" size={16} />
+        {/if}
+        <span class="btn-text">{$t('settings.network.checkIpBtn')}</span>
+      </button>
+    </div>
 
-  {#if currentIp}
-    <div class="setting-sub-row ip-result">
-      <div class="ip-result-content">
+    {#if currentIp}
+      <div class="result-row">
         <span class="ip-address">{currentIp}</span>
         {#if ipProxyUsed}
           <span class="ip-badge proxy">
@@ -69,29 +81,125 @@
           </span>
         {/if}
       </div>
-    </div>
-  {/if}
+    {/if}
+  </div>
 {/if}
 
 <style>
+  .network-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: var(--radius-lg, 12px);
+  }
+
+  .header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .header-content {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .icon-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.5);
+    flex-shrink: 0;
+    width: 24px;
+    padding-top: 2px;
+  }
+
+  .text-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .title {
+    font-size: var(--text-md, 14px);
+    font-weight: 450;
+    color: rgba(255, 255, 255, 0.9);
+    line-height: 1.3;
+  }
+
+  .description {
+    font-size: var(--text-sm, 12px);
+    font-weight: 350;
+    color: rgba(255, 255, 255, 0.5);
+    line-height: 1.4;
+  }
+
   .check-btn {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: white;
-    padding: 6px 12px;
-    border-radius: var(--radius-sm, 6px);
-    cursor: pointer;
-    font-size: var(--text-base, 13px);
     display: flex;
     align-items: center;
     gap: 8px;
+    padding: 8px 14px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-sm, 6px);
+    color: white;
+    font-size: var(--text-sm, 12px);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
   }
+
   .check-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.12);
   }
+
   .check-btn:disabled {
-    opacity: 0.5;
+    opacity: 0.6;
     cursor: wait;
+  }
+
+  .result-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: var(--radius-md, 8px);
+    flex-wrap: wrap;
+  }
+
+  .ip-address {
+    font-family: monospace;
+    font-size: var(--text-sm, 12px);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .ip-badge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--text-xs, 11px);
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: var(--radius-sm, 4px);
+  }
+
+  .ip-badge.proxy {
+    background: rgba(74, 222, 128, 0.15);
+    color: #4ade80;
+  }
+
+  .ip-badge.direct {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
   }
 
   .btn-spinner {
@@ -109,42 +217,25 @@
     }
   }
 
-  .setting-sub-row {
-    margin-left: 56px;
-    margin-top: 5px;
-  }
+  @media (max-width: 640px) {
+    .network-card {
+      padding: 14px 16px;
+      gap: 14px;
+    }
 
-  .ip-result-content {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    font-size: var(--text-base, 13px);
-    background: rgba(0, 0, 0, 0.2);
-    padding: 8px 12px;
-    border-radius: var(--radius-sm, 6px);
-    display: inline-flex;
-  }
+    .header {
+      flex-direction: column;
+      gap: 14px;
+    }
 
-  .ip-address {
-    font-family: monospace;
-    opacity: 0.9;
-  }
+    .check-btn {
+      width: 100%;
+      justify-content: center;
+      padding: 12px 16px;
+    }
 
-  .ip-badge {
-    font-size: 11px;
-    padding: 2px 6px;
-    border-radius: var(--radius-sm, 4px);
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-weight: 500;
-  }
-  .ip-badge.proxy {
-    background: rgba(74, 222, 128, 0.1);
-    color: #4ade80;
-  }
-  .ip-badge.direct {
-    background: rgba(239, 68, 68, 0.1);
-    color: #ef4444;
+    .result-row {
+      padding: 12px 14px;
+    }
   }
 </style>

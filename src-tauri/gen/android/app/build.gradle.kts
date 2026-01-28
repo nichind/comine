@@ -103,11 +103,10 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("com.google.android.material:material:1.12.0")
     
-    // youtubedl-android - bundles Python 3.8 + yt-dlp
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+    
     implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
-    // FFmpeg for merging video+audio streams
     implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")
-    // Aria2 for faster parallel downloads
     implementation("io.github.junkfood02.youtubedl-android:aria2c:0.18.1")
     
     testImplementation("junit:junit:4.13.2")

@@ -55,6 +55,10 @@
     'general:startup': 'settings.general.startOnBoot',
     'general:clipboard': 'settings.general.watchClipboard',
     'general:closeBehavior': 'settings.general.closeBehavior',
+    'app:updates': 'settings.app.updates',
+    'app:privacy': 'settings.app.groups.privacy',
+    'app:appearance': 'settings.app.groups.appearance',
+    'app:general': 'settings.general.title',
     'downloads:paths': 'settings.downloads.downloadPath',
     'downloads:folders': 'settings.downloads.usePlaylistFolders',
     'downloads:concurrency': 'settings.downloads.concurrentDownloads',
@@ -525,11 +529,6 @@
     }
   }
 
-  function titleKeyForSection(sectionId: string): string {
-    const sec = SECTIONS.find((s) => s.id === sectionId);
-    return sec ? sec.titleKey : 'settings.title';
-  }
-
   function isSubsectionModified(items: SettingDef[]): boolean {
     return items.some((def) => {
       if (def.type === 'action' || def.type === 'custom') return false;
@@ -637,12 +636,10 @@
         </div>
       </ScrollArea>
     {:else}
-      <div class="mobile-section-topbar">
-        <button class="mobile-back-btn" onclick={clearHashSection}>
-          <span class="back-icon"><Icon name="arrow_right" size={16} /></span>
-        </button>
-        <h2 class="mobile-section-title">{$t(titleKeyForSection(activeSection))}</h2>
-      </div>
+      <button class="mobile-back-btn" onclick={clearHashSection}>
+        <span class="back-icon"><Icon name="arrow_right" size={18} /></span>
+        <span class="back-text">{$t('settings.backToSections')}</span>
+      </button>
     {/if}
 
     <div class="settings-pane">
@@ -676,7 +673,7 @@
                           {#if isSubsectionModified(subsec.items)}
                             <button
                               class="subsection-reset-btn"
-                              onclick={() => resetSubsection(subsec.items)}
+                              onclick={(e) => { e.stopPropagation(); resetSubsection(subsec.items); }}
                               use:tooltip={$t('settings.resetSectionTooltip')}
                             >
                               <Icon name="undo" size={14} />
@@ -744,6 +741,7 @@
         description={def.descriptionKey ? $t(def.descriptionKey) : undefined}
         icon={def.icon}
         highlight={searchQuery}
+        controlType="unknown"
       >
         <button class="action-btn" onclick={() => def.action()} disabled={isDisabled}>
           {#if def.loading && def.loading()}
@@ -764,6 +762,7 @@
         value={getSettingValue($settings, def.key)}
         defaultValue={getSettingValue(defaultSettings, def.key)}
         onReset={() => handleSettingChange(def, getSettingValue(defaultSettings, def.key))}
+        controlType={def.type}
       >
         {#if def.type === 'toggle'}
           <Toggle
@@ -851,6 +850,17 @@
 <style>
   .w-200 {
     width: 200px;
+  }
+
+  .input-container {
+    width: 200px;
+  }
+
+  @media (max-width: 640px) {
+    .w-200,
+    .input-container {
+      width: 100% !important;
+    }
   }
 
   .setting-wrapper {
@@ -1164,50 +1174,35 @@
     font-weight: 500;
   }
 
-  .mobile-section-topbar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
-    padding: 0;
-  }
-
   .mobile-back-btn {
     display: flex;
     align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 9px;
-    background: rgba(255, 255, 255, 0.06);
-    border: none;
-    color: rgba(255, 255, 255, 0.8);
+    justify-content: flex-start;
+    gap: 10px;
+    width: 100%;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    border-radius: var(--radius, 12px);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.7);
     cursor: pointer;
     transition: background 0.15s ease;
-    flex-shrink: 0;
   }
 
   .mobile-back-btn:active {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .mobile-section-title {
-    flex: 1;
-    min-width: 0;
-    font-size: var(--text-lg, 16px);
-    font-weight: 650;
-    color: rgba(255, 255, 255, 0.95);
-    text-align: left;
-    margin: 0;
-    line-height: 1.1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    background: rgba(255, 255, 255, 0.08);
   }
 
   .back-icon {
     display: inline-flex;
     transform: rotate(180deg);
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .back-text {
+    font-size: var(--text-md, 14px);
+    font-weight: 500;
   }
 
   .settings-subsection {
@@ -1308,7 +1303,7 @@
   }
 
   .blur-slider::-webkit-slider-thumb:hover {
-    background: #818cf8;
+    background: var(--accent-light, #818cf8);
     transform: scale(1.1);
   }
 
@@ -1325,12 +1320,12 @@
   }
 
   .blur-slider::-moz-range-thumb:hover {
-    background: #818cf8;
+    background: var(--accent-light, #818cf8);
     transform: scale(1.1);
   }
 
   .slider-value {
-    font-size: 13px;
+    font-size: var(--text-base, 13px);
     font-family: 'JetBrains Mono', monospace;
     color: rgba(255, 255, 255, 0.7);
     min-width: 40px;
@@ -1351,6 +1346,7 @@
     border-radius: var(--radius-sm, 6px);
     background: rgba(255, 255, 255, 0.05);
     cursor: pointer;
+    flex-shrink: 0;
   }
 
   .color-picker::-webkit-color-swatch-wrapper {
@@ -1366,17 +1362,19 @@
     width: 90px;
     padding: 6px 10px;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
+    font-size: var(--text-sm, 12px);
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: var(--radius-sm, 6px);
     color: white;
     outline: none;
     transition: all 0.2s;
+    flex: 1;
+    min-width: 0;
   }
 
   .color-text-input:focus {
-    border-color: rgba(99, 102, 241, 0.5);
+    border-color: var(--accent-alpha, rgba(99, 102, 241, 0.5));
   }
 
   .path-controls {
@@ -1411,6 +1409,56 @@
   .picker-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  @media (max-width: 640px) {
+    .slider-with-value {
+      min-width: 0;
+      width: 100%;
+      gap: 16px;
+    }
+
+    .blur-slider {
+      height: 8px;
+      border-radius: 4px;
+    }
+
+    .blur-slider::-webkit-slider-thumb {
+      width: 26px;
+      height: 26px;
+    }
+
+    .blur-slider::-moz-range-thumb {
+      width: 26px;
+      height: 26px;
+    }
+
+    .slider-value {
+      min-width: 48px;
+    }
+
+    .color-controls {
+      width: 100%;
+    }
+
+    .color-picker {
+      width: 48px;
+      height: 40px;
+    }
+
+    .color-text-input {
+      padding: 10px 12px;
+    }
+
+    .path-controls {
+      max-width: none;
+      width: 100%;
+    }
+
+    .picker-btn {
+      width: 44px;
+      height: 44px;
+    }
   }
 
   .action-btn {

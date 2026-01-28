@@ -1,7 +1,6 @@
 <script lang="ts">
   import Icon, { type IconName } from './Icon.svelte';
   import { tooltip } from '$lib/actions/tooltip';
-  import { fade } from 'svelte/transition';
   import HighlightText from './HighlightText.svelte';
 
   interface Props {
@@ -15,6 +14,8 @@
     children?: import('svelte').Snippet;
     descriptionSnippet?: import('svelte').Snippet;
     highlight?: string;
+    stacked?: boolean;
+    controlType?: 'toggle' | 'select' | 'slider' | 'input' | 'color' | 'path' | 'unknown';
   }
 
   let {
@@ -28,7 +29,13 @@
     children,
     descriptionSnippet,
     highlight = '',
+    stacked = false,
+    controlType = 'unknown',
   }: Props = $props();
+
+
+  const stackableControls = ['select', 'slider', 'input', 'color', 'path'];
+  let shouldStack = $derived(stacked || stackableControls.includes(controlType));
 
   let showReset = $derived(
     value !== undefined && defaultValue !== undefined && value !== defaultValue
@@ -72,6 +79,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   class="setting-item {className}"
+  class:stackable={shouldStack}
   bind:this={rootEl}
   onclick={handleContainerClick}
   onkeydown={handleContainerKeydown}
@@ -84,8 +92,22 @@
       </div>
     {/if}
     <div class="text-content">
-      <div class="title">
-        <HighlightText text={title} {highlight} />
+      <div class="title-row">
+        <div class="title">
+          <HighlightText text={title} {highlight} />
+        </div>
+        {#if onReset}
+          <button
+            class="reset-btn"
+            class:visible={showReset}
+            onclick={(e) => { e.stopPropagation(); onReset(); }}
+            use:tooltip={'Reset to default'}
+            aria-label="Reset setting"
+            disabled={!showReset}
+          >
+            <Icon name="undo" size={14} />
+          </button>
+        {/if}
       </div>
       {#if description}
         <div class="description">
@@ -97,17 +119,6 @@
   </div>
 
   <div class="control-side">
-    {#if showReset && onReset}
-      <button
-        class="reset-btn"
-        onclick={onReset}
-        transition:fade={{ duration: 150 }}
-        use:tooltip={'Reset to default'}
-        aria-label="Reset setting"
-      >
-        <Icon name="undo" size={14} />
-      </button>
-    {/if}
     <div class="control-wrapper">
       {@render children?.()}
     </div>
@@ -149,6 +160,14 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .title {
@@ -189,7 +208,15 @@
     border: 1px solid transparent;
     color: rgba(255, 255, 255, 0.4);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: opacity 0.15s, background 0.2s, color 0.2s;
+    flex-shrink: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .reset-btn.visible {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .reset-btn:hover {
@@ -204,12 +231,31 @@
       min-height: 52px;
     }
 
-    .title {
-      font-size: 15px;
+    .setting-item.stackable {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 12px;
     }
 
-    .description {
-      font-size: 13px;
+    .setting-item.stackable .content-side {
+      width: 100%;
+    }
+
+    .setting-item.stackable .control-side {
+      width: 100%;
+      padding-left: 36px;
+    }
+
+    .setting-item.stackable .control-wrapper {
+      width: 100%;
+    }
+
+    .setting-item.stackable .control-wrapper :global(.slider-with-value),
+    .setting-item.stackable .control-wrapper :global(.select-trigger),
+    .setting-item.stackable .control-wrapper :global(.input-wrapper),
+    .setting-item.stackable .control-wrapper :global(.color-controls),
+    .setting-item.stackable .control-wrapper :global(.path-controls) {
+      width: 100%;
     }
 
     .reset-btn {
