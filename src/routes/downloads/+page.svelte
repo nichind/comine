@@ -198,7 +198,11 @@
   });
 
   onMount(() => {
-    history.init();
+    void (async () => {
+      await history.init();
+      await tick();
+      listRef?.refresh?.();
+    })();
     initConversions();
 
     (async () => {
@@ -944,6 +948,7 @@
     <VirtualList
       bind:this={listRef}
       items={dState.displayItems}
+      getKey={(item) => item.id}
       estimatedItemHeight={dState.viewMode === 'list'
         ? VIRTUALIZATION_HEIGHTS.listItem
         : computeGridRowHeight(dState.containerWidth, dState.itemsPerRow)}
