@@ -106,6 +106,7 @@ export function formatSpeed(bytesPerSecond: number): string {
 
 export function formatDuration(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined) return '--:--';
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds)) return '--:--';
   if (seconds <= 0) return 'Live';
 
   const h = Math.floor(seconds / 3600);

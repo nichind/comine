@@ -40,7 +40,7 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
             
-            <!-- View intent: Open URLs directly -->
+            <!-- View intent: Social/Media platforms -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -50,16 +50,101 @@
                 <data android:scheme="https" android:host="www.youtube.com" />
                 <data android:scheme="https" android:host="m.youtube.com" />
                 <data android:scheme="https" android:host="youtu.be" />
+                <data android:scheme="https" android:host="music.youtube.com" />
                 <!-- TikTok -->
                 <data android:scheme="https" android:host="tiktok.com" />
                 <data android:scheme="https" android:host="www.tiktok.com" />
                 <data android:scheme="https" android:host="vm.tiktok.com" />
+                <data android:scheme="https" android:host="m.tiktok.com" />
                 <!-- Twitter/X -->
                 <data android:scheme="https" android:host="twitter.com" />
+                <data android:scheme="https" android:host="www.twitter.com" />
+                <data android:scheme="https" android:host="mobile.twitter.com" />
                 <data android:scheme="https" android:host="x.com" />
+                <data android:scheme="https" android:host="www.x.com" />
                 <!-- Instagram -->
                 <data android:scheme="https" android:host="instagram.com" />
                 <data android:scheme="https" android:host="www.instagram.com" />
+                <!-- Facebook -->
+                <data android:scheme="https" android:host="facebook.com" />
+                <data android:scheme="https" android:host="www.facebook.com" />
+                <data android:scheme="https" android:host="m.facebook.com" />
+                <data android:scheme="https" android:host="fb.watch" />
+                <!-- Reddit -->
+                <data android:scheme="https" android:host="reddit.com" />
+                <data android:scheme="https" android:host="www.reddit.com" />
+                <data android:scheme="https" android:host="old.reddit.com" />
+                <data android:scheme="https" android:host="v.redd.it" />
+                <!-- Twitch -->
+                <data android:scheme="https" android:host="twitch.tv" />
+                <data android:scheme="https" android:host="www.twitch.tv" />
+                <data android:scheme="https" android:host="clips.twitch.tv" />
+                <!-- Vimeo -->
+                <data android:scheme="https" android:host="vimeo.com" />
+                <data android:scheme="https" android:host="www.vimeo.com" />
+                <data android:scheme="https" android:host="player.vimeo.com" />
+                <!-- Dailymotion -->
+                <data android:scheme="https" android:host="dailymotion.com" />
+                <data android:scheme="https" android:host="www.dailymotion.com" />
+                <data android:scheme="https" android:host="dai.ly" />
+                <!-- SoundCloud -->
+                <data android:scheme="https" android:host="soundcloud.com" />
+                <data android:scheme="https" android:host="www.soundcloud.com" />
+                <data android:scheme="https" android:host="m.soundcloud.com" />
+                <!-- Bandcamp -->
+                <data android:scheme="https" android:host="bandcamp.com" />
+                <!-- Spotify (metadata only) -->
+                <data android:scheme="https" android:host="open.spotify.com" />
+                <!-- Bilibili -->
+                <data android:scheme="https" android:host="bilibili.com" />
+                <data android:scheme="https" android:host="www.bilibili.com" />
+                <data android:scheme="https" android:host="b23.tv" />
+                <!-- Niconico -->
+                <data android:scheme="https" android:host="nicovideo.jp" />
+                <data android:scheme="https" android:host="www.nicovideo.jp" />
+                <!-- Pinterest -->
+                <data android:scheme="https" android:host="pinterest.com" />
+                <data android:scheme="https" android:host="www.pinterest.com" />
+                <data android:scheme="https" android:host="pin.it" />
+                <!-- Tumblr -->
+                <data android:scheme="https" android:host="tumblr.com" />
+                <data android:scheme="https" android:host="www.tumblr.com" />
+                <!-- Streamable -->
+                <data android:scheme="https" android:host="streamable.com" />
+                <!-- Imgur -->
+                <data android:scheme="https" android:host="imgur.com" />
+                <data android:scheme="https" android:host="i.imgur.com" />
+                <!-- Gfycat / Redgifs -->
+                <data android:scheme="https" android:host="gfycat.com" />
+                <data android:scheme="https" android:host="redgifs.com" />
+                <data android:scheme="https" android:host="www.redgifs.com" />
+            </intent-filter>
+            
+            <!-- View intent: Direct media file URLs -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <!-- Video files -->
+                <data android:scheme="https" android:pathPattern=".*\\.mp4" />
+                <data android:scheme="https" android:pathPattern=".*\\.webm" />
+                <data android:scheme="https" android:pathPattern=".*\\.mkv" />
+                <data android:scheme="https" android:pathPattern=".*\\.m4v" />
+                <data android:scheme="https" android:pathPattern=".*\\.avi" />
+                <data android:scheme="https" android:pathPattern=".*\\.mov" />
+                <data android:scheme="http" android:pathPattern=".*\\.mp4" />
+                <data android:scheme="http" android:pathPattern=".*\\.webm" />
+                <!-- Audio files -->
+                <data android:scheme="https" android:pathPattern=".*\\.mp3" />
+                <data android:scheme="https" android:pathPattern=".*\\.m4a" />
+                <data android:scheme="https" android:pathPattern=".*\\.ogg" />
+                <data android:scheme="https" android:pathPattern=".*\\.opus" />
+                <data android:scheme="https" android:pathPattern=".*\\.flac" />
+                <data android:scheme="https" android:pathPattern=".*\\.wav" />
+                <data android:scheme="http" android:pathPattern=".*\\.mp3" />
+                <!-- Playlists -->
+                <data android:scheme="https" android:pathPattern=".*\\.m3u8" />
+                <data android:scheme="https" android:pathPattern=".*\\.m3u" />
             </intent-filter>
         </activity>
 
@@ -77,5 +162,9 @@
             android:name=".DownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <receiver
+            android:name=".DownloadNotificationReceiver"
+            android:exported="false" />
     </application>
 </manifest>

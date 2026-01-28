@@ -873,7 +873,7 @@ function createQueueStore() {
       title: prefetched?.title || url,
       author: prefetched?.author || '',
       thumbnail: prefetched?.thumbnail || '',
-      duration: prefetched?.duration || 0,
+      duration: typeof prefetched?.duration === 'number' && Number.isFinite(prefetched.duration) ? prefetched.duration : 0,
       filesize: 0,
       extension: '',
       filePath: '',
@@ -976,25 +976,26 @@ function createQueueStore() {
           const resolved = await invoke<ResolveResult>('resolve_url', { url });
           const info = resolved.info;
           update((s) => {
-            const items = s.items.map((i) =>
-              i.id === id
-                ? {
-                    ...i,
-                    title: info.title ?? i.title,
-                    thumbnail: info.thumbnail ?? i.thumbnail,
-                    author: info.uploader ?? info.channel ?? i.author,
-                    authorUrl: info.channelUrl ?? i.authorUrl,
-                    duration: info.duration !== null ? Number(info.duration) : i.duration,
-                    filesize: info.filesize !== null ? Number(info.filesize) : i.filesize,
-                    // Don't override status if download already started/progressing
-                    status: i.status === 'fetching-info' ? ('pending' as DownloadStatus) : i.status,
-                    statusMessage:
-                      i.status === 'fetching-info'
-                        ? translate('downloads.queue.waiting') || 'Waiting'
-                        : i.statusMessage,
-                  }
-                : i
-            );
+            const items = s.items.map((i) => {
+              if (i.id !== id) return i;
+              const parsedDuration = info.duration !== null ? Number(info.duration) : null;
+              const safeDuration = parsedDuration !== null && Number.isFinite(parsedDuration) ? parsedDuration : i.duration;
+              return {
+                ...i,
+                title: info.title ?? i.title,
+                thumbnail: info.thumbnail ?? i.thumbnail,
+                author: info.uploader ?? info.channel ?? i.author,
+                authorUrl: info.channelUrl ?? i.authorUrl,
+                duration: safeDuration,
+                filesize: info.filesize !== null ? Number(info.filesize) : i.filesize,
+                // Don't override status if download already started/progressing
+                status: i.status === 'fetching-info' ? ('pending' as DownloadStatus) : i.status,
+                statusMessage:
+                  i.status === 'fetching-info'
+                    ? translate('downloads.queue.waiting') || 'Waiting'
+                    : i.statusMessage,
+              };
+            });
             saveQueueState(items);
             return { ...s, items };
           });
@@ -1060,6 +1061,7 @@ function createQueueStore() {
       globalOptions?: QueueAddOptions
     ) => {
       entries.forEach((entry, idx) => {
+        const safeDuration = typeof entry.duration === 'number' && Number.isFinite(entry.duration) ? entry.duration : undefined;
         const merged: QueueAddOptions = {
           ...globalOptions,
           ...entry,
@@ -1067,7 +1069,7 @@ function createQueueStore() {
             title: entry.title,
             author: entry.author,
             thumbnail: entry.thumbnail,
-            duration: entry.duration,
+            duration: safeDuration,
           },
         };
         enqueueUrl(entry.url, merged, {
@@ -1245,6 +1247,7 @@ function createQueueStore() {
       targetFormat: string;
       audioOnly: boolean;
     }): string => {
+      const safeDuration = typeof args.duration === 'number' && Number.isFinite(args.duration) ? args.duration : 0;
       const newItem: QueueItem = {
         id: args.id,
         url: args.url || `convert://${args.id}`,
@@ -1253,7 +1256,7 @@ function createQueueStore() {
         title: args.title,
         author: args.author || '',
         thumbnail: args.thumbnail || '',
-        duration: args.duration || 0,
+        duration: safeDuration,
         filesize: 0,
         extension: args.targetFormat,
         filePath: '',

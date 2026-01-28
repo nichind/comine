@@ -699,7 +699,7 @@
       title: e.entry.title,
       thumbnail: e.entry.thumbnail ?? undefined,
       author: e.entry.uploader ?? undefined,
-      duration: e.entry.duration ?? undefined,
+      duration: e.entry.duration !== null ? Number(e.entry.duration) : undefined,
       downloadMode: e.settings.downloadMode,
       sponsorBlock:
         e.settings.skipSponsors ||
@@ -742,7 +742,7 @@
       title: entry.title,
       thumbnail: entry.thumbnail ?? undefined,
       author: entry.uploader ?? undefined,
-      duration: entry.duration ?? undefined,
+      duration: entry.duration !== null ? Number(entry.duration) : undefined,
     });
   }
 
@@ -775,7 +775,7 @@
       title: e.entry.title,
       thumbnail: e.entry.thumbnail ?? undefined,
       author: selection.channelInfo.name,
-      duration: e.entry.duration ?? undefined,
+      duration: e.entry.duration !== null ? Number(e.entry.duration) : undefined,
       downloadMode: e.settings.downloadMode,
       sponsorBlock:
         e.settings.skipSponsors ||

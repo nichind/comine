@@ -19,6 +19,8 @@ import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import android.content.pm.PackageManager
+import android.Manifest
 import androidx.core.content.FileProvider
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
@@ -73,6 +75,9 @@ class MainActivity : TauriActivity() {
     enableEdgeToEdge()
 
     instance = this
+
+    DownloadNotifications.init(this)
+    maybeRequestPostNotifications()
 
     folderPickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
       val callbackName = folderPickerCallback
@@ -134,6 +139,16 @@ class MainActivity : TauriActivity() {
             YtDlp.init(application) { dispatchYtdlpReady() }
         handleIntent(intent)
     }
+
+        private fun maybeRequestPostNotifications() {
+          if (Build.VERSION.SDK_INT < 33) return
+          try {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+              requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+            }
+          } catch (_: Exception) {
+          }
+        }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -327,6 +342,18 @@ class MainActivity : TauriActivity() {
       RustBridge.notifyConvertFailed(jobId, "FFmpeg not initialized")
       return
     }
+
+    runCatching { DownloadNotifications.init(applicationContext) }
+    DownloadNotifications.upsert(
+      jobId = jobId,
+      kind = DownloadNotifications.JobKind.CONVERT,
+      title = "Converting",
+      stage = "Converting",
+      progress = 0,
+      indeterminate = true,
+      canPause = false,
+      ongoing = true
+    )
     
     downloadExecutor.submit {
       try {
@@ -458,19 +485,38 @@ class MainActivity : TauriActivity() {
           duration
         ) { progress, speed ->
           RustBridge.notifyConvertProgress(jobId, progress, speed)
+          DownloadNotifications.upsert(
+            jobId = jobId,
+            kind = DownloadNotifications.JobKind.CONVERT,
+            title = "Converting",
+            stage = "Converting",
+            progress = progress.toInt(),
+            indeterminate = false,
+            canPause = false,
+            ongoing = true
+          )
         }
         
         when (result) {
           is FFmpegExecutor.ExecuteResult.Success -> {
             if (outputFile.exists()) {
               val filesize = outputFile.length()
+              DownloadNotifications.complete(
+                jobId = jobId,
+                title = "Converted",
+                info = "Saved",
+                outputPath = finalOutputPath,
+                kind = DownloadNotifications.JobKind.CONVERT
+              )
               RustBridge.notifyConvertCompleted(jobId, finalOutputPath, filesize, targetFormat, null)
             } else {
+              DownloadNotifications.fail(jobId, title = "Convert failed", error = "Output file not created")
               RustBridge.notifyConvertFailed(jobId, "Output file not created")
             }
           }
           is FFmpegExecutor.ExecuteResult.Failed -> {
             Log.e(TAG, "FFmpeg conversion failed: ${result.error}")
+            DownloadNotifications.fail(jobId, title = "Convert failed", error = result.error)
             RustBridge.notifyConvertFailed(jobId, result.error)
           }
           is FFmpegExecutor.ExecuteResult.Cancelled -> {
@@ -478,12 +524,14 @@ class MainActivity : TauriActivity() {
             if (outputFile.exists()) {
               outputFile.delete()
             }
+            DownloadNotifications.cancel(jobId)
             RustBridge.notifyConvertFailed(jobId, "Cancelled")
           }
         }
         
       } catch (e: Exception) {
         Log.e(TAG, "convertFileWithFFmpeg failed", e)
+        DownloadNotifications.fail(jobId, title = "Convert failed", error = e.message ?: "Unknown error")
         RustBridge.notifyConvertFailed(jobId, e.message ?: "Unknown error")
       }
     }

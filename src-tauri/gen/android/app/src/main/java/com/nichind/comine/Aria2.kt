@@ -37,12 +37,33 @@ object Aria2 {
         val aria2Path = File(context.applicationInfo.nativeLibraryDir, "libaria2c.so").absolutePath
         val title = outputFile ?: url.substringAfterLast('/').substringBefore('?').ifBlank { "aria2 download" }
 
+        runCatching { DownloadNotifications.init(context) }
+        DownloadNotifications.upsert(
+            jobId = jobId,
+            kind = DownloadNotifications.JobKind.DOWNLOAD,
+            title = title,
+            stage = "Downloading",
+            progress = 0,
+            indeterminate = true,
+            canPause = false,
+            ongoing = true
+        )
+
         val args = mutableListOf("-d", outputDir).apply {
             outputFile?.let { add("-o"); add(it) }
             add("-x"); add(connections.toString())
             add("-s"); add(splits.toString())
             add("-k"); add(minSplitSize)
-            addAll(listOf("--continue=true", "--file-allocation=none", "--auto-file-renaming=false", "--allow-overwrite=true", "--show-console-readout=true", "--summary-interval=0"))
+            addAll(listOf(
+                "--continue=true",
+                "--file-allocation=none",
+                "--auto-file-renaming=false",
+                "--allow-overwrite=true",
+                "--show-console-readout=true",
+                "--summary-interval=1",
+                "--check-certificate=false",
+                "--console-log-level=notice"
+            ))
             if (speedLimit > 0) { add("--max-download-limit"); add("${speedLimit / 1024}K") }
             proxy?.let { add("--all-proxy"); add(it) }
             if (isTorrent) addAll(listOf("--listen-port", "6881-6999", "--dht-listen-port", "6881-6999", "--enable-dht=true", "--bt-enable-lpd=true", "--seed-ratio", "0.0"))
@@ -50,6 +71,15 @@ object Aria2 {
         }
 
         Log.d(TAG, "Running: $aria2Path ${args.joinToString(" ")}")
+        
+        File(outputDir).takeIf { !it.exists() }?.mkdirs()
+        
+        if (!File(aria2Path).exists()) {
+            val error = "aria2 binary not found"
+            DownloadNotifications.fail(jobId, title = title, error = error)
+            return ExecuteResult.Failed(error)
+        }
+        
         RustBridge.notifyStarted(jobId, title)
 
         return try {
@@ -57,6 +87,10 @@ object Aria2 {
             runningProcesses[jobId] = process
             var outputPath: String? = null
             var lastProgressTime = 0L
+            
+            val progressRegex = Regex("""\[#\w+\s+[\d.]+\w+/[\d.]+\w+(?:\((\d+)%\))?""")
+            val percentRegex = Regex("""\((\d+)%\)""")
+            val completeRegex = Regex("""(?:Download complete:|download completed\.)?\s*(/\S+|[A-Za-z]:\\\S+)""", RegexOption.IGNORE_CASE)
 
             process.inputStream.bufferedReader().forEachLine { line ->
                 if (!runningProcesses.containsKey(jobId)) {
@@ -65,32 +99,74 @@ object Aria2 {
                 if (line.isBlank()) return@forEachLine
                 Log.d(TAG, "[$jobId]: $line")
 
-                Regex("""\[#\w+\s+[\d.]+\w+/[\d.]+\w+\((\d+)%\)""").find(line)?.let { m ->
+                val percent = progressRegex.find(line)?.groupValues?.get(1)?.toIntOrNull()
+                    ?: percentRegex.find(line)?.groupValues?.get(1)?.toIntOrNull()
+                
+                if (percent != null) {
                     val now = System.currentTimeMillis()
                     if (now - lastProgressTime >= 100) {
-                        val percent = m.groupValues[1].toIntOrNull() ?: 0
                         onProgress?.invoke(percent)
                         RustBridge.notifyProgress(jobId, percent.toFloat())
+                        DownloadNotifications.upsert(
+                            jobId = jobId,
+                            kind = DownloadNotifications.JobKind.DOWNLOAD,
+                            title = title,
+                            stage = "Downloading",
+                            progress = percent,
+                            indeterminate = false,
+                            canPause = false,
+                            ongoing = true
+                        )
                         lastProgressTime = now
                     }
                 }
 
-                if (line.contains("Download complete:")) outputPath = line.substringAfter("Download complete:").trim()
+                if (line.contains("Download complete") || line.contains("download completed")) {
+                    completeRegex.find(line)?.groupValues?.get(1)?.let { path ->
+                        if (File(path).exists()) outputPath = path
+                    }
+                }
+                if (outputPath == null && line.startsWith(outputDir)) {
+                    val potentialPath = line.trim()
+                    if (File(potentialPath).exists()) outputPath = potentialPath
+                }
             }
 
+            val wasCancelled = !runningProcesses.containsKey(jobId)
             runningProcesses.remove(jobId)
             val exitCode = process.waitFor()
+            
+            if (outputPath == null) {
+                val expectedFile = File(outputDir, outputFile ?: url.substringAfterLast('/').substringBefore('?'))
+                if (expectedFile.exists() && expectedFile.length() > 0) {
+                    outputPath = expectedFile.absolutePath
+                }
+            }
 
-            if (exitCode != 0 && !runningProcesses.containsKey(jobId)) {
+            Log.i(TAG, "aria2 finished: jobId=$jobId, exitCode=$exitCode, wasCancelled=$wasCancelled, outputPath=$outputPath")
+
+            if (wasCancelled) {
+                DownloadNotifications.cancel(jobId)
                 ExecuteResult.Cancelled
-            } else if (exitCode == 0) {
-                ExecuteResult.Success(outputPath ?: "$outputDir/${outputFile ?: "download"}", title)
+            } else if (exitCode == 0 || (outputPath?.let { File(it).exists() } == true)) {
+                val finalPath = outputPath ?: "$outputDir/${outputFile ?: "download"}"
+                DownloadNotifications.complete(
+                    jobId = jobId,
+                    title = title,
+                    info = "Saved",
+                    outputPath = finalPath
+                )
+                ExecuteResult.Success(finalPath, title)
             } else {
-                ExecuteResult.Failed("aria2 exited with code $exitCode")
+                val error = "aria2 exited with code $exitCode"
+                Log.e(TAG, error)
+                DownloadNotifications.fail(jobId, title = title, error = error)
+                ExecuteResult.Failed(error)
             }
         } catch (e: Exception) {
             runningProcesses.remove(jobId)
             Log.e(TAG, "aria2 failed", e)
+            DownloadNotifications.fail(jobId, title = title, error = e.message ?: "Unknown error")
             ExecuteResult.Failed(e.message ?: "Unknown error")
         }
     }

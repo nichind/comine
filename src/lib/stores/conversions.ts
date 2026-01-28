@@ -116,12 +116,14 @@ export async function startConversion(
     },
   };
 
+  console.log('[Conversion] Starting with duration:', item.duration, 'type:', typeof item.duration);
+
   queue.addConversion({
     id,
     title: item.title,
     author: item.author,
     thumbnail: item.thumbnail ?? '',
-    duration: item.duration,
+    duration: typeof item.duration === 'number' ? item.duration : 0,
     url: item.url,
     targetFormat,
     audioOnly,

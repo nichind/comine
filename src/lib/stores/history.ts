@@ -115,8 +115,13 @@ function createHistoryStore() {
     async add(item: Omit<HistoryItem, 'id' | 'downloadedAt'>) {
       await ensureInitialized();
 
+      if (typeof item.duration !== 'number' || !Number.isFinite(item.duration)) {
+        console.warn('[History] Invalid duration received:', item.duration, 'type:', typeof item.duration);
+      }
+
       const newItem: HistoryItem = {
         ...item,
+        duration: typeof item.duration === 'number' && Number.isFinite(item.duration) ? item.duration : 0,
         id: crypto.randomUUID(),
         downloadedAt: Date.now(),
       };
