@@ -203,7 +203,7 @@ pub fn signal_job_cancelled(job_id: &str) {
 }
 
 #[cfg(target_os = "android")]
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 #[cfg(target_os = "android")]
 use jni::{
@@ -417,16 +417,22 @@ impl YtdlpBackend {
             }
         }
 
+        if let Some(ref browser) = settings.cookies_from_browser {
+            if !browser.is_empty() {
+                cmd.args(["--cookies-from-browser", browser]);
+            }
+        }
+
         // Resolve proxy (handles both explicit and system proxy)
         if let Some(proxy_url) = resolve_effective_proxy(&settings.proxy) {
             cmd.args(["--proxy", &proxy_url]);
         }
 
         if let Some(ref client) = settings.youtube_player_client {
-            cmd.args([
-                "--extractor-args",
-                &format!("youtube:player_client={}", client),
-            ]);
+            if !client.is_empty() {
+                log::info!(target: "ytdlp", "Using YouTube player client chain: {}", client);
+                cmd.args(["--extractor-args", &format!("youtube:player_client={}", client)]);
+            }
         }
 
         // Apply site-specific headers for anti-detection
@@ -465,6 +471,12 @@ impl YtdlpBackend {
 
         let req = &job.request;
         let opts = &req.options;
+
+        if let Some(ref browser) = opts.cookies_from_browser {
+            if !browser.is_empty() {
+                cmd.args(["--cookies-from-browser", browser]);
+            }
+        }
 
         let template = req
             .output
@@ -505,6 +517,13 @@ impl YtdlpBackend {
         if let Some(ref cookies) = opts.custom_cookies {
             if !cookies.is_empty() {
                 cmd.args(["--cookies", cookies]);
+            }
+        }
+
+        if let Some(ref client) = opts.youtube_player_client {
+            if !client.is_empty() {
+                info!(target: "ytdlp", "Using YouTube player client chain: {}", client);
+                cmd.args(["--extractor-args", &format!("youtube:player_client={}", client)]);
             }
         }
 
@@ -590,7 +609,11 @@ impl YtdlpBackend {
 
         let resolved_thumb =
             if ctx.job.request.quality.audio_only && ctx.job.request.options.embed_thumbnail {
-                let settings = ResolveSettings::default();
+                let mut settings = ResolveSettings::default();
+                settings.custom_cookies = ctx.job.request.options.custom_cookies.clone();
+                settings.cookies_from_browser = ctx.job.request.options.cookies_from_browser.clone();
+                settings.proxy = ctx.job.request.options.proxy.clone();
+                settings.youtube_player_client = ctx.job.request.options.youtube_player_client.clone();
                 self.resolve_desktop(&ctx.job.request.url, &settings)
                     .await
                     .ok()

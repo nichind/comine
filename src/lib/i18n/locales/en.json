@@ -500,11 +500,11 @@
       "auto": "Auto (recommended)",
       "autoDescription": "Automatically selects the best processor for each URL. Uses cobalt for supported sites (faster), falls back to yt-dlp for everything else.",
       "youtubePlayerClient": "YouTube player clients",
-      "youtubePlayerClientDescription": "Client chain for downloads. Default 'tv,android_sdkless' provides best quality. Clients are tried in order as fallbacks.",
+      "youtubePlayerClientDescription": "Client chain for downloads. Default 'default,-android_sdkless' avoids android_sdkless. Clients are tried in order as fallbacks.",
       "usePlayerClientForExtraction": "Use download clients for extraction",
       "usePlayerClientForExtractionDescription": "Use the same player clients for fetching video info. When disabled, uses the faster extraction client below.",
       "extractionPlayerClient": "Extraction player client",
-      "extractionPlayerClientDescription": "Client chain for fetching video info. 'android_sdkless' is fastest (no JS/token). Comma-separated for fallbacks (e.g. android_sdkless,web_safari)."
+      "extractionPlayerClientDescription": "Client chain for fetching video info. Default 'default,-android_sdkless' avoids android_sdkless. Comma-separated for fallbacks (e.g. default,-android_sdkless,web_safari)."
     },
     "ffmpeg": {
       "title": "FFmpeg",
@@ -715,7 +715,12 @@
       "missingFfmpeg": "ffmpeg is not installed. Please install it from Settings → Dependencies.",
       "missingBoth": "yt-dlp and ffmpeg are not installed. Please install them from Settings → Dependencies.",
       "goToSettings": "Go to Settings",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "switchToNightly": "Switch to nightly (bleeding edge)",
+      "switchToStable": "Switch to stable release",
+      "switchingChannel": "Switching yt-dlp to {channel} channel...",
+      "channelSwitched": "yt-dlp switched to {channel} ({version})",
+      "channelSwitchFailed": "Failed to switch channel: {error}"
     },
     "data": {
       "title": "Data",

@@ -297,7 +297,7 @@ function buildOrchestratorOptions(ui: QueueAddOptions | undefined): Orchestrator
     embedSubtitles: Boolean(embedSubtitles),
     subtitleLangs: ui?.subtitleLanguages?.trim() ? ui.subtitleLanguages.trim() : null,
     sponsorblockRemove: sponsorCategories.length > 0 ? sponsorCategories.join(',') : null,
-    youtubePlayerClient: null,
+    youtubePlayerClient: s.youtubePlayerClient.trim() || null,
     aria2Connections: s.aria2Connections ?? 8,
     aria2Splits: s.aria2Splits ?? 8,
     maxRetries: 3,
@@ -340,7 +340,7 @@ function buildFormatString(
       preferredAudioCodec && preferredAudioCodec !== 'any'
         ? audioCodecFilter[preferredAudioCodec] || ''
         : '';
-    return audioFilter ? `bestaudio${audioFilter}/bestaudio` : 'bestaudio';
+    return audioFilter ? `bestaudio${audioFilter}/bestaudio/best` : 'bestaudio/best';
   }
 
   const videoFilter =

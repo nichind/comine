@@ -31,11 +31,28 @@ object YtDlp {
             runCatching { YoutubeDL.getInstance().init(app); initialized = true; Log.i(TAG, "yt-dlp ready") }
             runCatching { FFmpeg.getInstance().init(app); ffmpegAvailable = true; Log.i(TAG, "ffmpeg ready") }
             runCatching { Aria2c.getInstance().init(app); aria2Available = true; Log.i(TAG, "aria2 ready") }
+            if (initialized) {
+                runCatching {
+                    val status = YoutubeDL.getInstance().updateYoutubeDL(app, YoutubeDL.UpdateChannel.NIGHTLY)
+                    Log.i(TAG, "yt-dlp nightly update: $status")
+                }
+            }
             onReady?.invoke()
         }.start()
     }
 
     fun getVersion(app: Application): String = runCatching { YoutubeDL.getInstance().versionName(app) ?: "" }.getOrDefault("")
+
+    fun updateChannel(app: Application, channel: String): String {
+        val updateChannel = when (channel.lowercase()) {
+            "nightly" -> YoutubeDL.UpdateChannel.NIGHTLY
+            "master" -> YoutubeDL.UpdateChannel.MASTER
+            else -> YoutubeDL.UpdateChannel.STABLE
+        }
+        val status = YoutubeDL.getInstance().updateYoutubeDL(app, updateChannel)
+        Log.i(TAG, "yt-dlp update to $channel: $status")
+        return getVersion(app)
+    }
 
     fun cancel(jobId: String): Boolean {
         // Cancel both yt-dlp and any follow-up ffmpeg embedding jobs.
@@ -170,7 +187,7 @@ object YtDlp {
                 }
                 
                 if (!youtubePlayerClient.isNullOrBlank() && youtubePlayerClient != "null") {
-                    addOption("--extractor-args", "youtube:player_client=$youtubePlayerClient;player_skip=webpage,configs")
+                    addOption("--extractor-args", "youtube:player_client=$youtubePlayerClient")
                 }
             }
 
@@ -306,7 +323,7 @@ object YtDlp {
                     maxHeight?.let { addOption("-S", "res:$it") }
                 }
 
-                youtubePlayerClient?.let { addOption("--extractor-args", "youtube:player_client=$it;player_skip=webpage,configs") }
+                youtubePlayerClient?.let { addOption("--extractor-args", "youtube:player_client=$it") }
                 proxyUrl?.let { addOption("--proxy", it) }
                 cookiePath?.let { addOption("--cookies", it) }
 

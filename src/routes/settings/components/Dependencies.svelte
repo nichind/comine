@@ -95,6 +95,26 @@
     const decimals = value >= 100 ? 0 : value >= 10 ? 1 : 2;
     return `${value.toFixed(decimals)} ${units[exp]}`;
   }
+
+  let updatingYtdlpChannel = $state(false);
+
+  function isNightlyVersion(version: string | null | undefined): boolean {
+    if (!version) return false;
+    return version.includes('nightly') || /\d{4}\.\d{2}\.\d{2}\.\d+/.test(version);
+  }
+
+  async function switchYtdlpChannel(channel: 'stable' | 'nightly') {
+    updatingYtdlpChannel = true;
+    toast.info($t('settings.deps.switchingChannel', { channel }));
+    try {
+      const newVersion = await deps.updateYtdlpChannel(channel);
+      toast.success($t('settings.deps.channelSwitched', { channel, version: newVersion }));
+    } catch (err) {
+      toast.error($t('settings.deps.channelSwitchFailed', { error: String(err) }));
+    } finally {
+      updatingYtdlpChannel = false;
+    }
+  }
 </script>
 
 <div class="deps-card">
@@ -155,6 +175,21 @@
               <Icon name="cross" size={18} />
             </button>
           {:else if info?.installed}
+            {#if dep.name === 'ytdlp'}
+              <button
+                class="action-btn nightly"
+                class:active={isNightlyVersion(info.version)}
+                onclick={() => switchYtdlpChannel(isNightlyVersion(info.version) ? 'stable' : 'nightly')}
+                disabled={updatingYtdlpChannel}
+                use:tooltip={isNightlyVersion(info.version) ? $t('settings.deps.switchToStable') : $t('settings.deps.switchToNightly')}
+              >
+                {#if updatingYtdlpChannel}
+                  <Icon name="spinner" size={18} />
+                {:else}
+                  <Icon name="code_funky" size={18} />
+                {/if}
+              </button>
+            {/if}
             <button
               class="action-btn reinstall"
               onclick={() => dep.installer()}
@@ -391,6 +426,27 @@
 
   .action-btn.cancel:hover {
     background: rgba(251, 191, 36, 0.25);
+  }
+
+  .action-btn.nightly {
+    background: rgba(139, 92, 246, 0.12);
+    border-color: rgba(139, 92, 246, 0.15);
+    color: #a78bfa;
+  }
+
+  .action-btn.nightly:hover {
+    background: rgba(139, 92, 246, 0.22);
+  }
+
+  .action-btn.nightly.active {
+    background: rgba(139, 92, 246, 0.25);
+    border-color: rgba(139, 92, 246, 0.35);
+    color: #c4b5fd;
+  }
+
+  .action-btn.nightly:disabled {
+    opacity: 0.6;
+    cursor: wait;
   }
 
   .dep-error {

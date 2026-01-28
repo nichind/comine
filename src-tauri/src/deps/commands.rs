@@ -49,6 +49,11 @@ pub async fn get_ytdlp_releases(
 }
 
 #[tauri::command]
+pub async fn update_ytdlp_channel(app: AppHandle, channel: String) -> Result<String, String> {
+    ytdlp::update_ytdlp_channel(app, channel).await
+}
+
+#[tauri::command]
 pub async fn check_ffmpeg(app: AppHandle) -> Result<DependencyStatus, String> {
     ffmpeg::check_ffmpeg(app).await
 }

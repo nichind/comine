@@ -4,6 +4,13 @@ import { listen } from '@tauri-apps/api/event';
 import { logs } from './logs';
 import { getProxyConfig } from './settings';
 import { toast, updateToast, dismissToast } from '$lib/components/Toast.svelte';
+import { isAndroid, callAndroidWithCallback } from '$lib/utils/android';
+
+interface AndroidWindow extends Window {
+  AndroidYtDlp?: {
+    updateChannel(channel: string, callbackName: string): void;
+  };
+}
 
 export interface DependencyStatus {
   installed: boolean;
@@ -341,7 +348,45 @@ function createDepsStore() {
     },
 
     async installYtdlp(version?: string) {
-      return installDep('ytdlp', version);
+      const success = await installDep('ytdlp', version);
+      if (success) {
+        try {
+          logs.info('deps', 'Auto-switching yt-dlp to nightly channel...');
+          await invoke<string>('update_ytdlp_channel', { channel: 'nightly' });
+          logs.info('deps', 'yt-dlp switched to nightly');
+          await checkDep('ytdlp');
+        } catch (err) {
+          logs.warn('deps', `Failed to auto-switch to nightly: ${err}`);
+        }
+      }
+      return success;
+    },
+
+    async updateYtdlpChannel(channel: 'stable' | 'nightly' | 'master') {
+      logs.info('deps', `Updating yt-dlp to ${channel} channel...`);
+      try {
+        let newVersion: string;
+        
+        if (isAndroid()) {
+          const android = (window as unknown as AndroidWindow).AndroidYtDlp;
+          if (!android?.updateChannel) {
+            throw new Error('Android yt-dlp bridge not available');
+          }
+          const result = await callAndroidWithCallback<{ version?: string }>((cb) =>
+            android.updateChannel(channel, cb)
+          );
+          newVersion = result.version ?? 'unknown';
+        } else {
+          newVersion = await invoke<string>('update_ytdlp_channel', { channel });
+        }
+        
+        logs.info('deps', `yt-dlp updated to ${newVersion}`);
+        await checkDep('ytdlp');
+        return newVersion;
+      } catch (err) {
+        logs.error('deps', `Failed to update yt-dlp channel: ${err}`);
+        throw err;
+      }
     },
 
     async fetchReleases() {

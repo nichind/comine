@@ -790,7 +790,12 @@
       "missingFfmpeg": "ffmpeg не установлен. Установите его в Настройки → Зависимости.",
       "missingBoth": "yt-dlp и ffmpeg не установлены. Установите их в Настройки → Зависимости.",
       "goToSettings": "Перейти в Настройки",
-      "cancel": "Отмена"
+      "cancel": "Отмена",
+      "switchToNightly": "Переключить на nightly (последняя сборка)",
+      "switchToStable": "Переключить на стабильную версию",
+      "switchingChannel": "Переключение yt-dlp на {channel}...",
+      "channelSwitched": "yt-dlp переключен на {channel} ({version})",
+      "channelSwitchFailed": "Не удалось переключить канал: {error}"
     },
     "data": {
       "title": "Данные",

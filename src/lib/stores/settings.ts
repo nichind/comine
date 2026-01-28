@@ -448,9 +448,9 @@ export const defaultSettings: AppSettings = {
   subtitleLanguages: 'en,ru',
 
   defaultProcessor: 'auto',
-  youtubePlayerClient: 'android_sdkless',
+  youtubePlayerClient: 'default,-android_sdkless',
   usePlayerClientForExtraction: false,
-  extractionPlayerClient: 'android_sdkless',
+  extractionPlayerClient: 'default,-android_sdkless',
 
   thumbnailTheming: true,
   builderThumbnailGlow: true,
@@ -574,6 +574,15 @@ export async function initSettings(): Promise<void> {
       ...defaultYtDlpAdvanced,
       ...(loaded.ytdlpAdvanced ?? {}),
     };
+
+    if (loaded.youtubePlayerClient === 'android_sdkless') {
+      loaded.youtubePlayerClient = 'default,-android_sdkless';
+      await store!.set('youtubePlayerClient', loaded.youtubePlayerClient);
+    }
+    if (loaded.extractionPlayerClient === 'android_sdkless') {
+      loaded.extractionPlayerClient = 'default,-android_sdkless';
+      await store!.set('extractionPlayerClient', loaded.extractionPlayerClient);
+    }
 
     settings.set(loaded);
     settingsReady.set(true);

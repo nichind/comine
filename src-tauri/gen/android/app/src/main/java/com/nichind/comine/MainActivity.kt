@@ -655,6 +655,23 @@ class MainActivity : TauriActivity() {
     fun getVersion(): String = YtDlp.getVersion(application)
 
     @JavascriptInterface
+    fun updateChannel(channel: String, callbackName: String) {
+      infoExecutor.execute {
+        try {
+          val newVersion = YtDlp.updateChannel(application, channel)
+          sendCallback(callbackName, JSONObject().apply {
+            put("success", true)
+            put("version", newVersion)
+          }.toString())
+        } catch (e: Exception) {
+          sendCallback(callbackName, JSONObject().apply {
+            put("error", e.message ?: "Update failed")
+          }.toString())
+        }
+      }
+    }
+
+    @JavascriptInterface
     fun fetchCallbackData(dataKey: String): String {
       return pendingCallbackData.remove(dataKey) ?: "{\"error\":\"data_not_found\"}"
     }
@@ -683,7 +700,7 @@ class MainActivity : TauriActivity() {
           if (!youtubePlayerClient.isNullOrBlank()) {
             request.addOption(
               "--extractor-args",
-              "youtube:player_client=${youtubePlayerClient};player_skip=webpage,configs"
+              "youtube:player_client=${youtubePlayerClient}"
             )
           }
           val response = YoutubeDL.getInstance().execute(request)
@@ -725,7 +742,7 @@ class MainActivity : TauriActivity() {
           if (!youtubePlayerClient.isNullOrBlank()) {
             request.addOption(
               "--extractor-args",
-              "youtube:player_client=${youtubePlayerClient};player_skip=webpage,configs"
+              "youtube:player_client=${youtubePlayerClient}"
             )
           }
 

@@ -433,7 +433,7 @@ export const SETTINGS: SettingDef[] = [
     icon: 'video',
     titleKey: 'settings.processing.youtubePlayerClient',
     descriptionKey: 'settings.processing.youtubePlayerClientDescription',
-    placeholder: 'android_sdkless',
+    placeholder: 'default,-android_sdkless',
     width: 200,
   },
   {
@@ -453,7 +453,7 @@ export const SETTINGS: SettingDef[] = [
     icon: 'link',
     titleKey: 'settings.processing.extractionPlayerClient',
     descriptionKey: 'settings.processing.extractionPlayerClientDescription',
-    placeholder: 'android_sdkless,web_safari',
+    placeholder: 'default,-android_sdkless',
     visible: (s) => !s.usePlayerClientForExtraction,
   },
   {

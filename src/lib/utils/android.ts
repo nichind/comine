@@ -1,7 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 
 interface AndroidWindow extends Window {
-  AndroidYtDlp?: { isReady(): boolean; getVersion(): string };
+  AndroidYtDlp?: {
+    isReady(): boolean;
+    getVersion(): string;
+    updateChannel(channel: string, callbackName: string): void;
+  };
   __YTDLP_READY__?: boolean;
   __androidLog?: (level: string, source: string, message: string) => void;
 }
@@ -108,6 +112,35 @@ export async function pickFolderOnAndroid(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+export function callAndroidWithCallback<T>(
+  method: (callbackName: string) => void
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const callbackName = `__android_cb_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    
+    (window as unknown as Record<string, unknown>)[callbackName] = (response: string) => {
+      delete (window as unknown as Record<string, unknown>)[callbackName];
+      try {
+        const parsed = JSON.parse(response);
+        if (parsed.error) {
+          reject(new Error(parsed.error));
+        } else {
+          resolve(parsed as T);
+        }
+      } catch {
+        resolve(response as unknown as T);
+      }
+    };
+    
+    try {
+      method(callbackName);
+    } catch (err) {
+      delete (window as unknown as Record<string, unknown>)[callbackName];
+      reject(err);
+    }
+  });
 }
 
 export function cleanupAndroidCallbacks(): void {}

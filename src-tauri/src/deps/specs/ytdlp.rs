@@ -304,3 +304,46 @@ pub async fn get_ytdlp_releases(
             .collect())
     }
 }
+
+pub async fn update_ytdlp_channel(app: AppHandle, channel: String) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        let _ = (app, channel);
+        return Err("Not supported on Android".to_string());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let ytdlp_path = get_ytdlp_path(&app)?;
+
+        if !ytdlp_path.exists() {
+            return Err("yt-dlp is not installed".to_string());
+        }
+
+        let valid_channels = ["stable", "nightly", "master"];
+        if !valid_channels.contains(&channel.as_str()) && !channel.contains('@') {
+            return Err(format!(
+                "Invalid channel '{}'. Use 'stable', 'nightly', 'master', or 'REPO@TAG'",
+                channel
+            ));
+        }
+
+        info!("Updating yt-dlp to channel: {}", channel);
+
+        let output = run_capture_async(&ytdlp_path, &["--update-to", &channel]).await?;
+
+        if output.status_code == Some(0) {
+            let version_output = run_capture_async(&ytdlp_path, &["--version"]).await?;
+            let new_version = version_output.stdout.trim().to_string();
+            info!("yt-dlp updated to: {}", new_version);
+            Ok(new_version)
+        } else {
+            let error = if !output.stderr.is_empty() {
+                output.stderr
+            } else {
+                output.stdout
+            };
+            Err(format!("Update failed: {}", error))
+        }
+    }
+}
