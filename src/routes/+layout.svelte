@@ -149,6 +149,7 @@
   let unlistenNotificationDownload: UnlistenFn | null = null;
   let unlistenNotificationStartDownload: UnlistenFn | null = null;
   let unlistenWindowShown: UnlistenFn | null = null;
+  let unlistenWindowHidden: UnlistenFn | null = null;
   let unlistenDeepLink: UnlistenFn | null = null;
   let unlistenExtensionDownload: UnlistenFn | null = null;
   let unlistenExtensionCancel: UnlistenFn | null = null;
@@ -396,12 +397,13 @@
   onMount(() => {
     const isNotificationRoute = window.location.pathname.startsWith('/notification');
 
+    ensureAppRootVisible();
+
     const splash = document.getElementById('splash-screen');
     if (splash) {
       if (isNotificationRoute) {
         splash.remove();
       } else {
-        const appRoot = document.getElementById('app-root');
         const holdMs = 500;
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
@@ -412,13 +414,15 @@
             }
             setTimeout(() => {
               splash.classList.add('fade-out');
-              if (appRoot) appRoot.classList.add('is-visible');
+              ensureAppRootVisible();
               setTimeout(() => splash.remove(), 400);
             }, holdMs);
           });
         });
       }
     }
+
+    ensureAppRootVisible();
 
     if (isNotificationRoute) {
       return;
@@ -757,6 +761,10 @@
 
     unlistenWindowShown = await listen('window-shown', () => {
       onWindowShown();
+    });
+
+    unlistenWindowHidden = await listen('window-hidden', () => {
+      isWindowHidden = true;
     });
 
     unlistenDeepLink = await listen<string>('deep-link-url', async (event) => {
@@ -1109,6 +1117,9 @@
     if (unlistenWindowShown) {
       unlistenWindowShown();
     }
+    if (unlistenWindowHidden) {
+      unlistenWindowHidden();
+    }
     if (unlistenDeepLink) {
       unlistenDeepLink();
     }
@@ -1430,6 +1441,7 @@
 
   async function onWindowShown() {
     logs.info('layout', 'Window restored - loading caches from disk');
+    ensureAppRootVisible();
     isWindowHidden = false;
 
     await mediaCache.load();
@@ -1470,6 +1482,13 @@
 
         await appWindow.hide();
         break;
+    }
+  }
+
+  function ensureAppRootVisible() {
+    const appRoot = document.getElementById('app-root');
+    if (appRoot) {
+      appRoot.classList.add('is-visible');
     }
   }
 

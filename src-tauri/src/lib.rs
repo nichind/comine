@@ -1111,6 +1111,7 @@ pub fn run() {
 
                         if let Some(window) = app_handle_for_event.get_webview_window("main") {
                             let _ = window.show();
+                            let _ = window.emit("window-shown", ());
                             let _ = window.set_focus();
                         }
                     });
@@ -1128,6 +1129,7 @@ pub fn run() {
 
                         if let Some(window) = app_handle.get_webview_window("main") {
                             let _ = window.show();
+                            let _ = window.emit("window-shown", ());
                         }
                     });
                 }
