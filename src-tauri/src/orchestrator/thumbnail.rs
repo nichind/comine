@@ -311,7 +311,11 @@ async fn embed_video_thumbnail_jpeg_bytes(
     }
 
     // webm doesn't support attached pictures; remux to mkv for cover art.
-    let output_ext = if video_ext == "webm" { "mkv" } else { video_ext.as_str() };
+    let output_ext = if video_ext == "webm" {
+        "mkv"
+    } else {
+        video_ext.as_str()
+    };
 
     let temp_output = video_path_buf.with_extension(format!("temp.{}", output_ext));
     let final_output = if video_ext == "webm" {
@@ -361,7 +365,10 @@ async fn embed_video_thumbnail_jpeg_bytes(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let _ = tokio::fs::remove_file(&temp_output).await;
-        return Err(format!("FFmpeg failed to embed video thumbnail: {}", stderr));
+        return Err(format!(
+            "FFmpeg failed to embed video thumbnail: {}",
+            stderr
+        ));
     }
 
     tokio::fs::rename(&temp_output, &final_output)

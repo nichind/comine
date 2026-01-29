@@ -89,7 +89,10 @@
             <HighlightText text={$t('settings.network.systemProxy')} highlight={searchQuery} />
           </div>
           <div class="description">
-            <HighlightText text={$t('settings.network.systemProxyDescription')} highlight={searchQuery} />
+            <HighlightText
+              text={$t('settings.network.systemProxyDescription')}
+              highlight={searchQuery}
+            />
           </div>
         </div>
       </div>
@@ -142,7 +145,10 @@
             <HighlightText text={$t('settings.network.customProxyUrl')} highlight={searchQuery} />
           </div>
           <div class="description">
-            <HighlightText text={$t('settings.network.customProxyUrlDescription')} highlight={searchQuery} />
+            <HighlightText
+              text={$t('settings.network.customProxyUrlDescription')}
+              highlight={searchQuery}
+            />
           </div>
         </div>
       </div>

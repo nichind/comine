@@ -366,7 +366,7 @@ function createDepsStore() {
       logs.info('deps', `Updating yt-dlp to ${channel} channel...`);
       try {
         let newVersion: string;
-        
+
         if (isAndroid()) {
           const android = (window as unknown as AndroidWindow).AndroidYtDlp;
           if (!android?.updateChannel) {
@@ -379,7 +379,7 @@ function createDepsStore() {
         } else {
           newVersion = await invoke<string>('update_ytdlp_channel', { channel });
         }
-        
+
         logs.info('deps', `yt-dlp updated to ${newVersion}`);
         await checkDep('ytdlp');
         return newVersion;

@@ -87,13 +87,12 @@
     const height = estimatedItemHeight;
     const el = scrollElement;
 
-    const firstKey =
-      count > 0 && items[0]
-        ? (getKey ? getKey(items[0], 0) : 0)
-        : '';
+    const firstKey = count > 0 && items[0] ? (getKey ? getKey(items[0], 0) : 0) : '';
     const lastKey =
       count > 0 && items[count - 1]
-        ? (getKey ? getKey(items[count - 1], count - 1) : count - 1)
+        ? getKey
+          ? getKey(items[count - 1], count - 1)
+          : count - 1
         : '';
     const signature = `${count}|${String(firstKey)}|${String(lastKey)}|${height}`;
 

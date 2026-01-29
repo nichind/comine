@@ -33,7 +33,6 @@
     controlType = 'unknown',
   }: Props = $props();
 
-
   const stackableControls = ['select', 'slider', 'input', 'color', 'path'];
   let shouldStack = $derived(stacked || stackableControls.includes(controlType));
 
@@ -100,7 +99,10 @@
           <button
             class="reset-btn"
             class:visible={showReset}
-            onclick={(e) => { e.stopPropagation(); onReset(); }}
+            onclick={(e) => {
+              e.stopPropagation();
+              onReset();
+            }}
             use:tooltip={'Reset to default'}
             aria-label="Reset setting"
             disabled={!showReset}
@@ -208,7 +210,10 @@
     border: 1px solid transparent;
     color: rgba(255, 255, 255, 0.4);
     cursor: pointer;
-    transition: opacity 0.15s, background 0.2s, color 0.2s;
+    transition:
+      opacity 0.15s,
+      background 0.2s,
+      color 0.2s;
     flex-shrink: 0;
     opacity: 0;
     pointer-events: none;

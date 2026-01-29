@@ -176,7 +176,11 @@
   }
 
   .style-preview.gradient {
-    background: linear-gradient(135deg, var(--accent, #6366f1) 0%, var(--accent-secondary, #8b5cf6) 100%);
+    background: linear-gradient(
+      135deg,
+      var(--accent, #6366f1) 0%,
+      var(--accent-secondary, #8b5cf6) 100%
+    );
   }
 
   .style-preview.glow {

@@ -179,9 +179,12 @@
               <button
                 class="action-btn nightly"
                 class:active={isNightlyVersion(info.version)}
-                onclick={() => switchYtdlpChannel(isNightlyVersion(info.version) ? 'stable' : 'nightly')}
+                onclick={() =>
+                  switchYtdlpChannel(isNightlyVersion(info.version) ? 'stable' : 'nightly')}
                 disabled={updatingYtdlpChannel}
-                use:tooltip={isNightlyVersion(info.version) ? $t('settings.deps.switchToStable') : $t('settings.deps.switchToNightly')}
+                use:tooltip={isNightlyVersion(info.version)
+                  ? $t('settings.deps.switchToStable')
+                  : $t('settings.deps.switchToNightly')}
               >
                 {#if updatingYtdlpChannel}
                   <Icon name="spinner" size={18} />

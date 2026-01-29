@@ -586,7 +586,7 @@ export async function initSettings(): Promise<void> {
 
     settings.set(loaded);
     settingsReady.set(true);
-    
+
     if (isAndroid()) setTimeout(() => syncUpdateSettingsToAndroid(), 1000);
   } catch (error) {
     logs.error('settings', `Failed to load settings: ${error}`);
@@ -608,7 +608,7 @@ export async function updateSetting<K extends keyof AppSettings>(
     await store.save();
 
     settings.update((s) => ({ ...s, [key]: value }));
-    
+
     if (isAndroid() && (key === 'autoUpdate' || key === 'allowPreReleases')) {
       syncUpdateSettingsToAndroid();
     }
@@ -620,7 +620,11 @@ export async function updateSetting<K extends keyof AppSettings>(
 function syncUpdateSettingsToAndroid(): void {
   if (!isAndroid()) return;
   const s = get(settings);
-  const android = (window as unknown as { AndroidYtDlp?: { syncUpdateSettings?: (a: boolean, b: boolean) => void } }).AndroidYtDlp;
+  const android = (
+    window as unknown as {
+      AndroidYtDlp?: { syncUpdateSettings?: (a: boolean, b: boolean) => void };
+    }
+  ).AndroidYtDlp;
   android?.syncUpdateSettings?.(s.autoUpdate ?? true, s.allowPreReleases ?? false);
 }
 

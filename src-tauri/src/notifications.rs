@@ -300,7 +300,7 @@ pub async fn show_notification_window(
         {
             use windows::Win32::Foundation::HWND;
             use windows::Win32::UI::WindowsAndMessaging::{
-                GetWindowLongW, SetWindowLongPtrW, SetWindowLongW, GWL_EXSTYLE, GWLP_HWNDPARENT,
+                GetWindowLongW, SetWindowLongPtrW, SetWindowLongW, GWLP_HWNDPARENT, GWL_EXSTYLE,
                 WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
             };
 
@@ -323,7 +323,8 @@ pub async fn show_notification_window(
                         if let Some(main_window) = app.get_webview_window("main") {
                             if let Ok(main_hwnd_raw) = main_window.hwnd() {
                                 let main_hwnd = HWND(main_hwnd_raw.0 as *mut _);
-                                let _ = SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, main_hwnd.0 as isize);
+                                let _ =
+                                    SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, main_hwnd.0 as isize);
                             }
                         }
                     }
@@ -359,9 +360,9 @@ pub async fn reveal_notification_window(app: AppHandle, window_id: String) -> Re
             {
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::UI::WindowsAndMessaging::{
-                    GetWindowLongW, SetWindowLongPtrW, SetWindowLongW, SetWindowPos, GWL_EXSTYLE,
-                    GWLP_HWNDPARENT, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
-                    SWP_NOZORDER, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+                    GetWindowLongW, SetWindowLongPtrW, SetWindowLongW, SetWindowPos,
+                    GWLP_HWNDPARENT, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOOWNERZORDER,
+                    SWP_NOSIZE, SWP_NOZORDER, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
                 };
 
                 if let Ok(raw_hwnd) = window.hwnd() {
@@ -379,7 +380,8 @@ pub async fn reveal_notification_window(app: AppHandle, window_id: String) -> Re
                         if let Some(main_window) = app.get_webview_window("main") {
                             if let Ok(main_hwnd_raw) = main_window.hwnd() {
                                 let main_hwnd = HWND(main_hwnd_raw.0 as *mut _);
-                                let _ = SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, main_hwnd.0 as isize);
+                                let _ =
+                                    SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, main_hwnd.0 as isize);
                             }
                         }
 

@@ -1079,14 +1079,8 @@ pub fn run() {
                             .unwrap_or_else(|| "acrylic".to_string());
 
                         let effect_type = match effect_type.as_str() {
-                            "acrylic"
-                            | "blur"
-                            | "mica"
-                            | "mica-dark"
-                            | "mica-light"
-                            | "tabbed"
-                            | "tabbed-dark"
-                            | "tabbed-light" => effect_type,
+                            "acrylic" | "blur" | "mica" | "mica-dark" | "mica-light" | "tabbed"
+                            | "tabbed-dark" | "tabbed-light" => effect_type,
                             _ if effect_type.starts_with("vibrancy-") => effect_type,
                             _ => "none".to_string(),
                         };

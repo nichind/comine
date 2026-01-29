@@ -48,15 +48,14 @@
             <HighlightText text={$t('settings.network.checkIp')} highlight={searchQuery} />
           </div>
           <div class="description">
-            <HighlightText text={$t('settings.network.checkIpDescription')} highlight={searchQuery} />
+            <HighlightText
+              text={$t('settings.network.checkIpDescription')}
+              highlight={searchQuery}
+            />
           </div>
         </div>
       </div>
-      <button
-        class="check-btn"
-        onclick={checkIp}
-        disabled={checkingIp}
-      >
+      <button class="check-btn" onclick={checkIp} disabled={checkingIp}>
         {#if checkingIp}
           <span class="btn-spinner"></span>
         {:else}

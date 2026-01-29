@@ -149,7 +149,6 @@ fn normalize_url_for_ytdlp(url: &str) -> String {
     url.to_string()
 }
 
-
 #[cfg(target_os = "android")]
 pub enum AndroidJobResult {
     Completed {
@@ -431,7 +430,10 @@ impl YtdlpBackend {
         if let Some(ref client) = settings.youtube_player_client {
             if !client.is_empty() {
                 log::info!(target: "ytdlp", "Using YouTube player client chain: {}", client);
-                cmd.args(["--extractor-args", &format!("youtube:player_client={}", client)]);
+                cmd.args([
+                    "--extractor-args",
+                    &format!("youtube:player_client={}", client),
+                ]);
             }
         }
 
@@ -523,7 +525,10 @@ impl YtdlpBackend {
         if let Some(ref client) = opts.youtube_player_client {
             if !client.is_empty() {
                 info!(target: "ytdlp", "Using YouTube player client chain: {}", client);
-                cmd.args(["--extractor-args", &format!("youtube:player_client={}", client)]);
+                cmd.args([
+                    "--extractor-args",
+                    &format!("youtube:player_client={}", client),
+                ]);
             }
         }
 
@@ -599,28 +604,26 @@ impl YtdlpBackend {
     }
 
     #[cfg(not(target_os = "android"))]
-    async fn spawn_desktop_once(
-        &self,
-        ctx: SpawnContext,
-    ) -> Result<String, BackendError> {
+    async fn spawn_desktop_once(&self, ctx: SpawnContext) -> Result<String, BackendError> {
         info!(target: "ytdlp", "Starting download job {} for URL: {}", ctx.job.id, ctx.job.request.url);
         info!(target: "ytdlp", "Quality settings: format={}, max_height={:?}, audio_only={}", 
               ctx.job.request.quality.format, ctx.job.request.quality.max_height, ctx.job.request.quality.audio_only);
 
-        let resolved_thumb =
-            if ctx.job.request.quality.audio_only && ctx.job.request.options.embed_thumbnail {
-                let mut settings = ResolveSettings::default();
-                settings.custom_cookies = ctx.job.request.options.custom_cookies.clone();
-                settings.cookies_from_browser = ctx.job.request.options.cookies_from_browser.clone();
-                settings.proxy = ctx.job.request.options.proxy.clone();
-                settings.youtube_player_client = ctx.job.request.options.youtube_player_client.clone();
-                self.resolve_desktop(&ctx.job.request.url, &settings)
-                    .await
-                    .ok()
-                    .and_then(|info| info.thumbnail)
-            } else {
-                None
-            };
+        let resolved_thumb = if ctx.job.request.quality.audio_only
+            && ctx.job.request.options.embed_thumbnail
+        {
+            let mut settings = ResolveSettings::default();
+            settings.custom_cookies = ctx.job.request.options.custom_cookies.clone();
+            settings.cookies_from_browser = ctx.job.request.options.cookies_from_browser.clone();
+            settings.proxy = ctx.job.request.options.proxy.clone();
+            settings.youtube_player_client = ctx.job.request.options.youtube_player_client.clone();
+            self.resolve_desktop(&ctx.job.request.url, &settings)
+                .await
+                .ok()
+                .and_then(|info| info.thumbnail)
+        } else {
+            None
+        };
 
         let mut cmd = self.build_download_command(&ctx.job, ctx.effective_speed_limit);
         cmd.stdout(Stdio::piped());
@@ -642,7 +645,8 @@ impl YtdlpBackend {
             .ok_or_else(|| BackendError::ProcessError("Failed to capture stderr".to_string()))?;
 
         // Keep a tail of stderr to include in error messages and to detect known postprocessing failures.
-        let stderr_tail: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::with_capacity(80)));
+        let stderr_tail: Arc<Mutex<VecDeque<String>>> =
+            Arc::new(Mutex::new(VecDeque::with_capacity(80)));
         let stderr_tail_clone = stderr_tail.clone();
         tokio::spawn(async move {
             let mut reader = BufReader::new(stderr).lines();

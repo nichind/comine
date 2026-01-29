@@ -873,7 +873,10 @@ function createQueueStore() {
       title: prefetched?.title || url,
       author: prefetched?.author || '',
       thumbnail: prefetched?.thumbnail || '',
-      duration: typeof prefetched?.duration === 'number' && Number.isFinite(prefetched.duration) ? prefetched.duration : 0,
+      duration:
+        typeof prefetched?.duration === 'number' && Number.isFinite(prefetched.duration)
+          ? prefetched.duration
+          : 0,
       filesize: 0,
       extension: '',
       filePath: '',
@@ -979,7 +982,10 @@ function createQueueStore() {
             const items = s.items.map((i) => {
               if (i.id !== id) return i;
               const parsedDuration = info.duration !== null ? Number(info.duration) : null;
-              const safeDuration = parsedDuration !== null && Number.isFinite(parsedDuration) ? parsedDuration : i.duration;
+              const safeDuration =
+                parsedDuration !== null && Number.isFinite(parsedDuration)
+                  ? parsedDuration
+                  : i.duration;
               return {
                 ...i,
                 title: info.title ?? i.title,
@@ -1061,7 +1067,10 @@ function createQueueStore() {
       globalOptions?: QueueAddOptions
     ) => {
       entries.forEach((entry, idx) => {
-        const safeDuration = typeof entry.duration === 'number' && Number.isFinite(entry.duration) ? entry.duration : undefined;
+        const safeDuration =
+          typeof entry.duration === 'number' && Number.isFinite(entry.duration)
+            ? entry.duration
+            : undefined;
         const merged: QueueAddOptions = {
           ...globalOptions,
           ...entry,
@@ -1247,7 +1256,8 @@ function createQueueStore() {
       targetFormat: string;
       audioOnly: boolean;
     }): string => {
-      const safeDuration = typeof args.duration === 'number' && Number.isFinite(args.duration) ? args.duration : 0;
+      const safeDuration =
+        typeof args.duration === 'number' && Number.isFinite(args.duration) ? args.duration : 0;
       const newItem: QueueItem = {
         id: args.id,
         url: args.url || `convert://${args.id}`,

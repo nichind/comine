@@ -673,7 +673,10 @@
                           {#if isSubsectionModified(subsec.items)}
                             <button
                               class="subsection-reset-btn"
-                              onclick={(e) => { e.stopPropagation(); resetSubsection(subsec.items); }}
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                resetSubsection(subsec.items);
+                              }}
                               use:tooltip={$t('settings.resetSectionTooltip')}
                             >
                               <Icon name="undo" size={14} />

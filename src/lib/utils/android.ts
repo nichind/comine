@@ -114,12 +114,10 @@ export async function pickFolderOnAndroid(): Promise<string | null> {
   }
 }
 
-export function callAndroidWithCallback<T>(
-  method: (callbackName: string) => void
-): Promise<T> {
+export function callAndroidWithCallback<T>(method: (callbackName: string) => void): Promise<T> {
   return new Promise((resolve, reject) => {
     const callbackName = `__android_cb_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    
+
     (window as unknown as Record<string, unknown>)[callbackName] = (response: string) => {
       delete (window as unknown as Record<string, unknown>)[callbackName];
       try {
@@ -133,7 +131,7 @@ export function callAndroidWithCallback<T>(
         resolve(response as unknown as T);
       }
     };
-    
+
     try {
       method(callbackName);
     } catch (err) {

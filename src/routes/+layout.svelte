@@ -408,8 +408,7 @@
             if (!isAndroid()) {
               try {
                 emit('frontend-ready');
-              } catch (e) {
-              }
+              } catch (e) {}
             }
             setTimeout(() => {
               splash.classList.add('fade-out');
