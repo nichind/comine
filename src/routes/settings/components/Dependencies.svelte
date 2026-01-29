@@ -99,10 +99,11 @@
   let updatingYtdlpChannel = $state(false);
 
   function isMasterVersion(version: string | null | undefined): boolean {
+    const v = version ?? '';
     return (
-      version.includes('master') ||
-      version.includes('nightly') ||
-      /\d{4}\.\d{2}\.\d{2}\.\d+/.test(version)
+      v.includes('master') ||
+      v.includes('nightly') ||
+      /\d{4}\.\d{2}\.\d{2}\.\d+/.test(v)
     );
   }
 
