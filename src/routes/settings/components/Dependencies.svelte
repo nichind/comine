@@ -98,12 +98,15 @@
 
   let updatingYtdlpChannel = $state(false);
 
-  function isNightlyVersion(version: string | null | undefined): boolean {
-    if (!version) return false;
-    return version.includes('nightly') || /\d{4}\.\d{2}\.\d{2}\.\d+/.test(version);
+  function isMasterVersion(version: string | null | undefined): boolean {
+    return (
+      version.includes('master') ||
+      version.includes('nightly') ||
+      /\d{4}\.\d{2}\.\d{2}\.\d+/.test(version)
+    );
   }
 
-  async function switchYtdlpChannel(channel: 'stable' | 'nightly') {
+  async function switchYtdlpChannel(channel: 'stable' | 'master') {
     updatingYtdlpChannel = true;
     toast.info($t('settings.deps.switchingChannel', { channel }));
     try {
@@ -177,14 +180,14 @@
           {:else if info?.installed}
             {#if dep.name === 'ytdlp'}
               <button
-                class="action-btn nightly"
-                class:active={isNightlyVersion(info.version)}
+                class="action-btn master"
+                class:active={isMasterVersion(info.version)}
                 onclick={() =>
-                  switchYtdlpChannel(isNightlyVersion(info.version) ? 'stable' : 'nightly')}
+                  switchYtdlpChannel(isMasterVersion(info.version) ? 'stable' : 'master')}
                 disabled={updatingYtdlpChannel}
-                use:tooltip={isNightlyVersion(info.version)
+                use:tooltip={isMasterVersion(info.version)
                   ? $t('settings.deps.switchToStable')
-                  : $t('settings.deps.switchToNightly')}
+                  : $t('settings.deps.switchToMaster')}
               >
                 {#if updatingYtdlpChannel}
                   <Icon name="spinner" size={18} />
@@ -431,23 +434,23 @@
     background: rgba(251, 191, 36, 0.25);
   }
 
-  .action-btn.nightly {
+  .action-btn.master {
     background: rgba(139, 92, 246, 0.12);
     border-color: rgba(139, 92, 246, 0.15);
     color: #a78bfa;
   }
 
-  .action-btn.nightly:hover {
+  .action-btn.master:hover {
     background: rgba(139, 92, 246, 0.22);
   }
 
-  .action-btn.nightly.active {
+  .action-btn.master.active {
     background: rgba(139, 92, 246, 0.25);
     border-color: rgba(139, 92, 246, 0.35);
     color: #c4b5fd;
   }
 
-  .action-btn.nightly:disabled {
+  .action-btn.master:disabled {
     opacity: 0.6;
     cursor: wait;
   }

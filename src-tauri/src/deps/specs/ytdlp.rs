@@ -320,17 +320,25 @@ pub async fn update_ytdlp_channel(app: AppHandle, channel: String) -> Result<Str
             return Err("yt-dlp is not installed".to_string());
         }
 
+        let channel = channel.trim().to_string();
+        let channel_lc = channel.to_lowercase();
+        let effective_channel = if channel_lc == "nightly" {
+            "master".to_string()
+        } else {
+            channel.clone()
+        };
+
         let valid_channels = ["stable", "nightly", "master"];
-        if !valid_channels.contains(&channel.as_str()) && !channel.contains('@') {
+        if !valid_channels.contains(&channel_lc.as_str()) && !channel.contains('@') {
             return Err(format!(
                 "Invalid channel '{}'. Use 'stable', 'nightly', 'master', or 'REPO@TAG'",
                 channel
             ));
         }
 
-        info!("Updating yt-dlp to channel: {}", channel);
+        info!("Updating yt-dlp to channel: {}", effective_channel);
 
-        let output = run_capture_async(&ytdlp_path, &["--update-to", &channel]).await?;
+        let output = run_capture_async(&ytdlp_path, &["--update-to", &effective_channel]).await?;
 
         if output.status_code == Some(0) {
             let version_output = run_capture_async(&ytdlp_path, &["--version"]).await?;

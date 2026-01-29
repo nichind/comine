@@ -33,8 +33,8 @@ object YtDlp {
             runCatching { Aria2c.getInstance().init(app); aria2Available = true; Log.i(TAG, "aria2 ready") }
             if (initialized) {
                 runCatching {
-                    val status = YoutubeDL.getInstance().updateYoutubeDL(app, YoutubeDL.UpdateChannel.NIGHTLY)
-                    Log.i(TAG, "yt-dlp nightly update: $status")
+                    val status = YoutubeDL.getInstance().updateYoutubeDL(app, YoutubeDL.UpdateChannel.MASTER)
+                    Log.i(TAG, "yt-dlp master update: $status")
                 }
             }
             onReady?.invoke()
@@ -45,7 +45,7 @@ object YtDlp {
 
     fun updateChannel(app: Application, channel: String): String {
         val updateChannel = when (channel.lowercase()) {
-            "nightly" -> YoutubeDL.UpdateChannel.NIGHTLY
+            "nightly" -> YoutubeDL.UpdateChannel.MASTER
             "master" -> YoutubeDL.UpdateChannel.MASTER
             else -> YoutubeDL.UpdateChannel.STABLE
         }

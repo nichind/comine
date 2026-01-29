@@ -716,7 +716,7 @@
       "missingBoth": "yt-dlp and ffmpeg are not installed. Please install them from Settings → Dependencies.",
       "goToSettings": "Go to Settings",
       "cancel": "Cancel",
-      "switchToNightly": "Switch to nightly (bleeding edge)",
+      "switchToMaster": "Switch to master (bleeding edge)",
       "switchToStable": "Switch to stable release",
       "switchingChannel": "Switching yt-dlp to {channel} channel...",
       "channelSwitched": "yt-dlp switched to {channel} ({version})",

@@ -351,18 +351,18 @@ function createDepsStore() {
       const success = await installDep('ytdlp', version);
       if (success) {
         try {
-          logs.info('deps', 'Auto-switching yt-dlp to nightly channel...');
-          await invoke<string>('update_ytdlp_channel', { channel: 'nightly' });
-          logs.info('deps', 'yt-dlp switched to nightly');
+          logs.info('deps', 'Auto-switching yt-dlp to master channel...');
+          await invoke<string>('update_ytdlp_channel', { channel: 'master' });
+          logs.info('deps', 'yt-dlp switched to master');
           await checkDep('ytdlp');
         } catch (err) {
-          logs.warn('deps', `Failed to auto-switch to nightly: ${err}`);
+          logs.warn('deps', `Failed to auto-switch to master: ${err}`);
         }
       }
       return success;
     },
 
-    async updateYtdlpChannel(channel: 'stable' | 'nightly' | 'master') {
+    async updateYtdlpChannel(channel: 'stable' | 'master') {
       logs.info('deps', `Updating yt-dlp to ${channel} channel...`);
       try {
         let newVersion: string;

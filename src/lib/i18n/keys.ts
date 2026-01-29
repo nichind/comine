@@ -788,7 +788,7 @@ export type TranslationKeys =
   | 'settings.deps.reinstall'
   | 'settings.deps.required'
   | 'settings.deps.someError'
-  | 'settings.deps.switchToNightly'
+  | 'settings.deps.switchToMaster'
   | 'settings.deps.switchToStable'
   | 'settings.deps.switchingChannel'
   | 'settings.deps.title'
