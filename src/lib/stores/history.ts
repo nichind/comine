@@ -1,28 +1,31 @@
 import { writable, derived, get } from 'svelte/store';
-import { settings } from './settings';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { translate, locale } from '$lib/i18n';
-import { load, type Store } from '@tauri-apps/plugin-store';
+import { safeDuration } from '$lib/utils/duration';
+import { logs } from './logs';
+import type { HistoryItem as BindingHistoryItem } from '$lib/bindings';
 
-export interface HistoryItem {
-  id: string;
-  url: string;
-  title: string;
-  author: string;
-  authorUrl?: string;
-  thumbnail: string;
-  extension: string;
-  size: number;
-  duration: number;
-  filePath: string;
-  downloadedAt: number;
+export type HistoryItem = Omit<
+  BindingHistoryItem,
+  | 'type'
+  | 'authorUrl'
+  | 'playlistId'
+  | 'playlistTitle'
+  | 'playlistIndex'
+  | 'convertedFormat'
+  | 'downloadSource'
+  | 'isFavourite'
+> & {
   type: 'video' | 'audio' | 'image' | 'file';
+  authorUrl?: string;
   playlistId?: string;
   playlistTitle?: string;
   playlistIndex?: number;
   convertedFormat?: string;
   downloadSource?: string;
   isFavourite?: boolean;
-}
+};
 
 export type FilterType = 'all' | 'video' | 'audio' | 'image' | 'file' | 'favourites';
 export type SortType = 'date' | 'name' | 'size' | 'duration' | 'format';
@@ -34,41 +37,58 @@ interface HistoryState {
   sort: SortType;
 }
 
-let store: Store | null = null;
-let saveTimeout: ReturnType<typeof setTimeout> | null = null;
-
-function debouncedSave(items: HistoryItem[]) {
-  if (saveTimeout) {
-    clearTimeout(saveTimeout);
-  }
-  saveTimeout = setTimeout(async () => {
-    if (store) {
-      try {
-        await store.set('items', items);
-        await store.save();
-      } catch (e) {
-        console.error('[History] Failed to save:', e);
-      }
-    }
-  }, 300);
+/**
+ * Normalize a backend HistoryItem into the frontend shape.
+ * The backend already sends camelCase (via `#[serde(rename_all = "camelCase")]`),
+ * so this mainly applies defaults for missing fields and sanitizes duration.
+ */
+function normalizeItem(raw: BindingHistoryItem): HistoryItem {
+  return {
+    id: raw.id,
+    url: raw.url,
+    title: raw.title ?? '',
+    author: raw.author ?? '',
+    authorUrl: raw.authorUrl ?? undefined,
+    thumbnail: raw.thumbnail ?? '',
+    extension: raw.extension ?? '',
+    size: raw.size ?? 0,
+    duration: safeDuration(raw.duration),
+    filePath: raw.filePath ?? '',
+    downloadedAt: raw.downloadedAt ?? 0,
+    type: (raw.type as HistoryItem['type']) ?? 'video',
+    playlistId: raw.playlistId ?? undefined,
+    playlistTitle: raw.playlistTitle ?? undefined,
+    playlistIndex: raw.playlistIndex ?? undefined,
+    convertedFormat: raw.convertedFormat ?? undefined,
+    downloadSource: raw.downloadSource ?? undefined,
+    isFavourite: raw.isFavourite ?? false,
+  };
 }
 
-const MAX_HISTORY_ITEMS = 1000;
-
-async function forceSave(items: HistoryItem[]) {
-  if (saveTimeout) {
-    clearTimeout(saveTimeout);
-    saveTimeout = null;
-  }
-  if (store) {
-    try {
-      await store.set('items', items);
-      await store.save();
-    } catch (e) {
-      console.error('[History] Failed to force save:', e);
-    }
-  }
+function toBackendItem(item: HistoryItem): BindingHistoryItem {
+  return {
+    id: item.id,
+    url: item.url,
+    title: item.title,
+    author: item.author,
+    authorUrl: item.authorUrl ?? null,
+    thumbnail: item.thumbnail,
+    extension: item.extension,
+    size: item.size,
+    duration: item.duration,
+    filePath: item.filePath,
+    downloadedAt: item.downloadedAt,
+    type: item.type,
+    playlistId: item.playlistId ?? null,
+    playlistTitle: item.playlistTitle ?? null,
+    playlistIndex: item.playlistIndex ?? null,
+    convertedFormat: item.convertedFormat ?? null,
+    downloadSource: item.downloadSource ?? null,
+    isFavourite: item.isFavourite ?? false,
+  };
 }
+
+const MAX_HISTORY_ITEMS = 5000;
 
 function createHistoryStore() {
   const { subscribe, set, update } = writable<HistoryState>({
@@ -79,95 +99,105 @@ function createHistoryStore() {
   });
 
   let initialized = false;
-  let initPromise: Promise<void> | null = null;
+  let unlistenHistoryItem: (() => void) | null = null;
 
-  async function ensureInitialized() {
-    if (initialized) return;
-
-    if (initPromise) {
-      await initPromise;
-      return;
-    }
-
-    initPromise = (async () => {
-      try {
-        store = await load('history.json', { autoSave: false, defaults: {} });
-        const items = ((await store.get('items')) as HistoryItem[]) || [];
-        update((state) => ({ ...state, items }));
-        console.log(`[History] Lazy loaded ${items.length} items`);
-        initialized = true;
-      } catch (e) {
-        console.error('[History] Failed to initialize:', e);
-        initialized = true; // Mark as initialized even on error to prevent loops
+  async function migrateFromFrontendStore() {
+    try {
+      const { load } = await import('@tauri-apps/plugin-store');
+      const oldStore = await load('history.json', { autoSave: false, defaults: {} });
+      const oldItems = ((await oldStore.get('items')) as HistoryItem[]) || [];
+      if (oldItems.length > 0) {
+        logs.info('history', `Migrating ${oldItems.length} items from frontend store`);
+        const backendItems = oldItems.map(toBackendItem);
+        await invoke('restore_history_from_frontend', { items: backendItems });
+        update((state) => ({ ...state, items: oldItems }));
       }
-    })();
-
-    await initPromise;
+    } catch {}
   }
 
   return {
     subscribe,
 
     async init() {
-      await ensureInitialized();
+      if (initialized) return;
+      initialized = true;
+
+      try {
+        const rawItems = await invoke<BindingHistoryItem[]>('get_history');
+        const allItems = rawItems.map(normalizeItem);
+        const items =
+          allItems.length > MAX_HISTORY_ITEMS ? allItems.slice(0, MAX_HISTORY_ITEMS) : allItems;
+        update((state) => ({ ...state, items }));
+        logs.info(
+          'history',
+          `Loaded ${items.length} items from backend (total: ${allItems.length})`
+        );
+
+        if (items.length === 0) {
+          await migrateFromFrontendStore();
+        }
+      } catch (e) {
+        console.error('[History] Failed to load from backend:', e);
+        await migrateFromFrontendStore();
+      }
+
+      const unlisten = await listen<BindingHistoryItem>('history-item-added', (event) => {
+        const item = normalizeItem(event.payload);
+        update((state) => {
+          const items = [item, ...state.items];
+          return {
+            ...state,
+            items: items.length > MAX_HISTORY_ITEMS ? items.slice(0, MAX_HISTORY_ITEMS) : items,
+          };
+        });
+      });
+      unlistenHistoryItem = unlisten;
     },
 
     async add(item: Omit<HistoryItem, 'id' | 'downloadedAt'>) {
-      await ensureInitialized();
-
-      if (typeof item.duration !== 'number' || !Number.isFinite(item.duration)) {
-        console.warn(
-          '[History] Invalid duration received:',
-          item.duration,
-          'type:',
-          typeof item.duration
-        );
-      }
-
       const newItem: HistoryItem = {
         ...item,
-        duration:
-          typeof item.duration === 'number' && Number.isFinite(item.duration) ? item.duration : 0,
+        duration: safeDuration(item.duration),
         id: crypto.randomUUID(),
         downloadedAt: Date.now(),
       };
 
-      update((state) => {
-        const items = [newItem, ...state.items].slice(0, MAX_HISTORY_ITEMS);
-        debouncedSave(items);
-        return { ...state, items };
-      });
+      update((state) => ({ ...state, items: [newItem, ...state.items] }));
+
+      try {
+        await invoke('import_history', { items: [toBackendItem(newItem)] });
+      } catch {}
 
       return newItem;
     },
 
     async restore(newItems: HistoryItem[]) {
-      await ensureInitialized();
-
-      update((state) => {
-        const currentIds = new Set(state.items.map((i) => i.id));
-        const uniqueNew = newItems.filter((i) => !currentIds.has(i.id));
-
-        const items = [...uniqueNew, ...state.items]
-          .sort((a, b) => b.downloadedAt - a.downloadedAt)
-          .slice(0, MAX_HISTORY_ITEMS);
-
-        debouncedSave(items);
-        return { ...state, items };
-      });
+      const backendItems = newItems.map(toBackendItem);
+      try {
+        await invoke('import_history', { items: backendItems });
+        const rawItems = await invoke<BindingHistoryItem[]>('get_history');
+        const items = rawItems.map(normalizeItem);
+        update((state) => ({ ...state, items }));
+      } catch (e) {
+        console.error('[History] Failed to restore:', e);
+      }
     },
 
     remove(id: string) {
-      update((state) => {
-        const items = state.items.filter((item) => item.id !== id);
-        debouncedSave(items);
-        return { ...state, items };
-      });
+      update((state) => ({
+        ...state,
+        items: state.items.filter((item) => item.id !== id),
+      }));
+      invoke('remove_history_item', { id }).catch((e) =>
+        logs.error('history', `Failed to remove item ${id}: ${e}`)
+      );
     },
 
     async clear() {
       update((state) => ({ ...state, items: [] }));
-      await forceSave([]);
+      await invoke('clear_history').catch((e) =>
+        logs.error('history', `Failed to clear history: ${e}`)
+      );
     },
 
     setSearch(query: string) {
@@ -183,91 +213,43 @@ function createHistoryStore() {
     },
 
     toggleFavourite(id: string) {
-      update((state) => {
-        const items = state.items.map((item) =>
+      update((state) => ({
+        ...state,
+        items: state.items.map((item) =>
           item.id === id ? { ...item, isFavourite: !item.isFavourite } : item
-        );
-        debouncedSave(items);
-        return { ...state, items };
-      });
-    },
-
-    setFavourite(id: string, value: boolean) {
-      update((state) => {
-        const items = state.items.map((item) =>
-          item.id === id ? { ...item, isFavourite: value } : item
-        );
-        debouncedSave(items);
-        return { ...state, items };
-      });
-    },
-
-    bulkSetFavourite(ids: string[], value: boolean) {
-      update((state) => {
-        const idSet = new Set(ids);
-        const items = state.items.map((item) =>
-          idSet.has(item.id) ? { ...item, isFavourite: value } : item
-        );
-        debouncedSave(items);
-        return { ...state, items };
-      });
-    },
-
-    async exportData(): Promise<string> {
-      await ensureInitialized();
-      const state = get({ subscribe });
-      return JSON.stringify(state.items, null, 2);
-    },
-
-    async importData(jsonData: string): Promise<boolean> {
-      try {
-        const items = JSON.parse(jsonData) as HistoryItem[];
-        if (!Array.isArray(items)) {
-          throw new Error('Invalid data format');
-        }
-        for (const item of items) {
-          if (!item.id || !item.url || !item.title) {
-            throw new Error('Invalid item structure');
-          }
-        }
-        update((state) => ({ ...state, items }));
-        await forceSave(items);
-        return true;
-      } catch (e) {
-        console.error('[History] Failed to import:', e);
-        return false;
-      }
+        ),
+      }));
+      invoke('toggle_history_favourite', { id }).catch((e) =>
+        logs.error('history', `Failed to toggle favourite ${id}: ${e}`)
+      );
     },
 
     async getItems(): Promise<HistoryItem[]> {
-      await ensureInitialized();
       return get({ subscribe }).items;
     },
 
+    cleanup() {
+      if (unlistenHistoryItem) {
+        unlistenHistoryItem();
+        unlistenHistoryItem = null;
+      }
+    },
+
     updateDuration(id: string, duration: number) {
-      update((state) => {
-        const items = state.items.map((item) => (item.id === id ? { ...item, duration } : item));
-        debouncedSave(items);
-        return { ...state, items };
-      });
+      update((state) => ({
+        ...state,
+        items: state.items.map((item) => (item.id === id ? { ...item, duration } : item)),
+      }));
+      invoke('update_history_duration', { id, duration }).catch((e) =>
+        logs.error('history', `Failed to update duration ${id}: ${e}`)
+      );
     },
   };
 }
 
 export const history = createHistoryStore();
-export const historyReady = writable(false);
 
-const dateRefreshTrigger = writable(0);
-export function refreshDateGroups() {
-  dateRefreshTrigger.update((n) => n + 1);
-}
-
-export async function initHistory(): Promise<void> {
-  await history.init();
-  historyReady.set(true);
-}
-
-export const filteredHistory = derived(history, ($history) => {
+const filteredHistory = derived(history, ($history) => {
   let items = [...$history.items];
 
   if ($history.searchQuery) {
@@ -280,7 +262,9 @@ export const filteredHistory = derived(history, ($history) => {
     );
   }
 
-  if ($history.filter !== 'all') {
+  if ($history.filter === 'favourites') {
+    items = items.filter((item) => item.isFavourite);
+  } else if ($history.filter !== 'all') {
     items = items.filter((item) => item.type === $history.filter);
   }
 
@@ -299,51 +283,6 @@ export const filteredHistory = derived(history, ($history) => {
   return items;
 });
 
-export const groupedHistory = derived(
-  [filteredHistory, locale, dateRefreshTrigger],
-  ([$items, _locale, _refresh]) => {
-    const groups: { label: string; items: HistoryItem[] }[] = [];
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const yesterday = today - 86400000;
-    const thisWeek = today - 7 * 86400000;
-    const thisMonth = today - 30 * 86400000;
-
-    const todayItems: HistoryItem[] = [];
-    const yesterdayItems: HistoryItem[] = [];
-    const thisWeekItems: HistoryItem[] = [];
-    const thisMonthItems: HistoryItem[] = [];
-    const olderItems: HistoryItem[] = [];
-
-    for (const item of $items) {
-      if (item.downloadedAt >= today) {
-        todayItems.push(item);
-      } else if (item.downloadedAt >= yesterday) {
-        yesterdayItems.push(item);
-      } else if (item.downloadedAt >= thisWeek) {
-        thisWeekItems.push(item);
-      } else if (item.downloadedAt >= thisMonth) {
-        thisMonthItems.push(item);
-      } else {
-        olderItems.push(item);
-      }
-    }
-
-    if (todayItems.length)
-      groups.push({ label: translate('downloads.dateGroups.today'), items: todayItems });
-    if (yesterdayItems.length)
-      groups.push({ label: translate('downloads.dateGroups.yesterday'), items: yesterdayItems });
-    if (thisWeekItems.length)
-      groups.push({ label: translate('downloads.dateGroups.thisWeek'), items: thisWeekItems });
-    if (thisMonthItems.length)
-      groups.push({ label: translate('downloads.dateGroups.thisMonth'), items: thisMonthItems });
-    if (olderItems.length)
-      groups.push({ label: translate('downloads.dateGroups.older'), items: olderItems });
-
-    return groups;
-  }
-);
-
 export interface HistoryPlaylistGroup {
   playlistId: string;
   playlistTitle: string;
@@ -354,155 +293,153 @@ export interface HistoryPlaylistGroup {
   isExpanded: boolean;
 }
 
-export const playlistGroupedHistory = derived(
-  [filteredHistory, locale, history, dateRefreshTrigger],
-  ([$items, _locale, $history, _refresh]) => {
-    const groups: { label: string; items: (HistoryItem | HistoryPlaylistGroup)[] }[] = [];
-    const sortType = $history.sort;
+export const playlistGroupedHistory = derived([filteredHistory, locale], ([$items, _locale]) => {
+  const groups: { label: string; items: (HistoryItem | HistoryPlaylistGroup)[] }[] = [];
+  // Get sort type from the history store without subscribing to it directly —
+  // filteredHistory already depends on history, so subscribing to both would
+  // re-run this expensive derivation twice per history change.
+  const sortType = get(history).sort;
 
-    if (sortType !== 'date') {
-      const playlistMap = new Map<string, HistoryItem[]>();
-      const singles: HistoryItem[] = [];
-
-      for (const item of $items) {
-        if (item.playlistId) {
-          const existing = playlistMap.get(item.playlistId) || [];
-          existing.push(item);
-          playlistMap.set(item.playlistId, existing);
-        } else {
-          singles.push(item);
-        }
-      }
-
-      const groupedItems: (HistoryItem | HistoryPlaylistGroup)[] = [];
-
-      playlistMap.forEach((items, playlistId) => {
-        items.sort((a, b) => (a.playlistIndex || 0) - (b.playlistIndex || 0));
-
-        const totalSize = items.reduce((sum, i) => sum + (i.size || 0), 0);
-        const totalDuration = items.reduce((sum, i) => sum + (i.duration || 0), 0);
-        const downloadedAt = Math.max(...items.map((i) => i.downloadedAt));
-
-        groupedItems.push({
-          playlistId,
-          playlistTitle: items[0]?.playlistTitle || 'Playlist',
-          items,
-          totalSize,
-          totalDuration,
-          downloadedAt,
-          isExpanded: false,
-        });
-      });
-
-      groupedItems.push(...singles);
-
-      if (sortType === 'name') {
-        groupedItems.sort((a, b) => {
-          const aName = 'playlistTitle' in a ? a.playlistTitle || '' : a.title;
-          const bName = 'playlistTitle' in b ? b.playlistTitle || '' : b.title;
-          return aName.localeCompare(bName);
-        });
-      } else if (sortType === 'size') {
-        groupedItems.sort((a, b) => {
-          const aSize = 'totalSize' in a ? a.totalSize : a.size;
-          const bSize = 'totalSize' in b ? b.totalSize : b.size;
-          return bSize - aSize;
-        });
-      }
-
-      if (groupedItems.length > 0) {
-        groups.push({
-          label:
-            sortType === 'name'
-              ? translate('downloads.sortedBy.name')
-              : translate('downloads.sortedBy.size'),
-          items: groupedItems,
-        });
-      }
-
-      return groups;
-    }
-
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const yesterday = today - 86400000;
-    const thisWeek = today - 7 * 86400000;
-    const thisMonth = today - 30 * 86400000;
-
-    const dateGroups: { label: string; items: HistoryItem[]; startTime: number }[] = [
-      { label: translate('downloads.dateGroups.today'), items: [], startTime: today },
-      { label: translate('downloads.dateGroups.yesterday'), items: [], startTime: yesterday },
-      { label: translate('downloads.dateGroups.thisWeek'), items: [], startTime: thisWeek },
-      { label: translate('downloads.dateGroups.thisMonth'), items: [], startTime: thisMonth },
-      { label: translate('downloads.dateGroups.older'), items: [], startTime: 0 },
-    ];
+  if (sortType !== 'date') {
+    const playlistMap = new Map<string, HistoryItem[]>();
+    const singles: HistoryItem[] = [];
 
     for (const item of $items) {
-      if (item.downloadedAt >= today) {
-        dateGroups[0].items.push(item);
-      } else if (item.downloadedAt >= yesterday) {
-        dateGroups[1].items.push(item);
-      } else if (item.downloadedAt >= thisWeek) {
-        dateGroups[2].items.push(item);
-      } else if (item.downloadedAt >= thisMonth) {
-        dateGroups[3].items.push(item);
+      if (item.playlistId) {
+        const existing = playlistMap.get(item.playlistId) || [];
+        existing.push(item);
+        playlistMap.set(item.playlistId, existing);
       } else {
-        dateGroups[4].items.push(item);
+        singles.push(item);
       }
     }
 
-    for (const dateGroup of dateGroups) {
-      if (dateGroup.items.length === 0) continue;
+    const groupedItems: (HistoryItem | HistoryPlaylistGroup)[] = [];
 
-      const playlistMap = new Map<string, HistoryItem[]>();
-      const singles: HistoryItem[] = [];
+    playlistMap.forEach((items, playlistId) => {
+      items.sort((a, b) => (a.playlistIndex || 0) - (b.playlistIndex || 0));
 
-      for (const item of dateGroup.items) {
-        if (item.playlistId) {
-          const existing = playlistMap.get(item.playlistId) || [];
-          existing.push(item);
-          playlistMap.set(item.playlistId, existing);
-        } else {
-          singles.push(item);
-        }
-      }
+      const totalSize = items.reduce((sum, i) => sum + (i.size || 0), 0);
+      const totalDuration = items.reduce((sum, i) => sum + (i.duration || 0), 0);
+      const downloadedAt = Math.max(...items.map((i) => i.downloadedAt));
 
-      const groupedItems: (HistoryItem | HistoryPlaylistGroup)[] = [];
-
-      playlistMap.forEach((items, playlistId) => {
-        items.sort((a, b) => (a.playlistIndex || 0) - (b.playlistIndex || 0));
-
-        const totalSize = items.reduce((sum, i) => sum + (i.size || 0), 0);
-        const totalDuration = items.reduce((sum, i) => sum + (i.duration || 0), 0);
-        const downloadedAt = Math.max(...items.map((i) => i.downloadedAt));
-
-        groupedItems.push({
-          playlistId,
-          playlistTitle: items[0]?.playlistTitle || 'Playlist',
-          items,
-          totalSize,
-          totalDuration,
-          downloadedAt,
-          isExpanded: false,
-        });
+      groupedItems.push({
+        playlistId,
+        playlistTitle: items[0]?.playlistTitle || 'Playlist',
+        items,
+        totalSize,
+        totalDuration,
+        downloadedAt,
+        isExpanded: false,
       });
+    });
 
-      groupedItems.push(...singles);
+    groupedItems.push(...singles);
 
+    if (sortType === 'name') {
       groupedItems.sort((a, b) => {
-        const aTime =
-          'downloadedAt' in a ? a.downloadedAt : (a as HistoryPlaylistGroup).downloadedAt;
-        const bTime =
-          'downloadedAt' in b ? b.downloadedAt : (b as HistoryPlaylistGroup).downloadedAt;
-        return bTime - aTime;
+        const aName = 'playlistTitle' in a ? a.playlistTitle || '' : a.title;
+        const bName = 'playlistTitle' in b ? b.playlistTitle || '' : b.title;
+        return aName.localeCompare(bName);
       });
+    } else if (sortType === 'size') {
+      groupedItems.sort((a, b) => {
+        const aSize = 'totalSize' in a ? a.totalSize : a.size;
+        const bSize = 'totalSize' in b ? b.totalSize : b.size;
+        return bSize - aSize;
+      });
+    }
 
-      groups.push({ label: dateGroup.label, items: groupedItems });
+    if (groupedItems.length > 0) {
+      groups.push({
+        label:
+          sortType === 'name'
+            ? translate('downloads.sortedBy.name')
+            : translate('downloads.sortedBy.size'),
+        items: groupedItems,
+      });
     }
 
     return groups;
   }
-);
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const yesterday = today - 86400000;
+  const thisWeek = today - 7 * 86400000;
+  const thisMonth = today - 30 * 86400000;
+
+  const dateGroups: { label: string; items: HistoryItem[]; startTime: number }[] = [
+    { label: translate('downloads.dateGroups.today'), items: [], startTime: today },
+    { label: translate('downloads.dateGroups.yesterday'), items: [], startTime: yesterday },
+    { label: translate('downloads.dateGroups.thisWeek'), items: [], startTime: thisWeek },
+    { label: translate('downloads.dateGroups.thisMonth'), items: [], startTime: thisMonth },
+    { label: translate('downloads.dateGroups.older'), items: [], startTime: 0 },
+  ];
+
+  for (const item of $items) {
+    if (item.downloadedAt >= today) {
+      dateGroups[0].items.push(item);
+    } else if (item.downloadedAt >= yesterday) {
+      dateGroups[1].items.push(item);
+    } else if (item.downloadedAt >= thisWeek) {
+      dateGroups[2].items.push(item);
+    } else if (item.downloadedAt >= thisMonth) {
+      dateGroups[3].items.push(item);
+    } else {
+      dateGroups[4].items.push(item);
+    }
+  }
+
+  for (const dateGroup of dateGroups) {
+    if (dateGroup.items.length === 0) continue;
+
+    const playlistMap = new Map<string, HistoryItem[]>();
+    const singles: HistoryItem[] = [];
+
+    for (const item of dateGroup.items) {
+      if (item.playlistId) {
+        const existing = playlistMap.get(item.playlistId) || [];
+        existing.push(item);
+        playlistMap.set(item.playlistId, existing);
+      } else {
+        singles.push(item);
+      }
+    }
+
+    const groupedItems: (HistoryItem | HistoryPlaylistGroup)[] = [];
+
+    playlistMap.forEach((items, playlistId) => {
+      items.sort((a, b) => (a.playlistIndex || 0) - (b.playlistIndex || 0));
+
+      const totalSize = items.reduce((sum, i) => sum + (i.size || 0), 0);
+      const totalDuration = items.reduce((sum, i) => sum + (i.duration || 0), 0);
+      const downloadedAt = Math.max(...items.map((i) => i.downloadedAt));
+
+      groupedItems.push({
+        playlistId,
+        playlistTitle: items[0]?.playlistTitle || 'Playlist',
+        items,
+        totalSize,
+        totalDuration,
+        downloadedAt,
+        isExpanded: false,
+      });
+    });
+
+    groupedItems.push(...singles);
+
+    groupedItems.sort((a, b) => {
+      const aTime = 'downloadedAt' in a ? a.downloadedAt : (a as HistoryPlaylistGroup).downloadedAt;
+      const bTime = 'downloadedAt' in b ? b.downloadedAt : (b as HistoryPlaylistGroup).downloadedAt;
+      return bTime - aTime;
+    });
+
+    groups.push({ label: dateGroup.label, items: groupedItems });
+  }
+
+  return groups;
+});
 
 export function isPlaylistGroup(
   item: HistoryItem | HistoryPlaylistGroup

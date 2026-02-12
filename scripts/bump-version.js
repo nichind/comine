@@ -12,25 +12,21 @@ if (!version || !/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version)) {
   process.exit(1);
 }
 
-// package.json
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 pkg.version = version;
 fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
 
-// Cargo.toml
 const cargoPath = path.join(root, 'src-tauri', 'Cargo.toml');
 fs.writeFileSync(
   cargoPath,
   fs.readFileSync(cargoPath, 'utf8').replace(/^version\s*=\s*"[^"]+"/m, `version = "${version}"`)
 );
 
-// tauri.conf.json
 const tauriPath = path.join(root, 'src-tauri', 'tauri.conf.json');
 const tauri = JSON.parse(fs.readFileSync(tauriPath, 'utf8'));
 tauri.version = version;
 fs.writeFileSync(tauriPath, JSON.stringify(tauri, null, 2) + '\n');
 
-// gradle.properties (Android version)
 const gradlePath = path.join(root, 'src-tauri', 'gen', 'android', 'gradle.properties');
 if (fs.existsSync(gradlePath)) {
   const baseVersion = version.split('-')[0];

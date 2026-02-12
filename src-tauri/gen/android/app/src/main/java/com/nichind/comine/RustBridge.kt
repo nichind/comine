@@ -17,7 +17,6 @@ object RustBridge {
         }
     }
 
-    // Rust keeps a global reference to the Activity for JNI callbacks.
     private external fun initRustJniWithActivity(activity: MainActivity)
 
     fun initialize() {
@@ -45,15 +44,26 @@ object RustBridge {
     fun isReady(): Boolean = initialized && libraryLoaded
 
     @JvmStatic external fun nativeOnDownloadStarted(jobId: String, title: String)
-    @JvmStatic external fun nativeOnDownloadProgress(jobId: String, progress: Float, speedBps: Long, etaSeconds: Long, downloadedBytes: Long, totalBytes: Long)
     @JvmStatic external fun nativeOnDownloadCompleted(jobId: String, outputPath: String, title: String?, thumbnail: String?)
     @JvmStatic external fun nativeOnDownloadFailed(jobId: String, error: String)
     @JvmStatic external fun nativeOnDownloadCancelled(jobId: String)
     @JvmStatic external fun nativeOnDownloadPaused(jobId: String)
 
+    @JvmStatic external fun nativeOnRawOutput(jobId: String, line: String)
+    @JvmStatic external fun nativeOnResolveOutput(resolveId: String, line: String)
+
+    @JvmStatic external fun nativeIsLetterboxed(imagePath: String): Boolean
+
     @JvmStatic external fun nativeOnConvertProgress(jobId: String, progress: Float, speed: String?)
     @JvmStatic external fun nativeOnConvertCompleted(jobId: String, outputPath: String, filesize: Long, extension: String, duration: Long?)
     @JvmStatic external fun nativeOnConvertFailed(jobId: String, error: String)
+    @JvmStatic external fun nativeEmitUpdateProgress(event: String, contentLength: Long, chunkLength: Long)
+
+    fun emitUpdateProgress(event: String, contentLength: Long = -1, chunkLength: Long = -1) {
+        if (!initialized) return
+        runCatching { nativeEmitUpdateProgress(event, contentLength, chunkLength) }
+            .onFailure { Log.e(TAG, "emitUpdateProgress failed: ${it.message}") }
+    }
 
     fun notifyStarted(jobId: String, title: String) {
         if (!initialized) {
@@ -62,12 +72,6 @@ object RustBridge {
         }
         runCatching { nativeOnDownloadStarted(jobId, title) }
             .onFailure { Log.e(TAG, "notifyStarted failed: ${it.message}") }
-    }
-    
-    fun notifyProgress(jobId: String, progress: Float, speedBps: Long = 0, etaSeconds: Long = -1, downloadedBytes: Long = 0, totalBytes: Long = 0) {
-        if (!initialized) return
-        runCatching { nativeOnDownloadProgress(jobId, progress, speedBps, etaSeconds, downloadedBytes, totalBytes) }
-            .onFailure { Log.e(TAG, "notifyProgress failed: ${it.message}") }
     }
     
     fun notifyCompleted(jobId: String, outputPath: String, title: String? = null, thumbnail: String? = null) {
@@ -104,6 +108,44 @@ object RustBridge {
         }
         runCatching { nativeOnDownloadPaused(jobId) }
             .onFailure { Log.e(TAG, "notifyPaused failed: ${it.message}") }
+    }
+
+    fun notifyRawOutput(jobId: String, line: String) {
+        if (!initialized) return
+        runCatching { nativeOnRawOutput(jobId, line) }
+            .onFailure { Log.e(TAG, "notifyRawOutput failed: ${it.message}") }
+    }
+
+    fun notifyResolveOutput(resolveId: String, line: String) {
+        if (!initialized) return
+        runCatching { nativeOnResolveOutput(resolveId, line) }
+            .onFailure { Log.e(TAG, "notifyResolveOutput failed: ${it.message}") }
+    }
+
+    @JvmStatic
+    fun updateNotificationProgress(jobId: String, progress: Int, speedBps: Long, etaSeconds: Long) {
+        DownloadNotifications.upsert(
+            jobId = jobId,
+            kind = DownloadNotifications.JobKind.DOWNLOAD,
+            progress = progress.coerceIn(0, 100),
+            indeterminate = false,
+            speedBps = speedBps.takeIf { it > 0 },
+            etaSeconds = etaSeconds.takeIf { it >= 0 },
+            canPause = true,
+            ongoing = true
+        )
+    }
+
+    @JvmStatic
+    fun updateNotificationTitle(jobId: String, title: String) {
+        if (title.isBlank()) return
+        DownloadNotifications.upsert(
+            jobId = jobId,
+            kind = DownloadNotifications.JobKind.DOWNLOAD,
+            title = title,
+            canPause = true,
+            ongoing = true
+        )
     }
 
     fun notifyConvertProgress(jobId: String, progress: Float, speed: String? = null) {

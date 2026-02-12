@@ -19,11 +19,9 @@
  */
 
 export type TranslationKeys =
-  // App
   | 'app.description'
   | 'app.name'
 
-  // Broadcast
   | 'broadcast.announcement'
   | 'broadcast.dismiss'
   | 'broadcast.important'
@@ -31,7 +29,6 @@ export type TranslationKeys =
   | 'broadcast.success'
   | 'broadcast.warning'
 
-  // Channel
   | 'channel.deselectAll'
   | 'channel.downloadSelected'
   | 'channel.live'
@@ -51,14 +48,12 @@ export type TranslationKeys =
   | 'channel.videos'
   | 'channel.viewCount'
 
-  // Clipboard
   | 'clipboard.detected'
   | 'clipboard.error'
   | 'clipboard.fetchingInfo'
   | 'clipboard.fileDetected'
   | 'clipboard.noValidUrl'
 
-  // Common
   | 'common.accept'
   | 'common.back'
   | 'common.cancel'
@@ -96,10 +91,8 @@ export type TranslationKeys =
   | 'common.youtubePlaylist'
   | 'common.youtubeVideo'
 
-  // Deeplink
   | 'deeplink.received'
 
-  // Deps
   | 'deps.bundleComplete'
   | 'deps.bundleFailed'
   | 'deps.bundlePartial'
@@ -113,13 +106,15 @@ export type TranslationKeys =
   | 'deps.uninstallFailed'
   | 'deps.uninstalled'
   | 'deps.uninstalling'
+  | 'deps.updateAll'
+  | 'deps.updateAvailableFor'
+  | 'deps.updateNow'
+  | 'deps.updatesAvailable'
 
-  // Disk
   | 'disk.available'
   | 'disk.lowSpace'
   | 'disk.lowSpaceWarning'
 
-  // Download
   | 'download.audio.best'
   | 'download.back'
   | 'download.blocks.advanced'
@@ -151,6 +146,8 @@ export type TranslationKeys =
   | 'download.downloading'
   | 'download.error'
   | 'download.errorDiskFull'
+  | 'download.filename_template'
+  | 'download.files.count'
   | 'download.formats.addedToQueue'
   | 'download.formats.audioOnly'
   | 'download.formats.audioOnlyResult'
@@ -268,7 +265,6 @@ export type TranslationKeys =
   | 'download.tracks.video'
   | 'download.youtubeDetected'
 
-  // Downloads
   | 'downloads.active'
   | 'downloads.addToFavourites'
   | 'downloads.clearSelection'
@@ -375,6 +371,7 @@ export type TranslationKeys =
   | 'downloads.revealError'
   | 'downloads.search'
   | 'downloads.searchPlaceholder'
+  | 'downloads.selectAll'
   | 'downloads.selectItem'
   | 'downloads.selected'
   | 'downloads.showDetails'
@@ -425,12 +422,10 @@ export type TranslationKeys =
   | 'downloads.views.grid'
   | 'downloads.views.list'
 
-  // Extension
   | 'extension.cookiesReceived'
   | 'extension.quickDownload'
   | 'extension.received'
 
-  // History
   | 'history.clearAll'
   | 'history.comingSoon'
   | 'history.delete'
@@ -440,7 +435,6 @@ export type TranslationKeys =
   | 'history.subtitle'
   | 'history.title'
 
-  // Info
   | 'info.branch'
   | 'info.browserExtension'
   | 'info.buildDate'
@@ -463,7 +457,6 @@ export type TranslationKeys =
   | 'info.viewLicenses'
   | 'info.website'
 
-  // Logs
   | 'logs.characters'
   | 'logs.clear'
   | 'logs.comingSoon'
@@ -483,7 +476,6 @@ export type TranslationKeys =
   | 'logs.subtitle'
   | 'logs.title'
 
-  // Nav
   | 'nav.download'
   | 'nav.downloads'
   | 'nav.history'
@@ -492,7 +484,6 @@ export type TranslationKeys =
   | 'nav.queue'
   | 'nav.settings'
 
-  // Notification
   | 'notification.clickToDownload'
   | 'notification.dismissButton'
   | 'notification.downloadButton'
@@ -500,12 +491,10 @@ export type TranslationKeys =
   | 'notification.loadingFromNotification'
   | 'notification.mediaDetected'
 
-  // Notifications
   | 'notifications.downloadComplete'
   | 'notifications.downloadFailed'
   | 'notifications.downloadStarted'
 
-  // Onboarding
   | 'onboarding.appearance.accentColor'
   | 'onboarding.appearance.backgroundBlur'
   | 'onboarding.appearance.backgroundType'
@@ -583,7 +572,6 @@ export type TranslationKeys =
   | 'onboarding.welcome.subtitle'
   | 'onboarding.welcome.title'
 
-  // Playlist
   | 'playlist.createFolder'
   | 'playlist.deselectAll'
   | 'playlist.downloadOrder'
@@ -611,7 +599,6 @@ export type TranslationKeys =
   | 'playlist.title'
   | 'playlist.videos'
 
-  // Queue
   | 'queue.alreadyInQueue'
   | 'queue.cancel'
   | 'queue.clearAll'
@@ -623,7 +610,34 @@ export type TranslationKeys =
   | 'queue.subtitle'
   | 'queue.title'
 
-  // Settings
+  | 'resolve.categories'
+  | 'resolve.music.album'
+  | 'resolve.music.artist'
+  | 'resolve.music.disc'
+  | 'resolve.music.genre'
+  | 'resolve.music.track'
+  | 'resolve.music.year'
+  | 'resolve.tags'
+
+  | 'settings.advanced.auto'
+  | 'settings.advanced.autoDescription'
+  | 'settings.advanced.defaultProcessor'
+  | 'settings.advanced.defaultProcessorDescription'
+  | 'settings.advanced.extractionPlayerClient'
+  | 'settings.advanced.extractionPlayerClientDescription'
+  | 'settings.advanced.groups.aria2'
+  | 'settings.advanced.groups.backend'
+  | 'settings.advanced.groups.download'
+  | 'settings.advanced.groups.extraction'
+  | 'settings.advanced.groups.ffmpeg'
+  | 'settings.advanced.groups.output'
+  | 'settings.advanced.groups.postProcess'
+  | 'settings.advanced.groups.youtube'
+  | 'settings.advanced.title'
+  | 'settings.advanced.usePlayerClientForExtraction'
+  | 'settings.advanced.usePlayerClientForExtractionDescription'
+  | 'settings.advanced.youtubePlayerClient'
+  | 'settings.advanced.youtubePlayerClientDescription'
   | 'settings.app.accentColor'
   | 'settings.app.accentColorDescription'
   | 'settings.app.accentStyle'
@@ -672,13 +686,15 @@ export type TranslationKeys =
   | 'settings.app.builderThumbnailGlow'
   | 'settings.app.builderThumbnailGlowDescription'
   | 'settings.app.checkForUpdates'
+  | 'settings.app.compactSidebar'
+  | 'settings.app.compactSidebarDescription'
   | 'settings.app.currentVersion'
   | 'settings.app.disableAnimations'
   | 'settings.app.downloading'
   | 'settings.app.fileSize'
   | 'settings.app.gridItemSize'
   | 'settings.app.gridItemSizeDescription'
-  | 'settings.app.groups.appearance'
+  | 'settings.app.groups.preferences'
   | 'settings.app.groups.privacy'
   | 'settings.app.installTriggered'
   | 'settings.app.installUpdate'
@@ -687,6 +703,11 @@ export type TranslationKeys =
   | 'settings.app.largeFileWarningDesktop'
   | 'settings.app.largeFileWarningMessage'
   | 'settings.app.largeFileWarningTitle'
+  | 'settings.app.navigationStyle'
+  | 'settings.app.navigationStyleAuto'
+  | 'settings.app.navigationStyleDescription'
+  | 'settings.app.navigationStyleNavbar'
+  | 'settings.app.navigationStyleSidebar'
   | 'settings.app.noUpdates'
   | 'settings.app.radiusCustom'
   | 'settings.app.radiusNone'
@@ -737,8 +758,17 @@ export type TranslationKeys =
   | 'settings.app.useSystemAccent'
   | 'settings.app.useSystemAccentDescription'
   | 'settings.app.whatsNew'
+  | 'settings.app.windowControlsAuto'
+  | 'settings.app.windowControlsMacos'
+  | 'settings.app.windowControlsStyle'
+  | 'settings.app.windowControlsStyleDescription'
+  | 'settings.app.windowControlsWindows'
   | 'settings.app.windowTint'
   | 'settings.app.windowTintDescription'
+  | 'settings.appearance.groups.background'
+  | 'settings.appearance.groups.layout'
+  | 'settings.appearance.groups.theme'
+  | 'settings.appearance.title'
   | 'settings.backToSections'
   | 'settings.data.clearCache'
   | 'settings.data.clearCacheDescription'
@@ -762,15 +792,20 @@ export type TranslationKeys =
   | 'settings.data.resetSettingsDescription'
   | 'settings.data.title'
   | 'settings.deps.aria2Description'
+  | 'settings.deps.autoUpdateDeps'
+  | 'settings.deps.autoUpdateDepsDescription'
   | 'settings.deps.cancel'
   | 'settings.deps.channelSwitchFailed'
   | 'settings.deps.channelSwitched'
+  | 'settings.deps.checkDepUpdates'
+  | 'settings.deps.checkDepUpdatesDescription'
   | 'settings.deps.checkSettings'
   | 'settings.deps.checking'
   | 'settings.deps.components'
   | 'settings.deps.denoDescription'
   | 'settings.deps.description'
   | 'settings.deps.ffmpegDescription'
+  | 'settings.deps.galleryDlDescription'
   | 'settings.deps.goToSettings'
   | 'settings.deps.install'
   | 'settings.deps.installed'
@@ -803,6 +838,8 @@ export type TranslationKeys =
   | 'settings.downloads.aria2DisableIPv6Description'
   | 'settings.downloads.aria2Splits'
   | 'settings.downloads.aria2SplitsDescription'
+  | 'settings.downloads.audioFormat'
+  | 'settings.downloads.audioFormatDescription'
   | 'settings.downloads.audioPath'
   | 'settings.downloads.bypassProxyForDownloads'
   | 'settings.downloads.bypassProxyForDownloadsDescription'
@@ -818,6 +855,9 @@ export type TranslationKeys =
   | 'settings.downloads.embedThumbnailTooltip'
   | 'settings.downloads.fileDownloadNotifications'
   | 'settings.downloads.fileDownloadNotificationsTooltip'
+  | 'settings.downloads.groups.format'
+  | 'settings.downloads.groups.options'
+  | 'settings.downloads.groups.performance'
   | 'settings.downloads.preferredAudioCodec'
   | 'settings.downloads.preferredAudioCodecDescription'
   | 'settings.downloads.preferredVideoCodec'
@@ -844,6 +884,8 @@ export type TranslationKeys =
   | 'settings.general.closeBehaviorDescription'
   | 'settings.general.closeBehaviorMinimize'
   | 'settings.general.closeBehaviorTray'
+  | 'settings.general.groups.clipboard'
+  | 'settings.general.groups.startup'
   | 'settings.general.language'
   | 'settings.general.startMinimized'
   | 'settings.general.startMinimizedDescription'
@@ -939,19 +981,6 @@ export type TranslationKeys =
   | 'settings.notifications.title'
   | 'settings.notifications.toastPosition'
   | 'settings.notifications.toastPositionDescription'
-  | 'settings.processing.auto'
-  | 'settings.processing.autoDescription'
-  | 'settings.processing.defaultProcessor'
-  | 'settings.processing.defaultProcessorDescription'
-  | 'settings.processing.extractionPlayerClient'
-  | 'settings.processing.extractionPlayerClientDescription'
-  | 'settings.processing.groups.backend'
-  | 'settings.processing.groups.youtube'
-  | 'settings.processing.title'
-  | 'settings.processing.usePlayerClientForExtraction'
-  | 'settings.processing.usePlayerClientForExtractionDescription'
-  | 'settings.processing.youtubePlayerClient'
-  | 'settings.processing.youtubePlayerClientDescription'
   | 'settings.resetSection'
   | 'settings.resetSectionTooltip'
   | 'settings.search.placeholder'
@@ -987,25 +1016,27 @@ export type TranslationKeys =
   | 'settings.sync.verifyCode'
   | 'settings.title'
 
-  // Tray
   | 'tray.downloadClipboard'
   | 'tray.hiddenToTray'
+  | 'tray.noRecentDownloads'
+  | 'tray.pauseAll'
   | 'tray.quit'
+  | 'tray.recentDownloads'
+  | 'tray.resumeAll'
   | 'tray.show'
+  | 'tray.startOnBoot'
+  | 'tray.watchClipboard'
 
-  // Updates
   | 'updates.installNow'
   | 'updates.later'
   | 'updates.notificationBody'
   | 'updates.notificationBodyPreRelease'
   | 'updates.notificationTitle'
 
-  // Window
   | 'window.close'
   | 'window.maximize'
   | 'window.minimize'
 
-  // Ytdlp
   | 'ytdlp.advanced.aria2.customArgs'
   | 'ytdlp.advanced.aria2.customArgsHint'
   | 'ytdlp.advanced.aria2.description'
@@ -1064,5 +1095,6 @@ export type TranslationKeys =
   | 'ytdlp.advanced.postProcess.title'
   | 'ytdlp.advanced.title'
   | 'ytdlp.advanced.youtube.description'
-  'ytdlp.advanced.youtube.title'
-;
+  | 'ytdlp.advanced.youtube.title'
+  // Allows dynamic/computed keys while preserving autocomplete for known keys
+  | (string & {});

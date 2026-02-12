@@ -1,36 +1,25 @@
-//! Local file conversion using FFmpeg.
-//! Converts existing files to different formats without downloading.
-
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 #[cfg(feature = "ts-export")]
 use ts_rs::TS;
 
-struct ActiveConversion {
-    cancel_token: CancellationToken,
-    #[allow(dead_code)]
-    output_path: PathBuf,
-}
-
-lazy_static::lazy_static! {
-    static ref ACTIVE_CONVERSIONS: Mutex<HashMap<String, ActiveConversion>> = Mutex::new(HashMap::new());
-}
+use crate::orchestrator::types::ProgressUpdate;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts-export", derive(TS))]
 #[cfg_attr(feature = "ts-export", ts(export, rename_all = "camelCase"))]
 pub struct FfmpegConvertSettings {
-    /// Hardware acceleration: auto, none, nvenc, qsv, amf, videotoolbox
     #[serde(default)]
     pub hw_accel: String,
 }
@@ -90,53 +79,197 @@ pub struct ConvertProgress {
     pub speed: Option<String>,
 }
 
-async fn get_media_duration(ffprobe_path: &Path, file_path: &str) -> Option<f64> {
-    let mut cmd = tokio::process::Command::new(ffprobe_path);
-    cmd.args([
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        file_path,
-    ]);
-
-    #[cfg(target_os = "windows")]
-    {
-        use crate::utils::CommandHideConsole;
-        cmd.hide_console();
-    }
-
-    let output = cmd.output().await.ok()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout.trim().parse().ok()
+struct ActiveConversion {
+    cancel_token: CancellationToken,
 }
+
+static ACTIVE_CONVERSIONS: LazyLock<Mutex<HashMap<String, ActiveConversion>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn get_file_size(path: &Path) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
-#[tauri::command]
-pub async fn convert_local_file(
-    app: AppHandle,
-    request: ConvertRequest,
-) -> Result<ConvertResult, String> {
-    #[cfg(target_os = "android")]
-    {
-        let _ = CONVERT_APP_HANDLE.set(app.clone());
-        return convert_local_file_android(app, request).await;
+fn build_ffmpeg_components(
+    request: &ConvertRequest,
+    force_software: bool,
+) -> (Vec<String>, Vec<String>) {
+    let mut pre_args = Vec::new();
+    let mut post_args = Vec::new();
+
+    let ffmpeg_settings = request.ffmpeg.clone().unwrap_or_default();
+    let hw_accel = if force_software {
+        "none"
+    } else {
+        ffmpeg_settings.hw_accel.as_str()
+    };
+
+    match hw_accel {
+        "nvenc" => pre_args.extend_from_slice(&["-hwaccel".to_string(), "cuda".to_string()]),
+        "qsv" => pre_args.extend_from_slice(&["-hwaccel".to_string(), "qsv".to_string()]),
+        "amf" => pre_args.extend_from_slice(&["-hwaccel".to_string(), "d3d11va".to_string()]),
+        "videotoolbox" => {
+            pre_args.extend_from_slice(&["-hwaccel".to_string(), "videotoolbox".to_string()])
+        }
+        "auto" => pre_args.extend_from_slice(&["-hwaccel".to_string(), "auto".to_string()]),
+        _ => {}
     }
 
-    #[cfg(not(target_os = "android"))]
-    {
-        convert_local_file_desktop(app, request).await
+    if request.audio_only {
+        post_args.push("-vn".to_string());
+        match request.target_format.as_str() {
+            "mp3" => post_args.extend_from_slice(&[
+                "-c:a".to_string(),
+                "libmp3lame".to_string(),
+                "-q:a".to_string(),
+                "2".to_string(),
+            ]),
+            "m4a" | "aac" => post_args.extend_from_slice(&[
+                "-c:a".to_string(),
+                "aac".to_string(),
+                "-b:a".to_string(),
+                "192k".to_string(),
+            ]),
+            "opus" => post_args.extend_from_slice(&[
+                "-c:a".to_string(),
+                "libopus".to_string(),
+                "-b:a".to_string(),
+                "128k".to_string(),
+            ]),
+            "flac" => post_args.extend_from_slice(&["-c:a".to_string(), "flac".to_string()]),
+            "wav" => post_args.extend_from_slice(&["-c:a".to_string(), "pcm_s16le".to_string()]),
+            _ => post_args.extend_from_slice(&["-c:a".to_string(), "copy".to_string()]),
+        }
+    } else {
+        let (video_codec, video_args): (&str, Vec<&str>) =
+            match (hw_accel, request.target_format.as_str()) {
+                ("nvenc", "mp4" | "mov" | "mkv") => {
+                    ("h264_nvenc", vec!["-rc", "constqp", "-qp", "23"])
+                }
+                ("qsv", "mp4" | "mov" | "mkv") => ("h264_qsv", vec!["-global_quality", "23"]),
+                ("amf", "mp4" | "mov" | "mkv") => {
+                    ("h264_amf", vec!["-rc", "cqp", "-qp_i", "23", "-qp_p", "23"])
+                }
+                ("videotoolbox", "mp4" | "mov" | "mkv") => {
+                    ("h264_videotoolbox", vec!["-q:v", "65"])
+                }
+                (_, "mp4" | "mov") => ("libx264", vec!["-preset", "medium", "-crf", "23"]),
+                (_, "webm") => ("libvpx-vp9", vec!["-crf", "30", "-b:v", "0"]),
+                (_, "mkv") => ("copy", vec![]),
+                (_, "avi") => ("libxvid", vec!["-q:v", "5"]),
+                (_, "gif") => ("gif", vec!["-vf", "fps=15,scale=480:-1:flags=lanczos"]),
+                _ => ("copy", vec![]),
+            };
+
+        post_args.extend_from_slice(&["-c:v".to_string(), video_codec.to_string()]);
+        for arg in video_args {
+            post_args.push(arg.to_string());
+        }
+
+        match request.target_format.as_str() {
+            "mp4" | "mov" | "m4a" => post_args.extend_from_slice(&[
+                "-c:a".to_string(),
+                "aac".to_string(),
+                "-b:a".to_string(),
+                "192k".to_string(),
+            ]),
+            "webm" => post_args.extend_from_slice(&[
+                "-c:a".to_string(),
+                "libopus".to_string(),
+                "-b:a".to_string(),
+                "128k".to_string(),
+            ]),
+            "mkv" => post_args.extend_from_slice(&["-c:a".to_string(), "copy".to_string()]),
+            "avi" => post_args.extend_from_slice(&[
+                "-c:a".to_string(),
+                "libmp3lame".to_string(),
+                "-b:a".to_string(),
+                "192k".to_string(),
+            ]),
+            "gif" => {}
+            _ => post_args.extend_from_slice(&["-c:a".to_string(), "copy".to_string()]),
+        }
+
+        if request.target_format == "mp4" || request.target_format == "mov" {
+            post_args.extend_from_slice(&["-movflags".to_string(), "+faststart".to_string()]);
+        }
+    }
+
+    if let Some(extra) = &request.extra_args {
+        post_args.extend(extra.clone());
+    }
+
+    (pre_args, post_args)
+}
+
+fn create_concat_list(files: &[String], output_dir: &Path) -> Result<(PathBuf, String), String> {
+    let concat_list_path = output_dir.join(format!(".concat_{}.txt", uuid::Uuid::new_v4()));
+    let concat_content: String = files
+        .iter()
+        .map(|p| format!("file '{}'", p.replace('\\', "/").replace("'", "'\\''")))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    std::fs::write(&concat_list_path, &concat_content)
+        .map_err(|e| format!("Failed to write concat list: {}", e))?;
+
+    Ok((concat_list_path, concat_content))
+}
+
+fn cleanup_source_files(files: &[String]) {
+    for file in files {
+        if let Err(e) = std::fs::remove_file(file) {
+            warn!("Failed to delete source file {}: {}", file, e);
+        }
     }
 }
 
-#[cfg(not(target_os = "android"))]
-async fn convert_local_file_desktop(
+pub async fn concat_files(
+    app: &AppHandle,
+    _job_id: &str,
+    files: Vec<String>,
+    output_path: &str,
+    delete_sources: bool,
+    _progress_tx: mpsc::UnboundedSender<ProgressUpdate>,
+) -> Result<String, String> {
+    if files.is_empty() {
+        return Err("No files to concatenate".to_string());
+    }
+
+    if files.len() == 1 {
+        if files[0] != output_path {
+            std::fs::rename(&files[0], output_path)
+                .map_err(|e| format!("Failed to rename file: {}", e))?;
+        }
+        return Ok(output_path.to_string());
+    }
+
+    info!("Concatenating {} files into {}", files.len(), output_path);
+
+    let output_dir = std::path::Path::new(output_path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+
+    let (concat_list_path, concat_content) = create_concat_list(&files, output_dir)?;
+    info!("Concat list:\n{}", concat_content);
+
+    let result = exec::run_ffmpeg_concat(app, &concat_list_path, output_path).await;
+
+    let _ = std::fs::remove_file(&concat_list_path);
+
+    result?;
+
+    info!("Concatenation successful: {}", output_path);
+
+    if delete_sources {
+        cleanup_source_files(&files);
+    }
+
+    Ok(output_path.to_string())
+}
+
+#[tauri::command]
+pub async fn convert_local_file(
     app: AppHandle,
     request: ConvertRequest,
 ) -> Result<ConvertResult, String> {
@@ -145,57 +278,18 @@ async fn convert_local_file_desktop(
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    info!(
-        job_id = %job_id,
-        source = %request.source_path,
-        target = %request.target_format,
-        "Starting local file conversion"
-    );
+    info!(job_id = %job_id, source = %request.source_path, target = %request.target_format, "Starting conversion");
 
-    let ffmpeg_path = crate::deps::get_ffmpeg_path(&app)?;
-
-    if !ffmpeg_path.exists() {
-        return Err(
-            "FFmpeg not installed. Please install it from Settings → Dependencies.".to_string(),
-        );
-    }
-
-    // Determine ffprobe path (same directory as ffmpeg)
-    let ffprobe_path = ffmpeg_path
-        .parent()
-        .map(|p: &std::path::Path| {
-            #[cfg(target_os = "windows")]
-            {
-                p.join("ffprobe.exe")
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                p.join("ffprobe")
-            }
-        })
-        .unwrap_or_else(|| PathBuf::from("ffprobe"));
-
-    // Verify source file exists
     let source_path = Path::new(&request.source_path);
     if !source_path.exists() {
         return Err(format!("Source file not found: {}", request.source_path));
     }
 
-    // Get source duration for progress calculation
-    let total_duration = if ffprobe_path.exists() {
-        get_media_duration(&ffprobe_path, &request.source_path).await
-    } else {
-        None
-    };
-
-    // Determine output path
     let source_stem = source_path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("output");
-
     let output_filename = request.output_filename.as_deref().unwrap_or(source_stem);
-
     let output_dir = request
         .output_directory
         .as_deref()
@@ -205,14 +299,12 @@ async fn convert_local_file_desktop(
 
     let output_path = output_dir.join(format!("{}.{}", output_filename, request.target_format));
 
-    // Avoid overwriting the source file
     let output_path = if output_path == source_path {
         output_dir.join(format!(
             "{}_converted.{}",
             output_filename, request.target_format
         ))
     } else {
-        // If file exists, add a suffix
         let mut final_path = output_path.clone();
         let mut counter = 1;
         while final_path.exists() {
@@ -225,345 +317,43 @@ async fn convert_local_file_desktop(
         final_path
     };
 
-    // Build FFmpeg command
-    let mut cmd = tokio::process::Command::new(&ffmpeg_path);
+    let force_software = cfg!(target_os = "android");
+    let (pre_args, post_args) = build_ffmpeg_components(&request, force_software);
 
-    // Get FFmpeg settings with defaults
-    let ffmpeg_settings = request.ffmpeg.clone().unwrap_or_default();
-
-    // Add hardware acceleration if specified
-    match ffmpeg_settings.hw_accel.as_str() {
-        "nvenc" => {
-            cmd.args(["-hwaccel", "cuda"]);
-        }
-        "qsv" => {
-            cmd.args(["-hwaccel", "qsv"]);
-        }
-        "amf" => {
-            cmd.args(["-hwaccel", "d3d11va"]);
-        }
-        "videotoolbox" => {
-            cmd.args(["-hwaccel", "videotoolbox"]);
-        }
-        "auto" => {
-            cmd.args(["-hwaccel", "auto"]);
-        }
-        _ => {} // none or unknown - no hw accel
-    }
-
-    cmd.arg("-i").arg(&request.source_path);
-    cmd.arg("-y"); // Overwrite output
-    cmd.arg("-progress").arg("pipe:1"); // Output progress to stdout
-    cmd.arg("-stats_period").arg("0.5"); // Update every 0.5 seconds
-
-    // Add format-specific options with sensible defaults
-    if request.audio_only {
-        cmd.arg("-vn"); // No video
-        match request.target_format.as_str() {
-            "mp3" => {
-                cmd.args(["-c:a", "libmp3lame", "-q:a", "2"]);
-            }
-            "m4a" | "aac" => {
-                cmd.args(["-c:a", "aac", "-b:a", "192k"]);
-            }
-            "opus" => {
-                cmd.args(["-c:a", "libopus", "-b:a", "128k"]);
-            }
-            "flac" => {
-                cmd.args(["-c:a", "flac"]);
-            }
-            "wav" => {
-                cmd.args(["-c:a", "pcm_s16le"]);
-            }
-            _ => {
-                cmd.args(["-c:a", "copy"]);
-            }
-        }
-    } else {
-        // Determine video codec based on hw accel and target format
-        let (video_codec, video_args): (&str, Vec<&str>) = match (
-            ffmpeg_settings.hw_accel.as_str(),
-            request.target_format.as_str(),
-        ) {
-            // NVENC
-            ("nvenc", "mp4" | "mov") => ("h264_nvenc", vec!["-rc", "constqp", "-qp", "23"]),
-            ("nvenc", "mkv") => ("h264_nvenc", vec!["-rc", "constqp", "-qp", "23"]),
-            // QSV
-            ("qsv", "mp4" | "mov") => ("h264_qsv", vec!["-global_quality", "23"]),
-            ("qsv", "mkv") => ("h264_qsv", vec!["-global_quality", "23"]),
-            // AMF
-            ("amf", "mp4" | "mov") => {
-                ("h264_amf", vec!["-rc", "cqp", "-qp_i", "23", "-qp_p", "23"])
-            }
-            ("amf", "mkv") => ("h264_amf", vec!["-rc", "cqp", "-qp_i", "23", "-qp_p", "23"]),
-            // VideoToolbox
-            ("videotoolbox", "mp4" | "mov") => ("h264_videotoolbox", vec!["-q:v", "65"]),
-            ("videotoolbox", "mkv") => ("h264_videotoolbox", vec!["-q:v", "65"]),
-            // Software encoding based on target format
-            (_, "mp4" | "mov") => ("libx264", vec!["-preset", "medium", "-crf", "23"]),
-            (_, "webm") => ("libvpx-vp9", vec!["-crf", "30", "-b:v", "0"]),
-            (_, "mkv") => ("copy", vec![]),
-            (_, "avi") => ("libxvid", vec!["-q:v", "5"]),
-            (_, "gif") => ("gif", vec!["-vf", "fps=15,scale=480:-1:flags=lanczos"]),
-            _ => ("copy", vec![]),
-        };
-
-        cmd.args(["-c:v", video_codec]);
-        for arg in video_args {
-            cmd.arg(arg);
-        }
-
-        // Audio codec based on target format
-        match request.target_format.as_str() {
-            "mp4" | "mov" | "m4a" => {
-                cmd.args(["-c:a", "aac", "-b:a", "192k"]);
-            }
-            "webm" => {
-                cmd.args(["-c:a", "libopus", "-b:a", "128k"]);
-            }
-            "mkv" => {
-                cmd.args(["-c:a", "copy"]);
-            }
-            "avi" => {
-                cmd.args(["-c:a", "libmp3lame", "-b:a", "192k"]);
-            }
-            "gif" => {
-                // GIF has no audio
-            }
-            _ => {
-                cmd.args(["-c:a", "copy"]);
-            }
-        }
-
-        // Fast start for MP4/MOV
-        if request.target_format == "mp4" || request.target_format == "mov" {
-            cmd.args(["-movflags", "+faststart"]);
-        }
-    }
-
-    // Add extra arguments if provided
-    if let Some(extra) = &request.extra_args {
-        for arg in extra {
-            cmd.arg(arg);
-        }
-    }
-
-    cmd.arg(&output_path);
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-
-    #[cfg(target_os = "windows")]
-    {
-        use crate::utils::CommandHideConsole;
-        cmd.hide_console();
-    }
-
-    // Create cancellation token and register the conversion
-    let cancel_token = CancellationToken::new();
-    {
-        let mut conversions = ACTIVE_CONVERSIONS
-            .lock()
-            .map_err(|e| format!("Failed to lock conversions: {}", e))?;
-        conversions.insert(
-            job_id.clone(),
-            ActiveConversion {
-                cancel_token: cancel_token.clone(),
-                output_path: output_path.clone(),
-            },
-        );
-    }
-
-    // Helper to clean up on exit
-    let cleanup = |job_id: &str| {
-        let mut conversions = ACTIVE_CONVERSIONS.lock().ok();
-        if let Some(ref mut c) = conversions {
-            c.remove(job_id);
-        }
-    };
-
-    // Spawn the process
-    let mut child = cmd.spawn().map_err(|e| {
-        cleanup(&job_id);
-        format!("Failed to start FFmpeg: {}", e)
-    })?;
-
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("Failed to capture FFmpeg stdout")?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or("Failed to capture FFmpeg stderr")?;
-
-    // Emit initial progress
-    let _ = app.emit(
-        "convert-progress",
-        ConvertProgress {
-            job_id: job_id.clone(),
-            progress: 0.0,
-            time_processed: 0.0,
-            total_duration,
-            speed: None,
-        },
-    );
-
-    // Parse FFmpeg progress output
-    let job_id_clone = job_id.clone();
-    let app_clone = app.clone();
-    let progress_task = tokio::spawn(async move {
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
-
-        // Regex to parse time from progress output
-        let time_re = Regex::new(r"out_time_ms=(\d+)").ok();
-        let speed_re = Regex::new(r"speed=\s*([0-9.]+)x").ok();
-
-        let mut current_time_ms: u64 = 0;
-        let mut current_speed: Option<String> = None;
-
-        while let Ok(Some(line)) = lines.next_line().await {
-            if let Some(ref re) = time_re {
-                if let Some(caps) = re.captures(&line) {
-                    if let Ok(ms) = caps[1].parse::<u64>() {
-                        current_time_ms = ms;
-                    }
-                }
-            }
-
-            if let Some(ref re) = speed_re {
-                if let Some(caps) = re.captures(&line) {
-                    current_speed = Some(format!("{}x", &caps[1]));
-                }
-            }
-
-            // Emit progress when we have time info
-            if current_time_ms > 0 {
-                let time_secs = current_time_ms as f64 / 1_000_000.0;
-                let progress: f64 = if let Some(total) = total_duration {
-                    ((time_secs / total) * 100.0).min(100.0)
-                } else {
-                    0.0
-                };
-
-                let _ = app_clone.emit(
-                    "convert-progress",
-                    ConvertProgress {
-                        job_id: job_id_clone.clone(),
-                        progress,
-                        time_processed: time_secs,
-                        total_duration,
-                        speed: current_speed.clone(),
-                    },
-                );
-            }
-        }
-    });
-
-    // Capture stderr for error messages
-    let stderr_task = tokio::spawn(async move {
-        let reader = BufReader::new(stderr);
-        let mut lines = reader.lines();
-        let mut stderr_output = String::new();
-
-        while let Ok(Some(line)) = lines.next_line().await {
-            stderr_output.push_str(&line);
-            stderr_output.push('\n');
-        }
-
-        stderr_output
-    });
-
-    // Wait for FFmpeg to complete or cancellation
-    let result = tokio::select! {
-        status = child.wait() => {
-            status.map_err(|e| format!("FFmpeg process error: {}", e))
-        }
-        _ = cancel_token.cancelled() => {
-            warn!(job_id = %job_id, "Conversion cancelled, killing FFmpeg process");
-            let _ = child.kill().await;
-            // Clean up partial output file
-            if output_path.exists() {
-                let _ = std::fs::remove_file(&output_path);
-            }
-            cleanup(&job_id);
-            return Err("Conversion cancelled".to_string());
-        }
-    };
-
-    // Clean up tracking
-    cleanup(&job_id);
-
-    // Wait for tasks
-    let _ = progress_task.await;
-    let stderr_output = stderr_task.await.unwrap_or_default();
-
-    let status = result?;
-
-    if !status.success() {
-        error!(job_id = %job_id, stderr = %stderr_output, "FFmpeg conversion failed");
-        return Err(format!(
-            "Conversion failed: {}",
-            stderr_output.lines().last().unwrap_or("Unknown error")
-        ));
-    }
-
-    // Verify output file exists
-    if !output_path.exists() {
-        return Err("Conversion completed but output file not found".to_string());
-    }
+    let result = exec::run_ffmpeg_convert(
+        &app,
+        &job_id,
+        &request.source_path,
+        &output_path,
+        pre_args,
+        post_args,
+    )
+    .await?;
 
     let filesize = get_file_size(&output_path);
     let output_path_str = output_path.to_string_lossy().to_string();
 
-    // Emit completion progress
     let _ = app.emit(
         "convert-progress",
         ConvertProgress {
             job_id: job_id.clone(),
             progress: 100.0,
-            time_processed: total_duration.unwrap_or(0.0),
-            total_duration,
+            time_processed: result.duration.unwrap_or(0.0),
+            total_duration: result.duration,
             speed: None,
         },
     );
 
-    info!(
-        job_id = %job_id,
-        output = %output_path_str,
-        size = %filesize,
-        "Conversion completed successfully"
-    );
+    info!(job_id = %job_id, output = %output_path_str, size = %filesize, "Conversion completed");
 
     Ok(ConvertResult {
         job_id,
         output_path: output_path_str,
         filesize,
-        duration: total_duration.map(|d| d as u64),
+        duration: result.duration.map(|d| d as u64),
         extension: request.target_format,
         metadata: request.metadata,
     })
-}
-
-#[allow(dead_code)]
-pub fn get_conversion_formats(source_extension: &str) -> Vec<&'static str> {
-    let source_ext = source_extension.to_lowercase();
-
-    let video_exts = ["mp4", "webm", "mkv", "avi", "mov", "flv", "wmv", "m4v"];
-    let audio_exts = ["mp3", "m4a", "aac", "opus", "ogg", "flac", "wav", "wma"];
-
-    let is_video = video_exts.contains(&source_ext.as_str());
-    let is_audio = audio_exts.contains(&source_ext.as_str());
-
-    if is_video {
-        vec![
-            "mp4", "webm", "mkv", "mov", "avi", "gif", "mp3", "m4a", "aac", "opus", "flac", "wav",
-        ]
-    } else if is_audio {
-        vec!["mp3", "m4a", "aac", "opus", "flac", "wav", "ogg"]
-    } else {
-        vec!["mp4", "mp3", "m4a"]
-    }
 }
 
 #[tauri::command]
@@ -587,290 +377,754 @@ pub async fn cancel_conversion(job_id: String) -> Result<(), String> {
     }
 }
 
-#[cfg(target_os = "android")]
-#[cfg(target_os = "android")]
-use std::sync::OnceLock;
+mod exec {
+    use super::*;
+    use std::path::Path;
 
-#[cfg(target_os = "android")]
-use tokio::sync::oneshot;
+    pub struct ConvertExecResult {
+        pub duration: Option<f64>,
+    }
 
-#[cfg(target_os = "android")]
-use jni::{
-    objects::{JClass, JString},
-    sys::jlong,
-    JNIEnv,
-};
+    pub async fn run_ffmpeg_concat(
+        app: &AppHandle,
+        concat_list_path: &Path,
+        output_path: &str,
+    ) -> Result<(), String> {
+        #[cfg(target_os = "android")]
+        {
+            run_ffmpeg_concat_android(concat_list_path, output_path).await
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            run_ffmpeg_concat_desktop(app, concat_list_path, output_path).await
+        }
+    }
 
-#[cfg(target_os = "android")]
-pub enum AndroidConvertResult {
-    Completed {
+    pub async fn run_ffmpeg_convert(
+        app: &AppHandle,
+        job_id: &str,
+        source_path: &str,
+        output_path: &Path,
+        pre_args: Vec<String>,
+        post_args: Vec<String>,
+    ) -> Result<ConvertExecResult, String> {
+        #[cfg(target_os = "android")]
+        {
+            run_ffmpeg_convert_android(app, job_id, source_path, output_path, post_args).await
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            run_ffmpeg_convert_desktop(app, job_id, source_path, output_path, pre_args, post_args)
+                .await
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    use crate::utils::get_media_duration;
+
+    #[cfg(not(target_os = "android"))]
+    async fn run_ffmpeg_concat_desktop(
+        app: &AppHandle,
+        concat_list_path: &Path,
+        output_path: &str,
+    ) -> Result<(), String> {
+        let ffmpeg_path = match crate::deps::resolve_ffmpeg_path(app) {
+            Some(path) => path,
+            None => return Err("FFmpeg not installed".to_string()),
+        };
+
+        let mut cmd = crate::utils::new_command(&ffmpeg_path);
+        cmd.args(["-f", "concat", "-safe", "0", "-i"])
+            .arg(concat_list_path)
+            .args(["-c", "copy", "-y"])
+            .arg(output_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| format!("Failed to run FFmpeg: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("FFmpeg concat failed: {}", stderr));
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "android"))]
+    async fn run_ffmpeg_convert_desktop(
+        app: &AppHandle,
+        job_id: &str,
+        source_path: &str,
+        output_path: &Path,
+        pre_args: Vec<String>,
+        post_args: Vec<String>,
+    ) -> Result<ConvertExecResult, String> {
+        let ffmpeg_path = match crate::deps::resolve_ffmpeg_path(app) {
+            Some(path) => path,
+            None => {
+                return Err(
+                    "FFmpeg not installed. Please install it from Settings → Dependencies."
+                        .to_string(),
+                )
+            }
+        };
+
+        let ffprobe_path = crate::deps::resolve_ffprobe_path(app);
+
+        let total_duration = match ffprobe_path {
+            Some(ref p) => get_media_duration(p, source_path).await,
+            None => None,
+        };
+
+        let mut cmd = crate::utils::new_command(&ffmpeg_path);
+
+        for arg in &pre_args {
+            cmd.arg(arg);
+        }
+
+        cmd.arg("-i")
+            .arg(source_path)
+            .arg("-y")
+            .arg("-progress")
+            .arg("pipe:1")
+            .arg("-stats_period")
+            .arg("0.5");
+
+        for arg in &post_args {
+            cmd.arg(arg);
+        }
+
+        cmd.arg(output_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let cancel_token = CancellationToken::new();
+        {
+            let mut conversions = ACTIVE_CONVERSIONS
+                .lock()
+                .map_err(|e| format!("Failed to lock conversions: {}", e))?;
+            conversions.insert(
+                job_id.to_string(),
+                ActiveConversion {
+                    cancel_token: cancel_token.clone(),
+                },
+            );
+        }
+
+        let cleanup = |job_id: &str| {
+            if let Ok(mut c) = ACTIVE_CONVERSIONS.lock() {
+                c.remove(job_id);
+            }
+        };
+
+        let mut child = cmd.spawn().map_err(|e| {
+            cleanup(job_id);
+            format!("Failed to start FFmpeg: {}", e)
+        })?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("Failed to capture FFmpeg stdout")?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or("Failed to capture FFmpeg stderr")?;
+
+        let _ = app.emit(
+            "convert-progress",
+            ConvertProgress {
+                job_id: job_id.to_string(),
+                progress: 0.0,
+                time_processed: 0.0,
+                total_duration,
+                speed: None,
+            },
+        );
+
+        let job_id_clone = job_id.to_string();
+        let app_clone = app.clone();
+        let progress_task = tokio::spawn(async move {
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            let time_re = Regex::new(r"out_time_ms=(\d+)").ok();
+            let speed_re = Regex::new(r"speed=\s*([0-9.]+)x").ok();
+            let mut current_time_ms: u64 = 0;
+            let mut current_speed: Option<String> = None;
+
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(ref re) = time_re {
+                    if let Some(caps) = re.captures(&line) {
+                        if let Ok(ms) = caps[1].parse::<u64>() {
+                            current_time_ms = ms;
+                        }
+                    }
+                }
+                if let Some(ref re) = speed_re {
+                    if let Some(caps) = re.captures(&line) {
+                        current_speed = Some(format!("{}x", &caps[1]));
+                    }
+                }
+                if current_time_ms > 0 {
+                    let time_secs = current_time_ms as f64 / 1_000_000.0;
+                    let progress = total_duration
+                        .map(|t| ((time_secs / t) * 100.0).min(100.0))
+                        .unwrap_or(0.0);
+                    let _ = app_clone.emit(
+                        "convert-progress",
+                        ConvertProgress {
+                            job_id: job_id_clone.clone(),
+                            progress,
+                            time_processed: time_secs,
+                            total_duration,
+                            speed: current_speed.clone(),
+                        },
+                    );
+                }
+            }
+        });
+
+        let stderr_task = tokio::spawn(async move {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            let mut output = String::new();
+            while let Ok(Some(line)) = lines.next_line().await {
+                output.push_str(&line);
+                output.push('\n');
+            }
+            output
+        });
+
+        let result = tokio::select! {
+            status = child.wait() => status.map_err(|e| format!("FFmpeg process error: {}", e)),
+            _ = cancel_token.cancelled() => {
+                warn!(job_id = %job_id, "Conversion cancelled");
+                let _ = child.kill().await;
+                if output_path.exists() {
+                    let _ = std::fs::remove_file(output_path);
+                }
+                cleanup(job_id);
+                return Err("Conversion cancelled".to_string());
+            }
+        };
+
+        cleanup(job_id);
+
+        let _ = progress_task.await;
+        let stderr_output = stderr_task.await.unwrap_or_default();
+
+        let status = result?;
+        if !status.success() {
+            error!(job_id = %job_id, stderr = %stderr_output, "FFmpeg conversion failed");
+            return Err(format!(
+                "Conversion failed: {}",
+                stderr_output.lines().last().unwrap_or("Unknown error")
+            ));
+        }
+
+        if !output_path.exists() {
+            return Err("Conversion completed but output file not found".to_string());
+        }
+
+        Ok(ConvertExecResult {
+            duration: total_duration,
+        })
+    }
+
+    #[cfg(target_os = "android")]
+    use std::sync::OnceLock;
+
+    #[cfg(target_os = "android")]
+    use tokio::sync::oneshot;
+
+    #[cfg(target_os = "android")]
+    use jni::{
+        objects::{JClass, JString},
+        sys::jlong,
+        JNIEnv,
+    };
+
+    #[cfg(target_os = "android")]
+    use crate::orchestrator::backends::android_jni::jni_string;
+
+    #[cfg(target_os = "android")]
+    static CONVERT_APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+
+    #[cfg(target_os = "android")]
+    pub enum AndroidConvertResult {
+        Completed {
+            output_path: String,
+            filesize: u64,
+            extension: String,
+            duration: Option<u64>,
+        },
+        Failed(String),
+    }
+
+    #[cfg(target_os = "android")]
+    static PENDING_CONVERT_JOBS: LazyLock<
+        Mutex<HashMap<String, oneshot::Sender<AndroidConvertResult>>>,
+    > = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    #[cfg(target_os = "android")]
+    fn lock_pending_converts(
+    ) -> std::sync::MutexGuard<'static, HashMap<String, oneshot::Sender<AndroidConvertResult>>>
+    {
+        PENDING_CONVERT_JOBS.lock().unwrap_or_else(|e| {
+            warn!("PENDING_CONVERT_JOBS mutex was poisoned, recovering");
+            e.into_inner()
+        })
+    }
+
+    #[cfg(target_os = "android")]
+    fn register_pending_convert(job_id: &str) -> oneshot::Receiver<AndroidConvertResult> {
+        let (tx, rx) = oneshot::channel();
+        let mut pending = lock_pending_converts();
+        pending.insert(job_id.to_string(), tx);
+        rx
+    }
+
+    #[cfg(target_os = "android")]
+    fn signal_convert_completed(
+        job_id: &str,
         output_path: String,
         filesize: u64,
         extension: String,
         duration: Option<u64>,
-    },
-    Failed(String),
-}
-
-#[cfg(target_os = "android")]
-static CONVERT_APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
-
-#[cfg(target_os = "android")]
-lazy_static::lazy_static! {
-    static ref PENDING_CONVERT_JOBS: Mutex<HashMap<String, oneshot::Sender<AndroidConvertResult>>> =
-        Mutex::new(HashMap::new());
-}
-
-#[cfg(target_os = "android")]
-fn register_pending_convert(job_id: &str) -> oneshot::Receiver<AndroidConvertResult> {
-    let (tx, rx) = oneshot::channel();
-    let mut pending = PENDING_CONVERT_JOBS.lock().unwrap();
-    pending.insert(job_id.to_string(), tx);
-    rx
-}
-
-#[cfg(target_os = "android")]
-fn signal_convert_completed(
-    job_id: &str,
-    output_path: String,
-    filesize: u64,
-    extension: String,
-    duration: Option<u64>,
-) {
-    let mut pending = PENDING_CONVERT_JOBS.lock().unwrap();
-    if let Some(tx) = pending.remove(job_id) {
-        let _ = tx.send(AndroidConvertResult::Completed {
-            output_path,
-            filesize,
-            extension,
-            duration,
-        });
-    }
-}
-
-#[cfg(target_os = "android")]
-fn signal_convert_failed(job_id: &str, error: String) {
-    let mut pending = PENDING_CONVERT_JOBS.lock().unwrap();
-    if let Some(tx) = pending.remove(job_id) {
-        let _ = tx.send(AndroidConvertResult::Failed(error));
-    }
-}
-
-// JNI CALLBACKS FROM KOTLIN
-
-#[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "system" fn Java_com_nichind_comine_RustBridge_nativeOnConvertProgress<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    job_id: JString<'local>,
-    progress: f32,
-    speed: JString<'local>,
-) {
-    let job_id: String = match env.get_string(&job_id) {
-        Ok(s) => s.into(),
-        Err(_) => return,
-    };
-
-    let speed: Option<String> = if speed.is_null() {
-        None
-    } else {
-        env.get_string(&speed).ok().map(|s| s.into())
-    };
-
-    log::debug!(
-        "JNI callback: convert progress for job {} - {}%",
-        job_id,
-        progress
-    );
-
-    // Emit progress event using stored AppHandle
-    if let Some(app) = CONVERT_APP_HANDLE.get() {
-        let _ = app.emit(
-            "convert-progress",
-            ConvertProgress {
-                job_id,
-                progress: progress as f64,
-                time_processed: 0.0, // Not tracked on Android
-                total_duration: None,
-                speed,
-            },
-        );
-    }
-}
-
-#[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "system" fn Java_com_nichind_comine_RustBridge_nativeOnConvertCompleted<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    job_id: JString<'local>,
-    output_path: JString<'local>,
-    filesize: jlong,
-    extension: JString<'local>,
-    duration: jlong,
-) {
-    let job_id: String = match env.get_string(&job_id) {
-        Ok(s) => s.into(),
-        Err(_) => return,
-    };
-    let output_path: String = match env.get_string(&output_path) {
-        Ok(s) => s.into(),
-        Err(_) => return,
-    };
-    let extension: String = match env.get_string(&extension) {
-        Ok(s) => s.into(),
-        Err(_) => "".to_string(),
-    };
-    let duration = if duration > 0 {
-        Some(duration as u64)
-    } else {
-        None
-    };
-
-    log::info!(
-        "JNI callback: convert completed for job {} -> {}",
-        job_id,
-        output_path
-    );
-
-    signal_convert_completed(&job_id, output_path, filesize as u64, extension, duration);
-}
-
-#[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "system" fn Java_com_nichind_comine_RustBridge_nativeOnConvertFailed<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    job_id: JString<'local>,
-    error: JString<'local>,
-) {
-    let job_id: String = match env.get_string(&job_id) {
-        Ok(s) => s.into(),
-        Err(_) => return,
-    };
-    let error: String = match env.get_string(&error) {
-        Ok(s) => s.into(),
-        Err(_) => "Unknown error".to_string(),
-    };
-
-    log::error!(
-        "JNI callback: convert failed for job {} - {}",
-        job_id,
-        error
-    );
-
-    signal_convert_failed(&job_id, error);
-}
-
-#[cfg(target_os = "android")]
-pub async fn convert_local_file_android(
-    _app: AppHandle,
-    request: ConvertRequest,
-) -> Result<ConvertResult, String> {
-    use crate::orchestrator::backends::{get_activity, get_jni_env, wait_for_jni_ready};
-    use jni::objects::JValue;
-
-    if !wait_for_jni_ready(10000).await {
-        return Err(
-            "Android JNI bridge not ready. Please wait for the app to fully initialize."
-                .to_string(),
-        );
-    }
-
-    let job_id = request
-        .job_id
-        .clone()
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-    info!(
-        job_id = %job_id,
-        source = %request.source_path,
-        target = %request.target_format,
-        "Starting Android local file conversion"
-    );
-
-    // Build request JSON for Kotlin
-    let request_json = serde_json::json!({
-        "source_path": request.source_path,
-        "target_format": request.target_format,
-        "output_directory": request.output_directory,
-        "output_filename": request.output_filename,
-        "audio_only": request.audio_only,
-    })
-    .to_string();
-
-    // Register to receive completion callback
-    let rx = register_pending_convert(&job_id);
-
-    // Make JNI call in blocking context
-    let job_id_clone = job_id.clone();
-    let jni_result = tokio::task::spawn_blocking(move || {
-        let mut env = get_jni_env()?;
-        let activity = get_activity()?;
-
-        let j_job_id = env
-            .new_string(&job_id_clone)
-            .map_err(|e| format!("Failed to create job_id string: {}", e))?;
-        let j_request_json = env
-            .new_string(&request_json)
-            .map_err(|e| format!("Failed to create request_json string: {}", e))?;
-
-        env.call_method(
-            activity.as_obj(),
-            "convertFileWithFFmpeg",
-            "(Ljava/lang/String;Ljava/lang/String;)V",
-            &[JValue::Object(&j_job_id), JValue::Object(&j_request_json)],
-        )
-        .map_err(|e| format!("JNI call failed: {}", e))?;
-
-        Ok::<(), String>(())
-    })
-    .await
-    .map_err(|e| format!("JNI task panicked: {}", e))?;
-
-    if let Err(e) = jni_result {
-        let mut pending = PENDING_CONVERT_JOBS.lock().unwrap();
-        pending.remove(&job_id);
-        return Err(e);
-    }
-
-    info!(
-        "Started Android FFmpeg conversion via JNI for job {}, waiting for completion...",
-        job_id
-    );
-
-    // Wait for JNI callback
-    match rx.await {
-        Ok(AndroidConvertResult::Completed {
-            output_path,
-            filesize,
-            extension,
-            duration,
-        }) => {
-            info!(
-                "Android conversion completed for job {}: {}",
-                job_id, output_path
-            );
-            Ok(ConvertResult {
-                job_id,
+    ) {
+        let mut pending = lock_pending_converts();
+        if let Some(tx) = pending.remove(job_id) {
+            let _ = tx.send(AndroidConvertResult::Completed {
                 output_path,
                 filesize,
-                duration,
                 extension,
-                metadata: request.metadata,
-            })
+                duration,
+            });
         }
-        Ok(AndroidConvertResult::Failed(error)) => {
-            error!("Android conversion failed for job {}: {}", job_id, error);
-            Err(error)
+    }
+
+    #[cfg(target_os = "android")]
+    fn signal_convert_failed(job_id: &str, error: String) {
+        let mut pending = lock_pending_converts();
+        if let Some(tx) = pending.remove(job_id) {
+            let _ = tx.send(AndroidConvertResult::Failed(error));
         }
-        Err(_) => {
-            error!(
-                "Android conversion channel closed unexpectedly for job {}",
-                job_id
+    }
+
+    #[cfg(target_os = "android")]
+    async fn run_ffmpeg_concat_android(
+        concat_list_path: &Path,
+        output_path: &str,
+    ) -> Result<(), String> {
+        use crate::orchestrator::backends::android_jni::{get_activity, get_jni_env};
+        use jni::objects::JValue;
+
+        let concat_list_str = concat_list_path.to_string_lossy().to_string();
+        let output = output_path.to_string();
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+
+        std::thread::spawn(move || {
+            let result = (|| -> Result<(), String> {
+                let mut env = get_jni_env()?;
+
+                let ffmpeg_cmd = format!(
+                    "-f concat -safe 0 -i {} -c copy -y {}",
+                    concat_list_str, output
+                );
+                let j_cmd = env
+                    .new_string(&ffmpeg_cmd)
+                    .map_err(|e| format!("JNI string error: {}", e))?;
+
+                let ffmpeg_kit_class = env
+                    .find_class("com/arthenica/ffmpegkit/FFmpegKit")
+                    .map_err(|e| format!("FFmpegKit class not found: {}", e))?;
+
+                let session = env
+                    .call_static_method(
+                        ffmpeg_kit_class,
+                        "execute",
+                        "(Ljava/lang/String;)Lcom/arthenica/ffmpegkit/FFmpegSession;",
+                        &[JValue::Object(&j_cmd)],
+                    )
+                    .map_err(|e| format!("FFmpegKit.execute failed: {}", e))?
+                    .l()
+                    .map_err(|e| format!("Failed to get session: {}", e))?;
+
+                let return_code = env
+                    .call_method(
+                        &session,
+                        "getReturnCode",
+                        "()Lcom/arthenica/ffmpegkit/ReturnCode;",
+                        &[],
+                    )
+                    .map_err(|e| format!("getReturnCode failed: {}", e))?
+                    .l()
+                    .map_err(|e| format!("ReturnCode error: {}", e))?;
+
+                let is_success = env
+                    .call_static_method(
+                        "com/arthenica/ffmpegkit/ReturnCode",
+                        "isSuccess",
+                        "(Lcom/arthenica/ffmpegkit/ReturnCode;)Z",
+                        &[JValue::Object(&return_code)],
+                    )
+                    .map_err(|e| format!("isSuccess failed: {}", e))?
+                    .z()
+                    .map_err(|e| format!("Boolean error: {}", e))?;
+
+                if is_success {
+                    Ok(())
+                } else {
+                    Err("FFmpeg concat failed".to_string())
+                }
+            })();
+            let _ = tx.send(result);
+        });
+
+        rx.await.map_err(|_| "FFmpeg channel closed")??;
+        Ok(())
+    }
+
+    #[cfg(target_os = "android")]
+    async fn run_ffmpeg_convert_android(
+        app: &AppHandle,
+        job_id: &str,
+        source_path: &str,
+        output_path: &Path,
+        post_args: Vec<String>,
+    ) -> Result<ConvertExecResult, String> {
+        use crate::orchestrator::backends::android_jni::{
+            get_activity, get_jni_env, wait_for_jni_ready,
+        };
+        use jni::objects::JValue;
+
+        let _ = CONVERT_APP_HANDLE.set(app.clone());
+
+        if !wait_for_jni_ready(10000).await {
+            return Err("Android JNI bridge not ready".to_string());
+        }
+
+        let request_json = serde_json::json!({
+            "source_path": source_path,
+            "output_path": output_path.to_string_lossy(),
+            "args": post_args,
+        })
+        .to_string();
+
+        let rx = register_pending_convert(job_id);
+
+        let job_id_clone = job_id.to_string();
+        let jni_result = tokio::task::spawn_blocking(move || {
+            let mut env = get_jni_env()?;
+            let activity = get_activity()?;
+
+            let j_job_id = env
+                .new_string(&job_id_clone)
+                .map_err(|e: jni::errors::Error| e.to_string())?;
+            let j_request = env
+                .new_string(&request_json)
+                .map_err(|e: jni::errors::Error| e.to_string())?;
+            let j_backend = env
+                .new_string("ffmpeg")
+                .map_err(|e: jni::errors::Error| e.to_string())?;
+            let j_title = env
+                .new_string("Converting...")
+                .map_err(|e: jni::errors::Error| e.to_string())?;
+
+            env.call_method(
+                activity.as_obj(),
+                "startJobFromRust",
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+                &[
+                    JValue::Object(&j_job_id),
+                    JValue::Object(&j_backend),
+                    JValue::Object(&j_request),
+                    JValue::Object(&j_title),
+                ],
+            )
+            .map_err(|e| format!("JNI call failed: {}", e))?;
+
+            Ok::<(), String>(())
+        })
+        .await
+        .map_err(|e| format!("JNI task panicked: {}", e))?;
+
+        if let Err(e) = jni_result {
+            let mut pending = lock_pending_converts();
+            pending.remove(job_id);
+            return Err(e);
+        }
+
+        match rx.await {
+            Ok(AndroidConvertResult::Completed { duration, .. }) => Ok(ConvertExecResult {
+                duration: duration.map(|d| d as f64),
+            }),
+            Ok(AndroidConvertResult::Failed(e)) => Err(e),
+            Err(_) => Err("Conversion channel closed".to_string()),
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    #[no_mangle]
+    pub extern "system" fn Java_com_nichind_comine_RustBridge_nativeOnConvertProgress<'local>(
+        mut env: JNIEnv<'local>,
+        _class: JClass<'local>,
+        job_id: JString<'local>,
+        progress: f32,
+        speed: JString<'local>,
+    ) {
+        let job_id = jni_string!(env, job_id);
+        let speed: Option<String> = if speed.is_null() {
+            None
+        } else {
+            env.get_string(&speed).ok().map(|s| String::from(s))
+        };
+
+        if let Some(app) = CONVERT_APP_HANDLE.get() {
+            let _ = app.emit(
+                "convert-progress",
+                ConvertProgress {
+                    job_id,
+                    progress: progress as f64,
+                    time_processed: 0.0,
+                    total_duration: None,
+                    speed,
+                },
             );
-            Err("Conversion completion channel closed unexpectedly".to_string())
         }
+    }
+
+    #[cfg(target_os = "android")]
+    #[no_mangle]
+    pub extern "system" fn Java_com_nichind_comine_RustBridge_nativeOnConvertCompleted<'local>(
+        mut env: JNIEnv<'local>,
+        _class: JClass<'local>,
+        job_id: JString<'local>,
+        output_path: JString<'local>,
+        filesize: jlong,
+        extension: JString<'local>,
+        duration: jlong,
+    ) {
+        let job_id = jni_string!(env, job_id);
+        let output_path = jni_string!(env, output_path);
+        let extension: String = env
+            .get_string(&extension)
+            .ok()
+            .map(|s| String::from(s))
+            .unwrap_or_default();
+        let duration = if duration > 0 {
+            Some(duration as u64)
+        } else {
+            None
+        };
+
+        tracing::info!("JNI: convert completed for {} -> {}", job_id, output_path);
+        signal_convert_completed(&job_id, output_path, filesize as u64, extension, duration);
+    }
+
+    #[cfg(target_os = "android")]
+    #[no_mangle]
+    pub extern "system" fn Java_com_nichind_comine_RustBridge_nativeOnConvertFailed<'local>(
+        mut env: JNIEnv<'local>,
+        _class: JClass<'local>,
+        job_id: JString<'local>,
+        error: JString<'local>,
+    ) {
+        let job_id = jni_string!(env, job_id);
+        let error = jni_string!(env, error, "Unknown error".to_string());
+
+        tracing::error!("JNI: convert failed for {} - {}", job_id, error);
+        signal_convert_failed(&job_id, error);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn test_convert_request(format: &str) -> ConvertRequest {
+        ConvertRequest {
+            job_id: Some("test".into()),
+            source_path: "/tmp/input.mp4".into(),
+            target_format: format.into(),
+            output_directory: None,
+            output_filename: None,
+            audio_only: false,
+            extra_args: None,
+            ffmpeg: None,
+            metadata: None,
+        }
+    }
+
+    #[test]
+    fn test_ffmpeg_no_hw_accel() {
+        let req = test_convert_request("mp4");
+        let (pre, post) = build_ffmpeg_components(&req, false);
+        assert!(pre.is_empty());
+        assert!(post.contains(&"-c:v".to_string()));
+        assert!(post.contains(&"libx264".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_nvenc() {
+        let mut req = test_convert_request("mp4");
+        req.ffmpeg = Some(FfmpegConvertSettings {
+            hw_accel: "nvenc".into(),
+        });
+        let (pre, post) = build_ffmpeg_components(&req, false);
+        assert!(pre.contains(&"-hwaccel".to_string()));
+        assert!(pre.contains(&"cuda".to_string()));
+        assert!(post.contains(&"h264_nvenc".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_force_software() {
+        let mut req = test_convert_request("mp4");
+        req.ffmpeg = Some(FfmpegConvertSettings {
+            hw_accel: "nvenc".into(),
+        });
+        let (pre, post) = build_ffmpeg_components(&req, true);
+        assert!(!pre.contains(&"cuda".to_string()));
+        assert!(post.contains(&"libx264".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_qsv() {
+        let mut req = test_convert_request("mp4");
+        req.ffmpeg = Some(FfmpegConvertSettings {
+            hw_accel: "qsv".into(),
+        });
+        let (pre, post) = build_ffmpeg_components(&req, false);
+        assert!(pre.contains(&"qsv".to_string()));
+        assert!(post.contains(&"h264_qsv".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_amf() {
+        let mut req = test_convert_request("mp4");
+        req.ffmpeg = Some(FfmpegConvertSettings {
+            hw_accel: "amf".into(),
+        });
+        let (pre, post) = build_ffmpeg_components(&req, false);
+        assert!(pre.contains(&"d3d11va".to_string()));
+        assert!(post.contains(&"h264_amf".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_videotoolbox() {
+        let mut req = test_convert_request("mp4");
+        req.ffmpeg = Some(FfmpegConvertSettings {
+            hw_accel: "videotoolbox".into(),
+        });
+        let (pre, post) = build_ffmpeg_components(&req, false);
+        assert!(pre.contains(&"videotoolbox".to_string()));
+        assert!(post.contains(&"h264_videotoolbox".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_auto_accel() {
+        let mut req = test_convert_request("mp4");
+        req.ffmpeg = Some(FfmpegConvertSettings {
+            hw_accel: "auto".into(),
+        });
+        let (pre, _) = build_ffmpeg_components(&req, false);
+        assert!(pre.contains(&"auto".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_audio_only_mp3() {
+        let mut req = test_convert_request("mp3");
+        req.audio_only = true;
+        let (_, post) = build_ffmpeg_components(&req, false);
+        assert!(post.contains(&"-vn".to_string()));
+        assert!(post.contains(&"libmp3lame".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_audio_only_opus() {
+        let mut req = test_convert_request("opus");
+        req.audio_only = true;
+        let (_, post) = build_ffmpeg_components(&req, false);
+        assert!(post.contains(&"libopus".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_audio_only_flac() {
+        let mut req = test_convert_request("flac");
+        req.audio_only = true;
+        let (_, post) = build_ffmpeg_components(&req, false);
+        assert!(post.contains(&"flac".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_audio_only_wav() {
+        let mut req = test_convert_request("wav");
+        req.audio_only = true;
+        let (_, post) = build_ffmpeg_components(&req, false);
+        assert!(post.contains(&"pcm_s16le".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_audio_only_aac() {
+        let mut req = test_convert_request("m4a");
+        req.audio_only = true;
+        let (_, post) = build_ffmpeg_components(&req, false);
+        assert!(post.contains(&"aac".to_string()));
+        assert!(post.contains(&"192k".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_mp4_faststart() {
+        let req = test_convert_request("mp4");
+        let (_, post) = build_ffmpeg_components(&req, false);
+        assert!(post.contains(&"+faststart".to_string()));
+        assert!(post.contains(&"aac".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_webm() {
+        let req = test_convert_request("webm");
+        let (_, post) = build_ffmpeg_components(&req, false);
+        assert!(post.contains(&"libvpx-vp9".to_string()));
+        assert!(post.contains(&"libopus".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_mkv_copy() {
+        let req = test_convert_request("mkv");
+        let (_, post) = build_ffmpeg_components(&req, false);
+        let copy_count = post.iter().filter(|a| *a == "copy").count();
+        assert_eq!(copy_count, 2);
+    }
+
+    #[test]
+    fn test_ffmpeg_gif() {
+        let req = test_convert_request("gif");
+        let (_, post) = build_ffmpeg_components(&req, false);
+        assert!(post.contains(&"gif".to_string()));
+        assert!(post.iter().any(|a| a.contains("fps=15")));
+    }
+
+    #[test]
+    fn test_ffmpeg_avi() {
+        let req = test_convert_request("avi");
+        let (_, post) = build_ffmpeg_components(&req, false);
+        assert!(post.contains(&"libxvid".to_string()));
+        assert!(post.contains(&"libmp3lame".to_string()));
+    }
+
+    #[test]
+    fn test_ffmpeg_extra_args() {
+        let mut req = test_convert_request("mp4");
+        req.extra_args = Some(vec!["-threads".to_string(), "4".to_string()]);
+        let (_, post) = build_ffmpeg_components(&req, false);
+        assert!(post.contains(&"-threads".to_string()));
+        assert!(post.contains(&"4".to_string()));
     }
 }

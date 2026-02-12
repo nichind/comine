@@ -1,7 +1,7 @@
 use std::io::Read;
 use std::path::Path;
 
-use log::{error, info, warn};
+use tracing::{error, info, warn};
 
 use crate::deps::error::{DepsResult, ExtractError};
 

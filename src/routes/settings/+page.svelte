@@ -1,6 +1,12 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
-  import { settings, updateSetting, defaultSettings, type AppSettings } from '$lib/stores/settings';
+  import {
+    settings,
+    updateSetting,
+    updateSettingDotNotation,
+    resetSetting,
+    type AppSettings,
+  } from '$lib/stores/settings';
   import { pushState } from '$app/navigation';
   import {
     SECTIONS,
@@ -12,27 +18,30 @@
     type PlatformGroup,
   } from '$lib/settings/schema';
   import { isAndroid, isDesktop } from '$lib/utils/android';
+  import { debounce } from '$lib/utils/debounce';
   import { onMount, onDestroy, tick } from 'svelte';
   import { fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { tooltip } from '$lib/actions/tooltip';
   import { open } from '@tauri-apps/plugin-dialog';
-  import Icon from '$lib/components/Icon.svelte';
-  import ScrollArea from '$lib/components/ScrollArea.svelte';
-  import SettingsBlock from '$lib/components/SettingsBlock.svelte';
-  import SettingItem from '$lib/components/SettingItem.svelte';
-  import Toggle from '$lib/components/Toggle.svelte';
-  import Select from '$lib/components/Select.svelte';
-  import Input from '$lib/components/Input.svelte';
-  import Divider from '$lib/components/Divider.svelte';
-  import ExtensionIntegrationSettings from '$lib/components/ExtensionIntegrationSettings.svelte';
-  import AccentPicker from './components/AccentPicker.svelte';
-  import AccentStyle from './components/AccentStyle.svelte';
-  import Dependencies from './components/Dependencies.svelte';
-  import DataActions from './components/DataActions.svelte';
-  import ProxyConfig from './components/ProxyConfig.svelte';
-  import NetworkCheck from './components/NetworkCheck.svelte';
-  import AppUpdates from './components/AppUpdates.svelte';
+  import { remoteDefaults, getEffectiveDefaultFrom } from '$lib/composables/remoteSync';
+  import Icon, { type IconName } from '$lib/components/ui/Icon.svelte';
+  import ScrollArea from '$lib/components/ui/ScrollArea.svelte';
+  import SettingsBlock from '$lib/components/settings/SettingsBlock.svelte';
+  import SettingItem from '$lib/components/settings/SettingItem.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
+  import Select from '$lib/components/ui/Select.svelte';
+  import Slider from '$lib/components/ui/Slider.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
+  import PageShell from '$lib/components/layout/PageShell.svelte';
+  import ExtensionIntegrationSettings from '$lib/components/settings/ExtensionIntegrationSettings.svelte';
+  import AccentPicker from '$lib/components/settings/AccentPicker.svelte';
+  import AccentStyle from '$lib/components/settings/AccentStyle.svelte';
+  import Dependencies from '$lib/components/settings/Dependencies.svelte';
+  import DataActions from '$lib/components/settings/DataActions.svelte';
+  import ProxyConfig from '$lib/components/settings/ProxyConfig.svelte';
+  import NetworkCheck from '$lib/components/settings/NetworkCheck.svelte';
+  import AppUpdates from '$lib/components/settings/AppUpdates.svelte';
   import { calculateMatchScore } from '$lib/utils/search';
   import {
     hasOpenAriaMenu,
@@ -52,29 +61,30 @@
 
   const SUBSECTION_TITLES: Record<string, string> = {
     'general:language': 'settings.general.language',
-    'general:startup': 'settings.general.startOnBoot',
-    'general:clipboard': 'settings.general.watchClipboard',
-    'general:closeBehavior': 'settings.general.closeBehavior',
+    'general:startup': 'settings.general.groups.startup',
+    'general:clipboard': 'settings.general.groups.clipboard',
     'app:updates': 'settings.app.updates',
     'app:privacy': 'settings.app.groups.privacy',
-    'app:appearance': 'settings.app.groups.appearance',
-    'app:general': 'settings.general.title',
+    'app:preferences': 'settings.app.groups.preferences',
     'downloads:paths': 'settings.downloads.downloadPath',
-    'downloads:folders': 'settings.downloads.usePlaylistFolders',
-    'downloads:concurrency': 'settings.downloads.concurrentDownloads',
-    'downloads:notifications': 'settings.notifications.title',
-    'downloads:aria2': 'aria2',
-    'downloads:network': 'settings.network.title',
+    'downloads:options': 'settings.downloads.groups.options',
+    'downloads:format': 'settings.downloads.groups.format',
+    'downloads:performance': 'settings.downloads.groups.performance',
     'notifications:general': 'settings.notifications.groups.general',
     'notifications:layout': 'settings.notifications.groups.layout',
     'notifications:style': 'settings.notifications.groups.style',
     'notifications:timing': 'settings.notifications.groups.timing',
-    'processing:backend': 'settings.processing.groups.backend',
-    'processing:youtube': 'ytdlp.advanced.youtube.title',
-    'processing:extraction': 'ytdlp.advanced.extraction.title',
-    'processing:download': 'ytdlp.advanced.download.title',
-    'processing:output': 'ytdlp.advanced.output.title',
-    'processing:postProcess': 'ytdlp.advanced.postProcess.title',
+    'advanced:backend': 'settings.advanced.groups.backend',
+    'advanced:youtube': 'settings.advanced.groups.youtube',
+    'advanced:extraction': 'settings.advanced.groups.extraction',
+    'advanced:download': 'settings.advanced.groups.download',
+    'advanced:output': 'settings.advanced.groups.output',
+    'advanced:postProcess': 'settings.advanced.groups.postProcess',
+    'advanced:aria2': 'settings.advanced.groups.aria2',
+    'advanced:ffmpeg': 'settings.advanced.groups.ffmpeg',
+    'appearance:background': 'settings.appearance.groups.background',
+    'appearance:theme': 'settings.appearance.groups.theme',
+    'appearance:layout': 'settings.appearance.groups.layout',
   };
 
   function getSubsectionTitle(sectionId: string, subsection: string): string | undefined {
@@ -94,6 +104,9 @@
   let searchExpanded = $state(false);
   let onDesktop = $state(true);
   let platform = $state<Platform>('windows');
+  let windowNarrow = $state(false);
+  const SIDEBAR_COLLAPSE_BREAKPOINT = 760;
+  let sidebarCollapsed = $derived(windowNarrow);
 
   let scrollAreaRef: ScrollAreaInstance | undefined = $state(undefined);
   let searchInputRef: HTMLInputElement | null = $state(null);
@@ -116,6 +129,10 @@
       platform = 'android';
     }
 
+    if (desktop) {
+      windowNarrow = window.innerWidth <= SIDEBAR_COLLAPSE_BREAKPOINT;
+    }
+
     try {
       const raw = sessionStorage.getItem(SCROLL_STORAGE_KEY);
       if (raw) scrollCache = JSON.parse(raw);
@@ -135,19 +152,17 @@
     }
   })();
 
-  let scrollSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  const debouncedScrollSave = debounce(() => {
+    try {
+      sessionStorage.setItem(SCROLL_STORAGE_KEY, JSON.stringify(scrollCache));
+    } catch (e) {
+      console.warn('Failed to save scroll position:', e);
+    }
+  }, 500);
   function handleScrollChange(position: number) {
     if (!activeSection) return;
     scrollCache[activeSection] = position;
-
-    if (scrollSaveTimer) clearTimeout(scrollSaveTimer);
-    scrollSaveTimer = setTimeout(() => {
-      try {
-        sessionStorage.setItem(SCROLL_STORAGE_KEY, JSON.stringify(scrollCache));
-      } catch (e) {
-        console.warn('Failed to save scroll position:', e);
-      }
-    }, 500);
+    debouncedScrollSave();
   }
 
   function getSavedScrollPosition(section: string): number {
@@ -220,6 +235,19 @@
     };
   }
 
+  $effect(() => {
+    $settings.textScale;
+    $settings.textScaleCustom;
+    const timer = setTimeout(() => queueSidebarIndicatorUpdate(), 150);
+    return () => clearTimeout(timer);
+  });
+
+  $effect(() => {
+    sidebarCollapsed;
+    const timer = setTimeout(() => queueSidebarIndicatorUpdate(), 200);
+    return () => clearTimeout(timer);
+  });
+
   function getHashSection(): string | null {
     if (typeof window === 'undefined') return null;
     const h = window.location.hash.slice(1);
@@ -260,6 +288,13 @@
     window.addEventListener('hashchange', onHashChange);
     window.addEventListener('popstate', onPopState);
     window.addEventListener('resize', queueSidebarIndicatorUpdate);
+
+    const handleSidebarCollapse = () => {
+      if (onDesktop) {
+        windowNarrow = window.innerWidth <= SIDEBAR_COLLAPSE_BREAKPOINT;
+      }
+    };
+    window.addEventListener('resize', handleSidebarCollapse);
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (!onDesktop) return;
@@ -317,6 +352,7 @@
       window.removeEventListener('hashchange', onHashChange);
       window.removeEventListener('popstate', onPopState);
       window.removeEventListener('resize', queueSidebarIndicatorUpdate);
+      window.removeEventListener('resize', handleSidebarCollapse);
       if (sidebarIndicatorRaf !== null) cancelAnimationFrame(sidebarIndicatorRaf);
     };
   });
@@ -380,7 +416,7 @@
     titleKey: string | undefined;
     items: SettingDef[];
   };
-  type SectionGroup = { id: string; title: string; icon: string; subsections: SubsectionGroup[] };
+  type SectionGroup = { id: string; title: string; icon: IconName; subsections: SubsectionGroup[] };
 
   let groupedSettings = $derived.by(() => {
     const sections: Record<string, SectionGroup> = {};
@@ -430,11 +466,16 @@
   }
 
   const pendingSliderUpdates = new Map<string, { key: string; value: unknown; def: SettingDef }>();
-  let sliderDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const debouncedSliderFlush = debounce(flushSliderUpdates, 150);
 
   function flushSliderUpdates() {
     for (const { key, value, def } of pendingSliderUpdates.values()) {
-      updateSetting(key as keyof AppSettings, value as AppSettings[keyof AppSettings]);
+      if (key.includes('.')) {
+        const [parent] = key.split('.');
+        updateSettingDotNotation(parent, $settings[parent as keyof AppSettings], key);
+      } else {
+        updateSetting(key as keyof AppSettings, value as AppSettings[keyof AppSettings]);
+      }
       if ('onSet' in def && def.onSet) def.onSet(value);
     }
     pendingSliderUpdates.clear();
@@ -454,42 +495,45 @@
       return { ...s, [key]: value };
     });
     pendingSliderUpdates.set(key, { key, value, def });
-    if (sliderDebounceTimer) clearTimeout(sliderDebounceTimer);
-    sliderDebounceTimer = setTimeout(flushSliderUpdates, 150);
+    debouncedSliderFlush();
   }
 
   function handleSliderCommit(def: SettingDef, value: number) {
-    if (sliderDebounceTimer) {
-      clearTimeout(sliderDebounceTimer);
-      sliderDebounceTimer = null;
-    }
+    debouncedSliderFlush.cancel();
     pendingSliderUpdates.delete(def.key);
-    updateSetting(def.key as keyof AppSettings, value as AppSettings[keyof AppSettings]);
+    const key = def.key;
+    if (key.includes('.')) {
+      const [parent] = key.split('.');
+      updateSettingDotNotation(parent, $settings[parent as keyof AppSettings], key);
+    } else {
+      updateSetting(key as keyof AppSettings, value as AppSettings[keyof AppSettings]);
+    }
     if ('onSet' in def && def.onSet) def.onSet(value);
   }
 
   onDestroy(() => {
-    if (scrollSaveTimer) clearTimeout(scrollSaveTimer);
-    if (sliderDebounceTimer) clearTimeout(sliderDebounceTimer);
-    if (pendingSliderUpdates.size > 0) flushSliderUpdates();
+    debouncedScrollSave.cancel();
+    debouncedSliderFlush.flush();
     if (sidebarIndicatorRaf !== null) cancelAnimationFrame(sidebarIndicatorRaf);
   });
 
   function handleSettingChange(def: SettingDef, value: unknown) {
     if ('type' in def && (def.type === 'action' || def.type === 'custom')) return;
     const key = def.key;
-    settings.update((s) => {
-      if (key.includes('.')) {
-        const [parent, child] = key.split('.');
+    if (key.includes('.')) {
+      const [parent, child] = key.split('.');
+      settings.update((s) => {
         const parentObj = s[parent as keyof AppSettings];
         if (typeof parentObj === 'object' && parentObj !== null) {
           return { ...s, [parent]: { ...parentObj, [child]: value } };
         }
         return s;
-      }
-      return { ...s, [key]: value };
-    });
-    updateSetting(key as keyof AppSettings, value as AppSettings[keyof AppSettings]);
+      });
+      updateSettingDotNotation(parent, $settings[parent as keyof AppSettings], key);
+    } else {
+      settings.update((s) => ({ ...s, [key]: value }));
+      updateSetting(key as keyof AppSettings, value as AppSettings[keyof AppSettings]);
+    }
     if ('onSet' in def && def.onSet) def.onSet(value);
   }
 
@@ -533,37 +577,31 @@
     return items.some((def) => {
       if (def.type === 'action' || def.type === 'custom') return false;
       const current = getSettingValue($settings, def.key);
-      const defaultVal = getSettingValue(defaultSettings, def.key);
-      return current !== defaultVal;
+      const effectiveDefault = getEffectiveDefaultFrom($remoteDefaults, def.key);
+      return current !== effectiveDefault;
     });
   }
 
   function resetSubsection(items: SettingDef[]) {
     for (const def of items) {
       if (def.type === 'action' || def.type === 'custom') continue;
-      const defaultVal = getSettingValue(defaultSettings, def.key);
-      updateSetting(def.key as any, defaultVal as any);
-      if ('onSet' in def && def.onSet) def.onSet(defaultVal);
+      resetSetting(def.key);
+      const effectiveDefault = getEffectiveDefaultFrom($remoteDefaults, def.key);
+      if ('onSet' in def && def.onSet) def.onSet(effectiveDefault);
     }
   }
 </script>
 
-<div class="page">
-  <div class="page-header">
-    <h1>{$t('settings.title')}</h1>
-    <p class="subtitle">{$t('settings.subtitle')}</p>
-  </div>
-
-  <Divider my={20} />
-
+<PageShell title={$t('settings.title')} subtitle={$t('settings.subtitle')} scrollMode="custom">
   <div
     class="settings-layout"
     class:mobile={!onDesktop}
     class:mobile-home={!onDesktop && !activeSection}
     class:mobile-drill={!onDesktop && !!activeSection}
+    class:sidebar-collapsed={onDesktop && sidebarCollapsed}
   >
     {#if onDesktop}
-      <aside class="settings-sidebar">
+      <aside class="settings-sidebar" class:collapsed={sidebarCollapsed}>
         <div class="search-bar" class:collapsed={!searchExpanded && !searchQuery.trim()}>
           <Icon name="search" size={18} />
           <input
@@ -608,7 +646,7 @@
               onclick={() => handleSectionChange(section.id)}
               use:registerSidebarItem={section.id}
             >
-              <Icon name={section.icon as any} size={16} />
+              <Icon name={section.icon} size={16} />
               <span class="sidebar-label">{$t(section.titleKey)}</span>
               {#if searchQuery.trim() && hasMatches}
                 <span class="sidebar-dot"></span>
@@ -628,7 +666,7 @@
         <div class="mobile-sections">
           {#each visibleSections as section (section.id)}
             <button class="mobile-section-btn" onclick={() => handleSectionChange(section.id)}>
-              <Icon name={section.icon as any} size={18} />
+              <Icon name={section.icon} size={18} />
               <span class="mobile-section-label">{$t(section.titleKey)}</span>
               <Icon name="arrow_right" size={16} />
             </button>
@@ -660,7 +698,7 @@
               {#each groupedSettings as group}
                 <SettingsBlock
                   title={group.title}
-                  icon={group.icon as any}
+                  icon={group.icon}
                   showHeader={!!searchQuery || !onDesktop}
                 >
                   {#each group.subsections as subsec}
@@ -713,7 +751,7 @@
       </ScrollArea>
     </div>
   </div>
-</div>
+</PageShell>
 
 {#snippet settingRenderer(def: SettingDef)}
   {@const isDisabled = 'disabled' in def && def.disabled ? def.disabled($settings) : false}
@@ -763,8 +801,12 @@
         icon={def.icon}
         highlight={searchQuery}
         value={getSettingValue($settings, def.key)}
-        defaultValue={getSettingValue(defaultSettings, def.key)}
-        onReset={() => handleSettingChange(def, getSettingValue(defaultSettings, def.key))}
+        defaultValue={getEffectiveDefaultFrom($remoteDefaults, def.key)}
+        onReset={() => {
+          resetSetting(def.key);
+          const effectiveDefault = getEffectiveDefaultFrom($remoteDefaults, def.key);
+          if ('onSet' in def && def.onSet) def.onSet(effectiveDefault);
+        }}
         controlType={def.type}
       >
         {#if def.type === 'toggle'}
@@ -783,24 +825,16 @@
             />
           </div>
         {:else if def.type === 'slider'}
-          <div class="slider-with-value">
-            <input
-              class="blur-slider"
-              type="range"
-              min={def.min}
-              max={def.max}
-              step={def.step}
-              value={getSettingValue($settings, def.key) as number}
-              oninput={(e) =>
-                handleSliderInput(def, parseFloat((e.currentTarget as HTMLInputElement).value))}
-              onchange={(e) =>
-                handleSliderCommit(def, parseFloat((e.currentTarget as HTMLInputElement).value))}
-              disabled={isDisabled}
-            />
-            <span class="slider-value">
-              {getSettingValue($settings, def.key)}{def.suffix || ''}
-            </span>
-          </div>
+          <Slider
+            value={getSettingValue($settings, def.key) as number}
+            min={def.min ?? 0}
+            max={def.max ?? 100}
+            step={def.step}
+            suffix={def.suffix}
+            disabled={isDisabled}
+            oninput={(v) => handleSliderInput(def, v)}
+            onchange={(v) => handleSliderCommit(def, v)}
+          />
         {:else if def.type === 'input'}
           <div class="input-container" style:width={def.width || '200px'}>
             <Input
@@ -880,29 +914,6 @@
     user-select: none;
   }
 
-  .page {
-    padding: 0 4px 0 var(--page-padding-inline);
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .page-header {
-    flex-shrink: 0;
-  }
-
-  h1 {
-    font-size: 28px;
-    font-weight: 700;
-    margin-bottom: 6px;
-  }
-
-  .subtitle {
-    color: rgba(255, 255, 255, 0.6);
-    font-size: 14px;
-  }
-
   .settings-layout {
     display: grid;
     grid-template-columns: 220px 1fr;
@@ -910,6 +921,12 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    transition: grid-template-columns 200ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  }
+
+  .settings-layout.sidebar-collapsed {
+    grid-template-columns: 40px 1fr;
+    overflow: visible;
   }
 
   .settings-layout.mobile {
@@ -1008,6 +1025,108 @@
     height: 6px;
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.6);
+  }
+
+  /* ─── Collapsed sidebar (narrow desktop window) ─── */
+
+  .settings-sidebar.collapsed {
+    gap: 0;
+    overflow: visible;
+  }
+
+  .settings-sidebar.collapsed .sidebar-sections {
+    padding-right: 0;
+    gap: 4px;
+    overflow: hidden;
+  }
+
+  .settings-sidebar.collapsed .sidebar-sections:has(.sidebar-item:hover) {
+    overflow: visible;
+  }
+
+  .settings-sidebar.collapsed .sidebar-item {
+    padding: 10px 12px;
+    justify-content: center;
+    position: relative;
+  }
+
+  .settings-sidebar.collapsed .sidebar-item::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: var(--radius, 10px);
+    background: transparent;
+    border: 1px solid transparent;
+    pointer-events: none;
+    z-index: -1;
+    transition:
+      background 120ms ease,
+      border-color 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .settings-sidebar.collapsed .sidebar-item:hover::before {
+    background: rgba(255, 255, 255, 0.04);
+    right: -180px;
+  }
+
+  .settings-sidebar.collapsed .sidebar-item:hover {
+    background: transparent;
+    z-index: 20;
+  }
+
+  .settings-sidebar.collapsed .sidebar-label {
+    position: absolute;
+    left: calc(100% + 6px);
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0;
+    pointer-events: none;
+    white-space: nowrap;
+    transition: opacity 100ms ease;
+    z-index: 20;
+  }
+
+  .settings-sidebar.collapsed .sidebar-item:hover .sidebar-label {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .settings-sidebar.collapsed .sidebar-dot {
+    position: absolute;
+    right: 4px;
+    top: 4px;
+    margin-left: 0;
+  }
+
+  .settings-sidebar.collapsed .sidebar-active-indicator {
+    right: 0;
+  }
+
+  .settings-sidebar.collapsed .sidebar-build-info {
+    display: none;
+  }
+
+  .settings-sidebar.collapsed .search-bar {
+    max-height: 0;
+    opacity: 0;
+    padding: 0;
+    margin: 0;
+    border: none;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  .settings-sidebar.collapsed .search-bar input {
+    display: none;
+  }
+
+  .settings-sidebar.collapsed .search-bar .search-clear {
+    display: none;
+  }
+
+  .settings-sidebar.collapsed .search-bar :global(svg) {
+    display: none;
   }
 
   .sidebar-build-info {
@@ -1274,67 +1393,6 @@
     gap: 6px;
   }
 
-  .slider-with-value {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 180px;
-  }
-
-  .blur-slider {
-    flex: 1;
-    -webkit-appearance: none;
-    appearance: none;
-    height: 6px;
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: 3px;
-    outline: none;
-    cursor: pointer;
-  }
-
-  .blur-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 16px;
-    height: 16px;
-    background: var(--accent, #6366f1);
-    border-radius: 50%;
-    cursor: pointer;
-    transition:
-      background 0.15s,
-      transform 0.15s;
-  }
-
-  .blur-slider::-webkit-slider-thumb:hover {
-    background: var(--accent-light, #818cf8);
-    transform: scale(1.1);
-  }
-
-  .blur-slider::-moz-range-thumb {
-    width: 16px;
-    height: 16px;
-    background: var(--accent, #6366f1);
-    border: none;
-    border-radius: 50%;
-    cursor: pointer;
-    transition:
-      background 0.15s,
-      transform 0.15s;
-  }
-
-  .blur-slider::-moz-range-thumb:hover {
-    background: var(--accent-light, #818cf8);
-    transform: scale(1.1);
-  }
-
-  .slider-value {
-    font-size: var(--text-base, 13px);
-    font-family: 'JetBrains Mono', monospace;
-    color: rgba(255, 255, 255, 0.7);
-    min-width: 40px;
-    text-align: right;
-  }
-
   .color-controls {
     display: flex;
     align-items: center;
@@ -1415,31 +1473,6 @@
   }
 
   @media (max-width: 640px) {
-    .slider-with-value {
-      min-width: 0;
-      width: 100%;
-      gap: 16px;
-    }
-
-    .blur-slider {
-      height: 8px;
-      border-radius: 4px;
-    }
-
-    .blur-slider::-webkit-slider-thumb {
-      width: 26px;
-      height: 26px;
-    }
-
-    .blur-slider::-moz-range-thumb {
-      width: 26px;
-      height: 26px;
-    }
-
-    .slider-value {
-      min-width: 48px;
-    }
-
     .color-controls {
       width: 100%;
     }

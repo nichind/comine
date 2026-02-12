@@ -1,6 +1,6 @@
 ﻿# comine <img src="static\icon.png" align="right" height="90" alt="Comine logo (icon)" />
 
-Cross-platform media and file downloader.
+comine is a cross-platform media, file, torrent, gallery, & more downloader/archiver. Available on Windows, Linux, MacOS and Android.
 
 <img width="750" align="center" alt="App preview" src="https://github.com/user-attachments/assets/d0c95796-99f3-4f98-9ab8-d53c6fde2019" />
 

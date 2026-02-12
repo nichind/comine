@@ -2,18 +2,18 @@
   import { t } from '$lib/i18n';
   import { logs, filteredLogs, logStats, type LogLevel, type LogEntry } from '$lib/stores/logs';
   import { onMount, onDestroy } from 'svelte';
-  import { beforeNavigate } from '$app/navigation';
-  import Icon from '$lib/components/Icon.svelte';
+  import Icon from '$lib/components/ui/Icon.svelte';
   import { tooltip } from '$lib/actions/tooltip';
+  import PageShell from '$lib/components/layout/PageShell.svelte';
+  import PageToolbar from '$lib/components/layout/PageToolbar.svelte';
   import { save } from '@tauri-apps/plugin-dialog';
   import { writeTextFile } from '@tauri-apps/plugin-fs';
-  import Modal from '$lib/components/Modal.svelte';
-  import Button from '$lib/components/Button.svelte';
-  import { saveScrollPosition, getScrollPosition } from '$lib/stores/scroll';
-  import VirtualList from '$lib/components/VirtualList.svelte';
+  import Modal from '$lib/components/ui/Modal.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
+  import VirtualList from '$lib/components/media/VirtualList.svelte';
   import { formatSize } from '$lib/utils/format';
+  import { isDesktop as checkIsDesktop } from '$lib/utils/android';
 
-  const ROUTE_PATH = '/logs';
   const ESTIMATED_HEIGHT_DESKTOP = 28;
   const ESTIMATED_HEIGHT_MOBILE = 48;
 
@@ -26,11 +26,6 @@
   let isLoading = $state(true);
 
   let estimatedHeight = $derived(isMobile ? ESTIMATED_HEIGHT_MOBILE : ESTIMATED_HEIGHT_DESKTOP);
-
-  beforeNavigate(() => {
-    const pos = virtualList?.getScrollTop() ?? 0;
-    saveScrollPosition(ROUTE_PATH, pos);
-  });
 
   let showCopyModal = $state(false);
   let copyContentLength = $state(0);
@@ -46,26 +41,13 @@
     };
     window.addEventListener('resize', resizeHandler);
 
-    const ua = navigator.userAgent.toLowerCase();
-    isDesktop = !ua.includes('android') && !ua.includes('iphone') && !ua.includes('ipad');
+    isDesktop = checkIsDesktop();
 
     isLoading = true;
     await logs.loadFromDisk();
     isLoading = false;
 
     logs.info('system', 'Log viewer opened');
-
-    const savedPosition = getScrollPosition(ROUTE_PATH);
-    if (savedPosition > 0 && virtualList) {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          if (virtualList) {
-            virtualList.setScrollTop(savedPosition);
-            autoScroll = false;
-          }
-        });
-      });
-    }
   });
 
   onDestroy(() => {
@@ -147,7 +129,7 @@
     }
   }
 
-  function formatTime(date: Date): string {
+  function formatLogTime(date: Date): string {
     return date.toLocaleTimeString('en-US', {
       hour12: false,
       hour: '2-digit',
@@ -190,163 +172,166 @@
   });
 </script>
 
-<div class="logs-page">
-  <div class="log-container" class:scrolled={hasScrolledDown}>
-    {#if isLoading}
-      <div class="empty-state">
-        <div class="empty-icon">
-          <Icon name="documents" size={56} />
+<PageShell scrollMode="virtual-list" noPadding>
+  <div class="logs-inner">
+    <div class="log-container" class:scrolled={hasScrolledDown}>
+      {#if isLoading}
+        <div class="empty-state">
+          <div class="empty-icon">
+            <Icon name="documents" size={56} />
+          </div>
+          <p class="empty-title">Loading logs...</p>
+          <span class="empty-hint">Reading session log file from disk</span>
         </div>
-        <p class="empty-title">Loading logs...</p>
-        <span class="empty-hint">Reading session log file from disk</span>
-      </div>
-    {:else if $filteredLogs.length === 0}
-      <div class="empty-state">
-        <div class="empty-icon">
-          <Icon name="documents" size={56} />
+      {:else if $filteredLogs.length === 0}
+        <div class="empty-state">
+          <div class="empty-icon">
+            <Icon name="documents" size={56} />
+          </div>
+          <p class="empty-title">No logs yet</p>
+          <span class="empty-hint">Logs will appear here as the app runs</span>
         </div>
-        <p class="empty-title">No logs yet</p>
-        <span class="empty-hint">Logs will appear here as the app runs</span>
-      </div>
-    {:else}
-      <VirtualList
-        bind:this={virtualList}
-        items={$filteredLogs}
-        estimatedItemHeight={estimatedHeight}
-        measureItems={true}
-        overscan={10}
-        containerClass="log-list-virtual"
-        onscroll={handleScroll}
-        getKey={(entry) => entry.id}
-        useFadeMask={!isMobile}
-        useCustomScrollbar={true}
-      >
-        {#snippet children(entry, _index)}
-          {#if isMobile}
-            <div class="log-entry mobile {entry.level}">
-              <div class="log-header">
-                <span class="log-time">{formatTime(entry.timestamp)}</span>
+      {:else}
+        <VirtualList
+          bind:this={virtualList}
+          items={$filteredLogs}
+          estimatedItemHeight={estimatedHeight}
+          measureItems={true}
+          overscan={10}
+          containerClass="log-list-virtual"
+          onscroll={handleScroll}
+          getKey={(entry) => entry.id}
+          useFadeMask={!isMobile}
+          useCustomScrollbar={true}
+          preserveScrollKey="logs-scroll"
+        >
+          {#snippet children(entry, _index)}
+            {#if isMobile}
+              <div class="log-entry mobile {entry.level}">
+                <div class="log-header">
+                  <span class="log-time">{formatLogTime(entry.timestamp)}</span>
+                  <span class="log-level-badge {entry.level}">{getLevelShort(entry.level)}</span>
+                  <span class="log-source">{entry.source}</span>
+                </div>
+                <div class="log-message">{entry.message}</div>
+              </div>
+            {:else}
+              <div class="log-entry {entry.level}">
+                <span class="log-time">{formatLogTime(entry.timestamp)}</span>
                 <span class="log-level-badge {entry.level}">{getLevelShort(entry.level)}</span>
                 <span class="log-source">{entry.source}</span>
+                <span class="log-message">{entry.message}</span>
               </div>
-              <div class="log-message">{entry.message}</div>
-            </div>
-          {:else}
-            <div class="log-entry {entry.level}">
-              <span class="log-time">{formatTime(entry.timestamp)}</span>
-              <span class="log-level-badge {entry.level}">{getLevelShort(entry.level)}</span>
-              <span class="log-source">{entry.source}</span>
-              <span class="log-message">{entry.message}</span>
-            </div>
+            {/if}
+          {/snippet}
+        </VirtualList>
+      {/if}
+    </div>
+
+    <PageToolbar floating>
+      <div class="toolbar-content">
+        <div class="search-box">
+          <Icon name="search" size={14} />
+          <input
+            type="text"
+            placeholder="Search logs..."
+            value={searchQuery}
+            oninput={handleSearchChange}
+          />
+          {#if searchQuery}
+            <button
+              class="clear-search"
+              onclick={() => {
+                searchQuery = '';
+                logs.setSearch('');
+              }}
+            >
+              <Icon name="close" size={12} />
+            </button>
           {/if}
-        {/snippet}
-      </VirtualList>
-    {/if}
-  </div>
+        </div>
 
-  <div class="floating-toolbar">
-    <div class="toolbar-content">
-      <div class="search-box">
-        <Icon name="search" size={14} />
-        <input
-          type="text"
-          placeholder="Search logs..."
-          value={searchQuery}
-          oninput={handleSearchChange}
-        />
-        {#if searchQuery}
+        <div class="filter-chips">
           <button
-            class="clear-search"
-            onclick={() => {
-              searchQuery = '';
-              logs.setSearch('');
-            }}
+            class="chip trace"
+            class:active={activeFilters.has('trace')}
+            onclick={() => toggleFilter('trace')}
+            use:tooltip={'Toggle trace logs'}
           >
-            <Icon name="close" size={12} />
+            TRC
+            {#if $logStats.trace > 0}<span class="chip-count">{$logStats.trace}</span>{/if}
           </button>
-        {/if}
-      </div>
-
-      <div class="filter-chips">
-        <button
-          class="chip trace"
-          class:active={activeFilters.has('trace')}
-          onclick={() => toggleFilter('trace')}
-          use:tooltip={'Toggle trace logs'}
-        >
-          TRC
-          {#if $logStats.trace > 0}<span class="chip-count">{$logStats.trace}</span>{/if}
-        </button>
-        <button
-          class="chip debug"
-          class:active={activeFilters.has('debug')}
-          onclick={() => toggleFilter('debug')}
-          use:tooltip={'Toggle debug logs'}
-        >
-          DBG
-          {#if $logStats.debug > 0}<span class="chip-count">{$logStats.debug}</span>{/if}
-        </button>
-        <button
-          class="chip info"
-          class:active={activeFilters.has('info')}
-          onclick={() => toggleFilter('info')}
-          use:tooltip={'Toggle info logs'}
-        >
-          INF
-          {#if $logStats.info > 0}<span class="chip-count">{$logStats.info}</span>{/if}
-        </button>
-        <button
-          class="chip warn"
-          class:active={activeFilters.has('warn')}
-          onclick={() => toggleFilter('warn')}
-          use:tooltip={'Toggle warning logs'}
-        >
-          WRN
-          {#if $logStats.warn > 0}<span class="chip-count">{$logStats.warn}</span>{/if}
-        </button>
-        <button
-          class="chip error"
-          class:active={activeFilters.has('error')}
-          onclick={() => toggleFilter('error')}
-          use:tooltip={'Toggle error logs'}
-        >
-          ERR
-          {#if $logStats.error > 0}<span class="chip-count">{$logStats.error}</span>{/if}
-        </button>
-      </div>
-
-      <div class="toolbar-actions">
-        {#if isDesktop}
-          <button class="action-btn" onclick={openLogsFolder} use:tooltip={$t('logs.openFolder')}>
-            <Icon name="folder" size={16} />
+          <button
+            class="chip debug"
+            class:active={activeFilters.has('debug')}
+            onclick={() => toggleFilter('debug')}
+            use:tooltip={'Toggle debug logs'}
+          >
+            DBG
+            {#if $logStats.debug > 0}<span class="chip-count">{$logStats.debug}</span>{/if}
           </button>
-        {/if}
-        <button class="action-btn" onclick={promptCopyLogs} use:tooltip={'Copy to clipboard'}>
-          <Icon name="copy" size={16} />
-        </button>
-        <button class="action-btn" onclick={downloadLogs} use:tooltip={'Download logs'}>
-          <Icon name="download" size={16} />
-        </button>
-        <button
-          class="action-btn"
-          onclick={() => (autoScroll = !autoScroll)}
-          class:active={autoScroll}
-          use:tooltip={'Auto-scroll'}
-        >
-          <Icon name="sort" size={16} />
-        </button>
-        <button class="action-btn danger" onclick={clearLogs} use:tooltip={'Clear all logs'}>
-          <Icon name="trash" size={16} />
-        </button>
+          <button
+            class="chip info"
+            class:active={activeFilters.has('info')}
+            onclick={() => toggleFilter('info')}
+            use:tooltip={'Toggle info logs'}
+          >
+            INF
+            {#if $logStats.info > 0}<span class="chip-count">{$logStats.info}</span>{/if}
+          </button>
+          <button
+            class="chip warn"
+            class:active={activeFilters.has('warn')}
+            onclick={() => toggleFilter('warn')}
+            use:tooltip={'Toggle warning logs'}
+          >
+            WRN
+            {#if $logStats.warn > 0}<span class="chip-count">{$logStats.warn}</span>{/if}
+          </button>
+          <button
+            class="chip error"
+            class:active={activeFilters.has('error')}
+            onclick={() => toggleFilter('error')}
+            use:tooltip={'Toggle error logs'}
+          >
+            ERR
+            {#if $logStats.error > 0}<span class="chip-count">{$logStats.error}</span>{/if}
+          </button>
+        </div>
+
+        <div class="toolbar-actions">
+          {#if isDesktop}
+            <button class="action-btn" onclick={openLogsFolder} use:tooltip={$t('logs.openFolder')}>
+              <Icon name="folder" size={16} />
+            </button>
+          {/if}
+          <button class="action-btn" onclick={promptCopyLogs} use:tooltip={'Copy to clipboard'}>
+            <Icon name="copy" size={16} />
+          </button>
+          <button class="action-btn" onclick={downloadLogs} use:tooltip={'Download logs'}>
+            <Icon name="download" size={16} />
+          </button>
+          <button
+            class="action-btn"
+            onclick={() => (autoScroll = !autoScroll)}
+            class:active={autoScroll}
+            use:tooltip={'Auto-scroll'}
+          >
+            <Icon name="sort" size={16} />
+          </button>
+          <button class="action-btn danger" onclick={clearLogs} use:tooltip={'Clear all logs'}>
+            <Icon name="trash" size={16} />
+          </button>
+        </div>
       </div>
+    </PageToolbar>
+
+    <div class="log-counter">
+      <span class="counter-text">{$filteredLogs.length}</span>
+      <span class="counter-label">logs</span>
     </div>
   </div>
-
-  <div class="log-counter">
-    <span class="counter-text">{$filteredLogs.length}</span>
-    <span class="counter-label">logs</span>
-  </div>
-</div>
+</PageShell>
 
 <Modal bind:open={showCopyModal} title={$t('logs.copyConfirmTitle')}>
   <div class="copy-confirm-content">
@@ -375,13 +360,12 @@
 </Modal>
 
 <style>
-  .logs-page {
+  .logs-inner {
     position: absolute;
     inset: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    padding-left: 0px;
   }
 
   .log-container {
@@ -397,7 +381,7 @@
   }
 
   :global(.app.mobile) .log-container {
-    padding-bottom: 180px;
+    margin-bottom: 180px;
   }
 
   .empty-state {
@@ -540,24 +524,6 @@
   }
   .log-entry.warn .log-message {
     color: rgba(251, 191, 36, 0.95);
-  }
-
-  .floating-toolbar {
-    position: absolute;
-    bottom: 8px;
-    left: 8px;
-    right: 8px;
-    z-index: 100;
-    background: rgba(30, 30, 35, 0.85);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: var(--radius-lg, 12px);
-    padding: 8px;
-  }
-
-  :global(.app.mobile) .floating-toolbar {
-    bottom: 96px;
   }
 
   .toolbar-content {

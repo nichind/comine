@@ -1,16 +1,18 @@
 ﻿package com.nichind.comine
 
+import android.Manifest
 import android.content.ComponentName
-import android.content.ServiceConnection
-import android.os.Build
-import android.os.IBinder
 import android.content.Context
+import android.content.ServiceConnection
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.util.Base64
 import android.util.Log
@@ -19,21 +21,15 @@ import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import android.content.pm.PackageManager
-import android.Manifest
-import androidx.core.content.FileProvider
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.YoutubeDLRequest
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLConnection
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -77,13 +73,19 @@ class MainActivity : TauriActivity() {
     }
 
   override fun onCreate(savedInstanceState: Bundle?) {
-    enableEdgeToEdge()
+        enableEdgeToEdge()
 
-    instance = this
-
-    DownloadNotifications.init(this)
-    UpdateNotifications.init(this)
-    maybeRequestPostNotifications()
+        instance = this
+        try {
+             RustBridge.initialize()
+             Log.i(TAG, "RustBridge initialized in onCreate")
+        } catch (e: Exception) {
+             Log.e(TAG, "RustBridge init onCreate failed", e)
+        }
+        
+        DownloadNotifications.init(this)
+        UpdateNotifications.init(this)
+        maybeRequestPostNotifications()
     scheduleUpdateChecker()
 
     folderPickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -136,8 +138,6 @@ class MainActivity : TauriActivity() {
     }
 
     super.onCreate(savedInstanceState)
-
-        RustBridge.initialize()
 
         Intent(this, DownloadService::class.java).also { intent ->
             bindService(intent, connection, Context.BIND_AUTO_CREATE)
@@ -287,18 +287,20 @@ class MainActivity : TauriActivity() {
     evalJs("(function(){try{var fn=window[$cb];if(typeof fn==='function')fn(null);}catch(e){}})();")
   }
 
-  fun startDownloadFromRust(jobId: String, requestJson: String) {
-    Log.d(TAG, "startDownloadFromRust: jobId=$jobId")
+  fun startJobFromRust(jobId: String, backend: String, payloadJson: String, title: String) {
+    Log.d(TAG, "startJobFromRust: jobId=$jobId, backend=$backend, title=$title")
     try {
       val intent = Intent(this, DownloadService::class.java).apply {
         action = DownloadService.ACTION_START
         putExtra(DownloadService.EXTRA_JOB_ID, jobId)
-        putExtra(DownloadService.EXTRA_REQUEST_JSON, requestJson)
+        putExtra(DownloadService.EXTRA_BACKEND, backend)
+        putExtra(DownloadService.EXTRA_PAYLOAD, payloadJson)
+        putExtra(DownloadService.EXTRA_TITLE, title)
       }
       startForegroundService(intent)
     } catch (e: Exception) {
-      Log.e(TAG, "startDownloadFromRust failed", e)
-      RustBridge.notifyFailed(jobId, "Failed to start download service: ${e.message}")
+      Log.e(TAG, "startJobFromRust failed", e)
+      RustBridge.notifyFailed(jobId, "Failed to start service: ${e.message}")
     }
   }
 
@@ -328,324 +330,8 @@ class MainActivity : TauriActivity() {
     }
   }
 
-  fun startAria2DownloadFromRust(jobId: String, optsJson: String) {
-    Log.d(TAG, "startAria2DownloadFromRust: jobId=$jobId")
-
-    if (!YtDlp.aria2Available) {
-      Log.e(TAG, "aria2 not available")
-      RustBridge.notifyFailed(jobId, "aria2 not initialized")
-      return
-    }
-
-    downloadExecutor.submit {
-      try {
-        val opts = JSONObject(optsJson)
-        val result = Aria2.execute(
-          context = this,
-          jobId = jobId,
-          url = opts.getString("url"),
-          outputDir = opts.getString("output_dir"),
-          outputFile = opts.optString("output_file", null),
-          connections = opts.optInt("connections", 8),
-          splits = opts.optInt("splits", 8),
-          minSplitSize = opts.optString("min_split_size", "1M"),
-          speedLimit = opts.optLong("speed_limit", 0),
-          proxy = opts.optString("proxy", null),
-          isTorrent = opts.optBoolean("is_torrent", false)
-        )
-
-        when (result) {
-          is Aria2.ExecuteResult.Success -> {
-            RustBridge.notifyCompleted(jobId, result.outputPath, result.title)
-          }
-          is Aria2.ExecuteResult.Failed -> {
-            RustBridge.notifyFailed(jobId, result.error)
-          }
-          is Aria2.ExecuteResult.Cancelled -> {
-            RustBridge.notifyCancelled(jobId)
-          }
-        }
-      } catch (e: Exception) {
-        Log.e(TAG, "aria2 download failed", e)
-        RustBridge.notifyFailed(jobId, e.message ?: "Unknown error")
-      }
-    }
-  }
-
-  fun cancelAria2DownloadFromRust(jobId: String) {
-    Log.d(TAG, "cancelAria2DownloadFromRust: jobId=$jobId")
-    val cancelled = Aria2.cancel(jobId)
-    if (cancelled) {
-      RustBridge.notifyCancelled(jobId)
-    }
-  }
-
-  fun convertFileWithFFmpeg(jobId: String, requestJson: String) {
-    Log.d(TAG, "convertFileWithFFmpeg: jobId=$jobId")
-    
-    if (!YtDlp.ffmpegAvailable) {
-      Log.e(TAG, "FFmpeg not available")
-      RustBridge.notifyConvertFailed(jobId, "FFmpeg not initialized")
-      return
-    }
-
-    runCatching { DownloadNotifications.init(applicationContext) }
-    DownloadNotifications.upsert(
-      jobId = jobId,
-      kind = DownloadNotifications.JobKind.CONVERT,
-      title = "Converting",
-      stage = "Converting",
-      progress = 0,
-      indeterminate = true,
-      canPause = false,
-      ongoing = true
-    )
-    
-    downloadExecutor.submit {
-      try {
-        val request = JSONObject(requestJson)
-        val sourcePath = request.getString("source_path")
-        val targetFormat = request.getString("target_format")
-        // JSONObject.optString returns "null" for JSON null.
-        val outputDirectory = request.optString("output_directory", "").takeIf { it.isNotBlank() && it != "null" }
-        val outputFilename = request.optString("output_filename", "").takeIf { it.isNotBlank() && it != "null" }
-        val audioOnly = request.optBoolean("audio_only", false)
-        
-        Log.d(TAG, "Convert request: source=$sourcePath, format=$targetFormat, outDir=$outputDirectory, outFile=$outputFilename")
-        
-        val sourceFile = File(sourcePath).absoluteFile
-        if (!sourceFile.exists()) {
-          RustBridge.notifyConvertFailed(jobId, "Source file not found: $sourcePath")
-          return@submit
-        }
-        
-        Log.d(TAG, "Source file exists: ${sourceFile.absolutePath}")
-        Log.d(TAG, "Parent file: ${sourceFile.parentFile?.absolutePath ?: "NULL"}")
-        
-        val outputDir: File = when {
-          outputDirectory != null -> File(outputDirectory)
-          sourceFile.parentFile != null -> sourceFile.parentFile!!
-          sourcePath.contains("/") -> File(sourcePath.substringBeforeLast("/"))
-          else -> File("/storage/emulated/0/Download")
-        }
-        
-        val baseName = outputFilename ?: sourceFile.name
-          .substringBeforeLast(".")
-          .trim('"', ' ')
-        
-        var outputFile = File(outputDir, "$baseName.$targetFormat")
-        
-        Log.d(TAG, "Output dir: ${outputDir.absolutePath}")
-        Log.d(TAG, "Base name: $baseName")
-        Log.d(TAG, "Output file: ${outputFile.absolutePath}")
-        
-        if (outputFile.absolutePath == sourceFile.absolutePath) {
-          outputFile = File(outputDir, "${baseName}_converted.$targetFormat")
-        }
-        
-        var counter = 1
-        while (outputFile.exists()) {
-          outputFile = File(outputDir, "${baseName}_$counter.$targetFormat")
-          counter++
-        }
-        
-        val finalOutputPath = outputFile.absolutePath
-        
-        val duration = FFmpegExecutor.getDuration(applicationContext, sourcePath)
-        Log.d(TAG, "Source duration: $duration seconds")
-        
-        val args = mutableListOf<String>()
-        args.add("-y")
-        args.add("-i")
-        args.add(sourcePath)
-        
-        if (audioOnly) {
-          args.add("-vn")
-          when (targetFormat.lowercase()) {
-            "mp3" -> {
-              args.add("-c:a")
-              args.add("libmp3lame")
-              args.add("-q:a")
-              args.add("0")
-            }
-            "aac", "m4a" -> {
-              args.add("-c:a")
-              args.add("aac")
-              args.add("-b:a")
-              args.add("256k")
-            }
-            "opus" -> {
-              args.add("-c:a")
-              args.add("libopus")
-              args.add("-b:a")
-              args.add("192k")
-            }
-            "flac" -> {
-              args.add("-c:a")
-              args.add("flac")
-            }
-            "wav" -> {
-              args.add("-c:a")
-              args.add("pcm_s16le")
-            }
-            else -> {
-            }
-          }
-        } else {
-          when (targetFormat.lowercase()) {
-            "mp4" -> {
-              args.add("-c:v")
-              args.add("copy")
-              args.add("-c:a")
-              args.add("aac")
-              args.add("-movflags")
-              args.add("+faststart")
-            }
-            "mkv" -> {
-              args.add("-c:v")
-              args.add("copy")
-              args.add("-c:a")
-              args.add("copy")
-            }
-            "webm" -> {
-              args.add("-c:v")
-              args.add("copy")
-              args.add("-c:a")
-              args.add("libopus")
-            }
-            else -> {
-              args.add("-c")
-              args.add("copy")
-            }
-          }
-        }
-        
-        args.add(finalOutputPath)
-        
-        Log.d(TAG, "Running FFmpeg: ${args.joinToString(" ")}")
-        
-        val result = FFmpegExecutor.execute(
-          applicationContext,
-          jobId,
-          args,
-          duration
-        ) { progress, speed ->
-          RustBridge.notifyConvertProgress(jobId, progress, speed)
-          DownloadNotifications.upsert(
-            jobId = jobId,
-            kind = DownloadNotifications.JobKind.CONVERT,
-            title = "Converting",
-            stage = "Converting",
-            progress = progress.toInt(),
-            indeterminate = false,
-            canPause = false,
-            ongoing = true
-          )
-        }
-        
-        when (result) {
-          is FFmpegExecutor.ExecuteResult.Success -> {
-            if (outputFile.exists()) {
-              val filesize = outputFile.length()
-              DownloadNotifications.complete(
-                jobId = jobId,
-                title = "Converted",
-                info = "Saved",
-                outputPath = finalOutputPath,
-                kind = DownloadNotifications.JobKind.CONVERT
-              )
-              RustBridge.notifyConvertCompleted(jobId, finalOutputPath, filesize, targetFormat, null)
-            } else {
-              DownloadNotifications.fail(jobId, title = "Convert failed", error = "Output file not created")
-              RustBridge.notifyConvertFailed(jobId, "Output file not created")
-            }
-          }
-          is FFmpegExecutor.ExecuteResult.Failed -> {
-            Log.e(TAG, "FFmpeg conversion failed: ${result.error}")
-            DownloadNotifications.fail(jobId, title = "Convert failed", error = result.error)
-            RustBridge.notifyConvertFailed(jobId, result.error)
-          }
-          is FFmpegExecutor.ExecuteResult.Cancelled -> {
-            Log.i(TAG, "FFmpeg conversion cancelled: $jobId")
-            if (outputFile.exists()) {
-              outputFile.delete()
-            }
-            DownloadNotifications.cancel(jobId)
-            RustBridge.notifyConvertFailed(jobId, "Cancelled")
-          }
-        }
-        
-      } catch (e: Exception) {
-        Log.e(TAG, "convertFileWithFFmpeg failed", e)
-        DownloadNotifications.fail(jobId, title = "Convert failed", error = e.message ?: "Unknown error")
-        RustBridge.notifyConvertFailed(jobId, e.message ?: "Unknown error")
-      }
-    }
-  }
-  fun openFile(filePath: String): Boolean {
-    Log.d(TAG, "openFile called with path: $filePath")
-    return try {
-      val uri = if (filePath.startsWith("content://")) {
-        Uri.parse(filePath)
-      } else {
-        val file = File(filePath)
-        Log.d(TAG, "File exists: ${file.exists()}, path: ${file.absolutePath}")
-        if (!file.exists()) {
-          Log.w(TAG, "File does not exist: $filePath")
-          return false
-        }
-        FileProvider.getUriForFile(this, BuildConfig.APPLICATION_ID + ".fileprovider", file)
-      }
-
-      val mime = contentResolver.getType(uri)
-        ?: URLConnection.guessContentTypeFromName(filePath)
-        ?: "*/*"
-
-      Log.d(TAG, "Opening file with URI: $uri, mime: $mime")
-
-      val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, mime)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-      }
-      startActivity(intent)
-      Log.d(TAG, "openFile succeeded")
-      true
-    } catch (e: Exception) {
-      Log.w(TAG, "openFile failed: ${e.message}", e)
-      false
-    }
-  }
-
-  fun openFolder(filePath: String): Boolean {
-    return try {
-      val file = File(filePath)
-      val folder = if (file.isDirectory) file else file.parentFile
-      if (folder == null || !folder.exists()) return false
-
-      try {
-        val uri = FileProvider.getUriForFile(this, BuildConfig.APPLICATION_ID + ".fileprovider", folder)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-          setDataAndType(uri, "resource/folder")
-          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        startActivity(intent)
-        return true
-      } catch (_: Exception) {
-        val documentsIntent = Intent(Intent.ACTION_VIEW).apply {
-          val folderUri = Uri.parse("content://com.android.externalstorage.documents/document/primary:${folder.absolutePath.removePrefix("/storage/emulated/0/")}")
-          data = folderUri
-          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        startActivity(documentsIntent)
-        return true
-      }
-    } catch (e: Exception) {
-      Log.w(TAG, "openFolder failed: ${e.message}")
-      false
-    }
-  }
+  fun openFile(filePath: String): Boolean = FileUtils.openFile(this, filePath)
+  fun openFolder(filePath: String): Boolean = FileUtils.openFolder(this, filePath)
 
   inner class AndroidYtDlpBridge {
     @JavascriptInterface
@@ -688,32 +374,10 @@ class MainActivity : TauriActivity() {
 
     private fun getVideoInfoInternal(url: String, youtubePlayerClient: String?, callbackName: String) {
       infoExecutor.execute {
-        if (!YtDlp.initialized) {
-          sendCallback(callbackName, JSONObject().apply { put("error", "not_initialized") }.toString())
-          return@execute
-        }
-        try {
-          val request = YoutubeDLRequest(url)
-          request.addOption("-J")
-          request.addOption("--no-playlist")
-          request.addOption("--encoding", "utf-8")
-          if (!youtubePlayerClient.isNullOrBlank()) {
-            request.addOption(
-              "--extractor-args",
-              "youtube:player_client=${youtubePlayerClient}"
-            )
-          }
-          val response = YoutubeDL.getInstance().execute(request)
-          if (response.exitCode == 0) {
-            sendCallback(callbackName, response.out ?: "{}")
-          } else {
-            sendCallback(
-              callbackName,
-              JSONObject().apply { put("error", response.err ?: "yt-dlp failed") }.toString()
-            )
-          }
-        } catch (e: Exception) {
-          sendCallback(callbackName, JSONObject().apply { put("error", e.message ?: "unknown") }.toString())
+        val result = YtDlp.resolve(url, false, youtubePlayerClient)
+        when (result) {
+            is YtDlp.ResolveResult.Success -> sendCallback(callbackName, result.output)
+            is YtDlp.ResolveResult.Failed -> sendCallback(callbackName, JSONObject().apply { put("error", result.error) }.toString())
         }
       }
     }
@@ -730,34 +394,18 @@ class MainActivity : TauriActivity() {
 
     private fun getPlaylistInfoInternal(url: String, youtubePlayerClient: String?, callbackName: String) {
       infoExecutor.execute {
-        if (!YtDlp.initialized) {
-          sendCallback(callbackName, JSONObject().apply { put("error", "not_initialized") }.toString())
-          return@execute
-        }
-        try {
-          val request = YoutubeDLRequest(url)
-          request.addOption("-J")
-          request.addOption("--flat-playlist")
-          request.addOption("--encoding", "utf-8")
-          if (!youtubePlayerClient.isNullOrBlank()) {
-            request.addOption(
-              "--extractor-args",
-              "youtube:player_client=${youtubePlayerClient}"
-            )
-          }
-
-          val response = YoutubeDL.getInstance().execute(request)
-          if (response.exitCode != 0) {
-            sendCallback(
-              callbackName,
-              JSONObject().apply { put("error", response.err ?: "yt-dlp failed") }.toString()
-            )
+        val result = YtDlp.resolve(url, true, youtubePlayerClient)
+        if (result is YtDlp.ResolveResult.Failed) {
+            sendCallback(callbackName, JSONObject().apply { put("error", result.error) }.toString())
             return@execute
-          }
+        }
 
-          val raw = response.out ?: "{}"
+        val output = (result as YtDlp.ResolveResult.Success).output
+        try {
+          val raw = output.ifBlank { "{}" }
           val root = JSONObject(raw)
           val entriesArr = root.optJSONArray("entries") ?: JSONArray()
+
 
           val mappedEntries = JSONArray()
           for (i in 0 until entriesArr.length()) {
@@ -809,53 +457,10 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
-    fun openFile(filePath: String): Boolean {
-      return try {
-        val uri = if (filePath.startsWith("content://")) {
-          Uri.parse(filePath)
-        } else {
-          val file = File(filePath)
-          if (!file.exists()) return false
-          FileProvider.getUriForFile(this@MainActivity, BuildConfig.APPLICATION_ID + ".fileprovider", file)
-        }
-
-        val mime = contentResolver.getType(uri)
-          ?: URLConnection.guessContentTypeFromName(filePath)
-          ?: "*/*"
-
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-          setDataAndType(uri, mime)
-          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        startActivity(intent)
-        true
-      } catch (e: Exception) {
-        Log.w(TAG, "openFile failed: ${e.message}")
-        false
-      }
-    }
+    fun openFile(filePath: String): Boolean = this@MainActivity.openFile(filePath)
 
     @JavascriptInterface
-    fun openFolder(filePath: String): Boolean {
-      return try {
-        val file = File(filePath)
-        val folder = if (file.isDirectory) file else file.parentFile
-        if (folder == null || !folder.exists()) return false
-
-        val uri = FileProvider.getUriForFile(this@MainActivity, BuildConfig.APPLICATION_ID + ".fileprovider", folder)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-          setDataAndType(uri, "resource/folder")
-          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        startActivity(intent)
-        true
-      } catch (e: Exception) {
-        Log.w(TAG, "openFolder failed: ${e.message}")
-        false
-      }
-    }
+    fun openFolder(filePath: String): Boolean = this@MainActivity.openFolder(filePath)
 
     @JavascriptInterface
     fun pickFile(mimeTypes: String, callbackName: String) {
@@ -908,75 +513,13 @@ class MainActivity : TauriActivity() {
         }
       }
     }
-
-    @JavascriptInterface
-    fun syncUpdateSettings(autoUpdate: Boolean, allowPrereleases: Boolean) {
-      val settings = UpdateCheckWorker.Settings(applicationContext)
-      settings.setAutoUpdateEnabled(autoUpdate)
-      settings.setAllowPrereleases(allowPrereleases)
-    }
   }
 
   inner class AndroidColorsBridge(private val context: Context) {
     @JavascriptInterface
-    fun getMaterialColors(): String {
-      return try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-          val primary = android.R.color.system_accent1_500
-          val secondary = android.R.color.system_accent2_500
-          val tertiary = android.R.color.system_accent3_500
-
-          val primaryColor = context.getColor(primary)
-          val secondaryColor = context.getColor(secondary)
-          val tertiaryColor = context.getColor(tertiary)
-
-          val result = JSONObject().apply {
-            put("primary", String.format("#%06X", 0xFFFFFF and primaryColor))
-            put("secondary", String.format("#%06X", 0xFFFFFF and secondaryColor))
-            put("tertiary", String.format("#%06X", 0xFFFFFF and tertiaryColor))
-          }
-
-          Log.d(TAG, "Material You colors: $result")
-          result.toString()
-        } else {
-          JSONObject().apply {
-            put("primary", "#6366F1")
-          }.toString()
-        }
-      } catch (e: Exception) {
-        Log.e(TAG, "Failed to get Material colors", e)
-        "{}"
-      }
-    }
+    fun getMaterialColors(): String = ThemeUtils.getMaterialColors(context)
 
     @JavascriptInterface
-    fun getWallpaperColors(): String {
-      return try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-          val wallpaperManager = android.app.WallpaperManager.getInstance(context)
-          val colors = wallpaperManager.getWallpaperColors(android.app.WallpaperManager.FLAG_SYSTEM)
-
-          if (colors != null) {
-            val result = JSONObject()
-            colors.primaryColor?.let {
-              result.put("primary", String.format("#%06X", 0xFFFFFF and it.toArgb()))
-            }
-            colors.secondaryColor?.let {
-              result.put("secondary", String.format("#%06X", 0xFFFFFF and it.toArgb()))
-            }
-            colors.tertiaryColor?.let {
-              result.put("tertiary", String.format("#%06X", 0xFFFFFF and it.toArgb()))
-            }
-            Log.d(TAG, "Wallpaper colors: $result")
-            return result.toString()
-          }
-        }
-        "{}"
-      } catch (e: Exception) {
-        Log.e(TAG, "Failed to get wallpaper colors", e)
-        "{}"
-      }
-    }
+    fun getWallpaperColors(): String = ThemeUtils.getWallpaperColors(context)
   }
 }
-

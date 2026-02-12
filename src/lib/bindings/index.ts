@@ -1,28 +1,63 @@
-// Re-export all generated bindings
-// This file was manually created to provide a single import point
+// Auto-generated barrel file — do not edit manually.
+// Re-run: node scripts/generate-bindings.js
 
+export type { AppStats } from './AppStats';
+export type { BackendCapabilities } from './BackendCapabilities';
 export type { BackendError } from './BackendError';
 export type { Chapter } from './Chapter';
+export type { ClearFilter } from './ClearFilter';
 export type { ClipRange } from './ClipRange';
+export type { CloudInfo } from './CloudInfo';
+export type { ContentType } from './ContentType';
 export type { ConvertMetadata } from './ConvertMetadata';
 export type { ConvertProgress } from './ConvertProgress';
 export type { ConvertRequest } from './ConvertRequest';
 export type { ConvertResult } from './ConvertResult';
+export type { CreatorInfo } from './CreatorInfo';
+export type { DependencyStatus } from './DependencyStatus';
+export type { DiskSpaceInfo } from './DiskSpaceInfo';
 export type { DownloadOptions } from './DownloadOptions';
 export type { DownloadRequest } from './DownloadRequest';
+export type { DownloadSettings } from './DownloadSettings';
+export type { EnqueueOverrides } from './EnqueueOverrides';
+export type { EnqueuePlaylistRequest } from './EnqueuePlaylistRequest';
+export type { EnqueueRequest } from './EnqueueRequest';
 export type { FfmpegConvertSettings } from './FfmpegConvertSettings';
+export type { FileEntry } from './FileEntry';
+export type { FileUrlInfo } from './FileUrlInfo';
 export type { Fragment } from './Fragment';
+export type { GalleryInfo } from './GalleryInfo';
+export type { HistoryItem } from './HistoryItem';
+export type { HistoryQuery } from './HistoryQuery';
+export type { HttpInfo } from './HttpInfo';
+export type { InstallProgress } from './InstallProgress';
+export type { IpCheckResult } from './IpCheckResult';
 export type { Job } from './Job';
 export type { JobControl } from './JobControl';
 export type { JobEvent } from './JobEvent';
 export type { JobStatus } from './JobStatus';
+export type { MediaFormatInfo } from './MediaFormatInfo';
+export type { MediaStreamInfo } from './MediaStreamInfo';
+export type { MediaTechnicalInfo } from './MediaTechnicalInfo';
+export type { MusicInfo } from './MusicInfo';
 export type { OutputSettings } from './OutputSettings';
+export type { Pagination } from './Pagination';
 export type { PlaylistEntry } from './PlaylistEntry';
 export type { PostProcessStep } from './PostProcessStep';
 export type { Priority } from './Priority';
 export type { ProxyConfig } from './ProxyConfig';
 export type { QualitySettings } from './QualitySettings';
+export type { RelatedEntry } from './RelatedEntry';
+export type { ReleaseInfo } from './ReleaseInfo';
+export type { ResolveEvent } from './ResolveEvent';
 export type { ResolveResult } from './ResolveResult';
+export type { ResolvedProxy } from './ResolvedProxy';
+export type { SeriesInfo } from './SeriesInfo';
 export type { Storyboard } from './Storyboard';
+export type { SubtitleTrack } from './SubtitleTrack';
+export type { Thumbnail } from './Thumbnail';
+export type { TorrentInfo } from './TorrentInfo';
+export type { UpdateCheckResult } from './UpdateCheckResult';
 export type { UrlInfo } from './UrlInfo';
+export type { UrlInfoPatch } from './UrlInfoPatch';
 export type { VideoFormat } from './VideoFormat';

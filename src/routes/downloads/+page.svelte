@@ -2,43 +2,46 @@
   import { onMount, setContext, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { t } from '$lib/i18n';
-  import { history, playlistGroupedHistory, historyStats } from '$lib/stores/history';
-  import { formatDuration, formatSize, formatSpeed } from '$lib/utils/format';
-  import { groupedDownloads, queue } from '$lib/stores/queue';
   import {
-    downloadSpeedNow,
-    downloadSpeedPoints,
-    isDownloadSpeedRunning,
-  } from '$lib/stores/downloadSpeed';
+    history,
+    playlistGroupedHistory,
+    historyStats,
+    type SortType,
+  } from '$lib/stores/history';
+  import { formatDuration, formatSize, formatSpeed } from '$lib/utils/format';
+  import { groupedDownloads, queue, activeDownloadsCount } from '$lib/stores/queue';
+  import { downloadSpeedNow, downloadSpeedPoints } from '$lib/stores/downloadSpeed';
   import { initConversions, cleanupConversions, startConversion } from '$lib/stores/conversions';
-  import { settings, updateSetting } from '$lib/stores/settings';
+  import { settings } from '$lib/stores/settings';
   import { navigation } from '$lib/stores/navigation';
   import { invoke } from '@tauri-apps/api/core';
-  import { revealItemInDir, openPath, openUrl } from '@tauri-apps/plugin-opener';
-  import { isAndroid, openFileOnAndroid } from '$lib/utils/android';
+  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { isAndroid } from '$lib/utils/android';
+  import { openFile, revealFile } from '$lib/utils/platform';
   import {
     DownloadsState,
     VIRTUALIZATION_HEIGHTS,
     computeGridRowHeight,
+    type ColumnKey,
     type UnifiedDownloadItem,
     type VirtualListItem,
   } from '$lib/stores/downloadsState.svelte';
   import { DOWNLOADS_CONTEXT_KEY, type DownloadsContext } from '$lib/stores/downloadsContext';
-  import { fly } from 'svelte/transition';
-  import { toast } from '$lib/components/Toast.svelte';
+  import { fade } from 'svelte/transition';
+  import { toast } from '$lib/components/ui/Toast.svelte';
 
-  import VirtualList from '$lib/components/VirtualList.svelte';
-  import TableHeader from './components/TableHeader.svelte';
-  import HistoryItemRow from './components/HistoryItemRow.svelte';
-  import HistoryGridItem from './components/HistoryGridItem.svelte';
-  import DownloadSpeedGraph from './components/DownloadSpeedGraph.svelte';
-  import DownloadItemDetailsModal from './components/DownloadItemDetailsModal.svelte';
+  import VirtualList from '$lib/components/media/VirtualList.svelte';
+  import TableHeader from '$lib/components/download/TableHeader.svelte';
+  import DownloadItem from '$lib/components/download/DownloadItem.svelte';
+  import DownloadSpeedGraph from '$lib/components/download/DownloadSpeedGraph.svelte';
+  import DownloadItemDetailsModal from '$lib/components/download/DownloadItemDetailsModal.svelte';
 
-  import Icon from '$lib/components/Icon.svelte';
-  import Chip from '$lib/components/Chip.svelte';
-  import Select from '$lib/components/Select.svelte';
-  import Dropdown from '$lib/components/Dropdown.svelte';
+  import Icon from '$lib/components/ui/Icon.svelte';
+  import Chip from '$lib/components/ui/Chip.svelte';
+  import Select from '$lib/components/ui/Select.svelte';
+  import Dropdown from '$lib/components/ui/Dropdown.svelte';
   import { tooltip } from '$lib/actions/tooltip';
+  import PageShell from '$lib/components/layout/PageShell.svelte';
   import {
     hasOpenAriaModal,
     hasOpenAriaMenu,
@@ -65,7 +68,11 @@
   let detailsOpen = $state(false);
   let detailsItem = $state<UnifiedDownloadItem | null>(null);
 
-  let speedGraphVisible = $derived($isDownloadSpeedRunning);
+  let speedGraphVisible = $derived(
+    $queue.items.some(
+      (i) => i.status === 'downloading' || i.status === 'processing' || i.status === 'converting'
+    )
+  );
 
   let prevFilter = $state<string | null>(null);
   let prevSearchQuery = $state<string | null>(null);
@@ -117,14 +124,8 @@
           toast.error($t('downloads.noFilePath'));
           return;
         }
-        try {
-          if (isAndroid()) {
-            await openFileOnAndroid(item.filePath);
-          } else {
-            await openPath(item.filePath);
-          }
-        } catch (e) {
-          console.error('Failed to open file:', e);
+        const success = await openFile(item.filePath);
+        if (!success) {
           toast.error($t('downloads.openError'));
         }
       }
@@ -154,14 +155,8 @@
         toast.error($t('downloads.noFilePath'));
         return;
       }
-      try {
-        if (isAndroid()) {
-          await openFileOnAndroid(item.filePath);
-        } else {
-          await openPath(item.filePath);
-        }
-      } catch (e) {
-        console.error('Failed to play file:', e);
+      const success = await openFile(item.filePath);
+      if (!success) {
         toast.error($t('downloads.openError'));
       }
     },
@@ -180,16 +175,18 @@
       }
     },
     openFileLocation: async (path) => {
-      if (isAndroid()) return;
-      try {
-        await revealItemInDir(path);
-      } catch (err) {
-        console.error('Failed to reveal file:', err);
+      const success = await revealFile(path);
+      if (!success && !isAndroid()) {
         toast.error($t('downloads.revealError'));
       }
     },
-    convertItem: (item, targetFormat, audioOnly) => {
-      startConversion(item as any, targetFormat, audioOnly);
+    convertItem: async (item, targetFormat, audioOnly) => {
+      const result = await startConversion(item as any, targetFormat, audioOnly);
+      if (result) {
+        toast.success(`Converted to ${targetFormat.toUpperCase()}`);
+      } else {
+        toast.error($t('downloads.conversionFailed'));
+      }
     },
     showDetails: (item) => {
       detailsItem = item;
@@ -250,13 +247,24 @@
   $effect(() => {
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
+
+      if (dState.viewMode === 'list') {
+        e.preventDefault();
+        if (e.deltaY < 0) {
+          dState.listItemSize = Math.min(80, dState.listItemSize + 8);
+        } else if (e.deltaY > 0) {
+          dState.listItemSize = Math.max(40, dState.listItemSize - 8);
+        }
+        return;
+      }
+
       if (dState.viewMode !== 'grid') return;
 
       e.preventDefault();
       if (e.deltaY < 0) {
-        dState.increaseGridSize();
+        dState.gridItemSize = Math.min(400, dState.gridItemSize + 40);
       } else if (e.deltaY > 0) {
-        dState.decreaseGridSize();
+        dState.gridItemSize = Math.max(120, dState.gridItemSize - 40);
       }
     };
 
@@ -301,8 +309,11 @@
           match: (e) => matchesShortcut(e, { key: 'a', mod: true, shift: true }),
           run: () => {
             const activeIds = dState.displayItems
-              .filter((item) => item.kind === 'single' && item.item.isActive)
-              .map((item) => (item as any).item.id);
+              .filter(
+                (item): item is Extract<typeof item, { kind: 'single' }> =>
+                  item.kind === 'single' && item.item.isActive
+              )
+              .map((item) => item.item.id);
             dState.selectedItemIds = new Set(activeIds);
           },
         },
@@ -325,22 +336,27 @@
           },
         },
         {
-          match: (e) =>
-            (e.ctrlKey || e.metaKey) &&
-            dState.viewMode === 'grid' &&
-            (e.key === '=' || e.key === '+'),
-          run: () => dState.increaseGridSize(),
+          match: (e) => (e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+'),
+          run: () => {
+            if (dState.viewMode === 'grid')
+              dState.gridItemSize = Math.min(400, dState.gridItemSize + 40);
+            else dState.listItemSize = Math.min(80, dState.listItemSize + 8);
+          },
         },
         {
-          match: (e) =>
-            (e.ctrlKey || e.metaKey) &&
-            dState.viewMode === 'grid' &&
-            (e.key === '-' || e.key === '_'),
-          run: () => dState.decreaseGridSize(),
+          match: (e) => (e.ctrlKey || e.metaKey) && (e.key === '-' || e.key === '_'),
+          run: () => {
+            if (dState.viewMode === 'grid')
+              dState.gridItemSize = Math.max(120, dState.gridItemSize - 40);
+            else dState.listItemSize = Math.max(40, dState.listItemSize - 8);
+          },
         },
         {
-          match: (e) => (e.ctrlKey || e.metaKey) && dState.viewMode === 'grid' && e.key === '0',
-          run: () => dState.resetGridSize(),
+          match: (e) => (e.ctrlKey || e.metaKey) && e.key === '0',
+          run: () => {
+            if (dState.viewMode === 'grid') dState.gridItemSize = 200;
+            else dState.listItemSize = 56;
+          },
         },
         {
           match: (e) => !e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Escape',
@@ -382,16 +398,13 @@
             !e.metaKey &&
             !e.altKey &&
             e.key === 'Enter' &&
-            dState.selectedItemIds.size === 1,
+            dState.selectedItemIds.size >= 1,
           run: () => {
-            const id = Array.from(dState.selectedItemIds)[0];
-            const item = dState.getItemById(id);
-            if (!item || item.isActive || !item.filePath) return;
-
-            if (isAndroid()) {
-              void openFileOnAndroid(item.filePath);
-            } else {
-              void openPath(item.filePath);
+            for (const id of dState.selectedItemIds) {
+              const item = dState.getItemById(id);
+              if (item && !item.isActive && item.filePath && !dState.isFileMissing(id)) {
+                void openFile(item.filePath);
+              }
             }
           },
         },
@@ -401,16 +414,17 @@
             !e.metaKey &&
             !e.altKey &&
             (e.key === ' ' || e.code === 'Space') &&
-            dState.selectedItemIds.size === 1,
+            dState.selectedItemIds.size >= 1,
           run: () => {
-            const id = Array.from(dState.selectedItemIds)[0];
-            const item = dState.getItemById(id);
-            if (!item?.isActive || item.status === 'failed') return;
+            for (const id of dState.selectedItemIds) {
+              const item = dState.getItemById(id);
+              if (!item?.isActive || item.status === 'failed') continue;
 
-            if (item.status === 'paused') {
-              queue.resumeItem(id);
-            } else {
-              queue.pauseItem(id);
+              if (item.status === 'paused') {
+                queue.resumeItem(id);
+              } else {
+                queue.pauseItem(id);
+              }
             }
           },
         },
@@ -447,9 +461,9 @@
           run: () => {
             const id = Array.from(dState.selectedItemIds)[0];
             const item = dState.getItemById(id);
-            if (!item?.filePath || isAndroid()) return;
+            if (!item?.filePath) return;
 
-            void revealItemInDir(item.filePath);
+            void revealFile(item.filePath);
           },
         },
         {
@@ -494,6 +508,29 @@
     }
   }
 
+  function toggleCol(col: ColumnKey) {
+    dState.visibleColumns = dState.visibleColumns.includes(col)
+      ? dState.visibleColumns.filter((c) => c !== col)
+      : [...dState.visibleColumns, col];
+  }
+
+  const COLUMNS: ColumnKey[] = ['format', 'size', 'duration'];
+
+  const FILTER_CHIPS = [
+    { value: 'all', icon: 'date' },
+    { value: 'video', icon: 'video' },
+    { value: 'audio', icon: 'music' },
+    { value: 'image', icon: 'image' },
+    { value: 'file', icon: 'file_text' },
+  ] as const;
+
+  const TYPE_BREAKDOWN = [
+    { key: 'video', icon: 'video' },
+    { key: 'audio', icon: 'music' },
+    { key: 'image', icon: 'image' },
+    { key: 'file', icon: 'file_text' },
+  ] as const;
+
   let typeCounts = $derived.by(() => {
     const items = $history.items;
     const counts = { video: 0, audio: 0, image: 0, file: 0 };
@@ -512,17 +549,29 @@
       .slice(0, 5);
   });
 
-  let activeDownloadsCount = $derived(
-    $queue.items.filter(
-      (i) =>
-        i.status === 'pending' ||
-        i.status === 'downloading' ||
-        i.status === 'processing' ||
-        i.status === 'fetching-info' ||
-        i.status === 'paused' ||
-        i.status === 'converting'
-    ).length
+  let selectedItems = $derived(
+    Array.from(dState.selectedItemIds)
+      .map((id) => dState.getItemById(id))
+      .filter(Boolean) as UnifiedDownloadItem[]
   );
+  let selectionHasFailed = $derived(
+    selectedItems.some((item) => item.isActive && item.status === 'failed')
+  );
+  let selectionHasActive = $derived(
+    selectedItems.some(
+      (item) =>
+        item.isActive &&
+        (item.status === 'downloading' ||
+          item.status === 'pending' ||
+          item.status === 'paused' ||
+          item.status === 'processing' ||
+          item.status === 'converting')
+    )
+  );
+  let selectionHasPaused = $derived(
+    selectedItems.some((item) => item.isActive && item.status === 'paused')
+  );
+  let selectionHasCompleted = $derived(selectedItems.some((item) => !item.isActive));
 </script>
 
 <DownloadItemDetailsModal
@@ -534,544 +583,574 @@
   }}
 />
 
-<div class="page" bind:this={containerEl} style="--cols: {dState.itemsPerRow}">
-  <div
-    class="toolbar"
-    class:search-open={searchExpanded || dState.searchQuery.trim()}
-    class:selection-open={dState.isSelectionMode}
-  >
-    <div class="search-container" class:expanded={searchExpanded || dState.searchQuery.trim()}>
-      {#if searchExpanded || dState.searchQuery.trim()}
-        <Icon name="search" size={18} />
-        <input
-          bind:this={searchInputRef}
-          type="text"
-          placeholder={$t('downloads.searchPlaceholder')}
-          bind:value={dState.searchQuery}
-          onfocus={() => (searchExpanded = true)}
-          onblur={collapseSearchIfEmpty}
-        />
-        <button
-          type="button"
-          class="search-close"
-          onclick={(e) => {
-            e.stopPropagation();
-            if (dState.searchQuery.trim()) {
-              dState.searchQuery = '';
-              searchInputRef?.focus();
-            } else {
-              searchExpanded = false;
-            }
-          }}
-          aria-label={dState.searchQuery.trim() ? $t('common.clear') : $t('common.close')}
-        >
-          <Icon name="cross" size={16} />
-        </button>
-      {:else}
-        <button
-          class="search-icon-btn"
-          onclick={() => openSearch()}
-          use:tooltip={$t('downloads.search')}
-        >
+<PageShell scrollMode="virtual-list">
+  <div class="downloads-inner" bind:this={containerEl} style="--cols: {dState.itemsPerRow}">
+    <div
+      class="toolbar"
+      class:search-open={searchExpanded || dState.searchQuery.trim()}
+      class:selection-open={dState.isSelectionMode}
+    >
+      <div class="search-container" class:expanded={searchExpanded || dState.searchQuery.trim()}>
+        {#if searchExpanded || dState.searchQuery.trim()}
           <Icon name="search" size={18} />
-        </button>
-      {/if}
-    </div>
-
-    <div class="controls-row">
-      <div class="filters">
-        <Chip
-          selected={dState.activeFilter === 'all'}
-          icon="date"
-          onclick={() => dState.setFilter('all')}
-        >
-          {$t('downloads.filters.all')}
-        </Chip>
-        <Chip
-          selected={dState.activeFilter === 'video'}
-          icon="video"
-          onclick={() => dState.setFilter('video')}
-        >
-          {$t('downloads.filters.video')}
-        </Chip>
-        <Chip
-          selected={dState.activeFilter === 'audio'}
-          icon="music"
-          onclick={() => dState.setFilter('audio')}
-        >
-          {$t('downloads.filters.audio')}
-        </Chip>
-        <Chip
-          selected={dState.activeFilter === 'image'}
-          icon="image"
-          onclick={() => dState.setFilter('image')}
-        >
-          {$t('downloads.filters.image')}
-        </Chip>
-        <Chip
-          selected={dState.activeFilter === 'file'}
-          icon="file_text"
-          onclick={() => dState.setFilter('file')}
-        >
-          {$t('downloads.filters.file')}
-        </Chip>
-        {#if $historyStats.favouritesCount > 0}
-          <Chip
-            selected={dState.activeFilter === 'favourites'}
-            icon="star"
-            onclick={() => dState.setFilter('favourites')}
+          <input
+            bind:this={searchInputRef}
+            type="text"
+            placeholder={$t('downloads.searchPlaceholder')}
+            bind:value={dState.searchQuery}
+            onfocus={() => (searchExpanded = true)}
+            onblur={collapseSearchIfEmpty}
+          />
+          <button
+            type="button"
+            class="search-close"
+            onclick={(e) => {
+              e.stopPropagation();
+              if (dState.searchQuery.trim()) {
+                dState.searchQuery = '';
+                searchInputRef?.focus();
+              } else {
+                searchExpanded = false;
+              }
+            }}
+            aria-label={dState.searchQuery.trim() ? $t('common.clear') : $t('common.close')}
           >
-            {$t('downloads.filters.favourites')} ({$historyStats.favouritesCount})
-          </Chip>
+            <Icon name="cross" size={16} />
+          </button>
+        {:else}
+          <button
+            class="search-icon-btn"
+            onclick={() => openSearch()}
+            use:tooltip={$t('downloads.search')}
+          >
+            <Icon name="search" size={18} />
+          </button>
         {/if}
       </div>
 
-      <div class="controls-right">
-        {#if activeDownloadsCount > 0}
-          <div class="queue-controls">
+      <div class="controls-row">
+        <div class="filters">
+          {#each FILTER_CHIPS as chip}
+            <Chip
+              selected={dState.activeFilter === chip.value}
+              icon={chip.icon}
+              onclick={() => (dState.activeFilter = chip.value)}
+            >
+              {$t(`downloads.filters.${chip.value}`)}
+            </Chip>
+          {/each}
+          {#if $historyStats.favouritesCount > 0}
+            <Chip
+              selected={dState.activeFilter === 'favourites'}
+              icon="star"
+              onclick={() => (dState.activeFilter = 'favourites')}
+            >
+              {$t('downloads.filters.favourites')} ({$historyStats.favouritesCount})
+            </Chip>
+          {/if}
+        </div>
+
+        <div class="controls-right">
+          {#if $activeDownloadsCount > 0}
+            <div class="queue-controls">
+              <button
+                class="toolbar-btn"
+                class:active={$queue.isPaused}
+                onclick={() => queue.togglePause()}
+                use:tooltip={$queue.isPaused
+                  ? $t('downloads.queue.resumeAll')
+                  : $t('downloads.queue.pauseAll')}
+              >
+                <Icon name={$queue.isPaused ? 'play' : 'pause'} size={18} />
+              </button>
+              <button
+                class="toolbar-btn danger"
+                onclick={() => {
+                  if (
+                    confirm(
+                      $t('downloads.queue.cancelAllConfirm', { count: $activeDownloadsCount })
+                    )
+                  ) {
+                    queue.cancelAll();
+                  }
+                }}
+                use:tooltip={$t('downloads.queue.cancelAll')}
+              >
+                <Icon name="close" size={18} />
+              </button>
+              <span class="active-count">{$activeDownloadsCount}</span>
+            </div>
+          {/if}
+
+          <div class="sort-control">
+            <span class="sort-label">{$t('downloads.sort.label')}:</span>
+            <Select
+              bind:value={dState.sortType}
+              options={[
+                { value: 'date', label: $t('downloads.sort.date') },
+                { value: 'name', label: $t('downloads.sort.name') },
+                { value: 'size', label: $t('downloads.sort.size') },
+              ]}
+              onchange={(v) => (dState.sortType = v as SortType)}
+            />
+          </div>
+
+          {#if dState.viewMode === 'list'}
             <button
               class="toolbar-btn"
-              class:active={$queue.isPaused}
-              onclick={() => queue.togglePause()}
-              use:tooltip={$queue.isPaused
-                ? $t('downloads.queue.resumeAll')
-                : $t('downloads.queue.pauseAll')}
+              class:active={columnsDropdownOpen}
+              bind:this={columnsDropdownAnchor}
+              onclick={() => (columnsDropdownOpen = !columnsDropdownOpen)}
+              use:tooltip={$t('downloads.columns.toggle')}
             >
-              <Icon name={$queue.isPaused ? 'play' : 'pause'} size={18} />
+              <Icon name="settings" size={18} />
+            </button>
+          {/if}
+
+          <div class="view-toggle">
+            <button
+              class="view-btn"
+              class:active={dState.viewMode === 'list'}
+              onclick={() => (dState.viewMode = 'list')}
+              use:tooltip={$t('downloads.views.list')}
+            >
+              <Icon name="checklist" size={18} />
             </button>
             <button
-              class="toolbar-btn danger"
+              class="view-btn"
+              class:active={dState.viewMode === 'grid'}
+              onclick={() => (dState.viewMode = 'grid')}
+              use:tooltip={$t('downloads.views.grid')}
+            >
+              <Icon name="gallery" size={18} />
+            </button>
+          </div>
+
+          {#if $settings.showHistoryStats && $historyStats.totalDownloads > 0}
+            <button
+              class="toolbar-btn stats-btn"
+              class:active={showStatsPanel}
+              onclick={() => (showStatsPanel = !showStatsPanel)}
+              use:tooltip={$t('downloads.stats.toggle')}
+            >
+              <Icon name="stats" size={18} />
+            </button>
+          {/if}
+        </div>
+      </div>
+
+      {#if dState.isSelectionMode}
+        <div class="selection-toolbar" transition:fade={{ duration: 150 }}>
+          <div class="selection-left">
+            <span class="count-badge">{dState.selectedItemIds.size}</span>
+            <span class="count-label">{$t('downloads.selected')}</span>
+            <button
+              class="selection-action compact"
+              onclick={() => dState.selectAll()}
+              use:tooltip={$t('downloads.selectAll')}
+            >
+              <Icon name="check" size={14} />
+              <span>{$t('downloads.selectAll')}</span>
+            </button>
+          </div>
+          <div class="selection-actions">
+            {#if selectionHasActive}
+              {#if selectionHasPaused}
+                <button
+                  class="selection-action"
+                  onclick={() => {
+                    for (const item of selectedItems) {
+                      if (item.isActive && item.status === 'paused') {
+                        queue.resumeItem(item.id);
+                      }
+                    }
+                  }}
+                  use:tooltip={$t('downloads.queue.resumeItem')}
+                >
+                  <Icon name="play" size={16} />
+                  <span>{$t('downloads.queue.resumeItem')}</span>
+                </button>
+              {:else}
+                <button
+                  class="selection-action"
+                  onclick={() => {
+                    for (const item of selectedItems) {
+                      if (
+                        item.isActive &&
+                        (item.status === 'downloading' ||
+                          item.status === 'pending' ||
+                          item.status === 'processing' ||
+                          item.status === 'converting')
+                      ) {
+                        queue.pauseItem(item.id);
+                      }
+                    }
+                  }}
+                  use:tooltip={$t('downloads.queue.pauseItem')}
+                >
+                  <Icon name="pause" size={16} />
+                  <span>{$t('downloads.queue.pauseItem')}</span>
+                </button>
+              {/if}
+            {/if}
+            {#if selectionHasFailed}
+              <button
+                class="selection-action"
+                onclick={() => {
+                  for (const item of selectedItems) {
+                    if (item.isActive && item.status === 'failed') {
+                      queue.retry(item.id);
+                    }
+                  }
+                }}
+                use:tooltip={$t('downloads.retry')}
+              >
+                <Icon name="refresh" size={16} />
+                <span>{$t('downloads.retry')}</span>
+              </button>
+            {/if}
+            <button
+              class="selection-action"
               onclick={() => {
-                if (
-                  confirm($t('downloads.queue.cancelAllConfirm', { count: activeDownloadsCount }))
-                ) {
-                  queue.cancelAll();
+                const urls = Array.from(dState.selectedItemIds)
+                  .map((id) => dState.getItemById(id)?.url)
+                  .filter(Boolean)
+                  .join('\n');
+                if (urls) {
+                  navigator.clipboard.writeText(urls);
+                  toast.success($t('common.copied'));
                 }
               }}
-              use:tooltip={$t('downloads.queue.cancelAll')}
+              use:tooltip={$t('downloads.copyUrl')}
             >
-              <Icon name="close" size={18} />
+              <Icon name="copy" size={16} />
+              <span>{$t('downloads.copyUrl')}</span>
             </button>
-            <span class="active-count">{activeDownloadsCount}</span>
-          </div>
-        {/if}
-
-        <div class="sort-control">
-          <span class="sort-label">{$t('downloads.sort.label')}:</span>
-          <Select
-            bind:value={dState.sortType}
-            options={[
-              { value: 'date', label: $t('downloads.sort.date') },
-              { value: 'name', label: $t('downloads.sort.name') },
-              { value: 'size', label: $t('downloads.sort.size') },
-            ]}
-            onchange={(v) => dState.setSort(v as any)}
-          />
-        </div>
-
-        {#if dState.viewMode === 'list'}
-          <button
-            class="toolbar-btn"
-            class:active={columnsDropdownOpen}
-            bind:this={columnsDropdownAnchor}
-            onclick={() => (columnsDropdownOpen = !columnsDropdownOpen)}
-            use:tooltip={$t('downloads.columns.toggle')}
-          >
-            <Icon name="settings" size={18} />
-          </button>
-        {/if}
-
-        <div class="view-toggle">
-          <button
-            class="view-btn"
-            class:active={dState.viewMode === 'list'}
-            onclick={() => dState.setViewMode('list')}
-            use:tooltip={$t('downloads.views.list')}
-          >
-            <Icon name="checklist" size={18} />
-          </button>
-          <button
-            class="view-btn"
-            class:active={dState.viewMode === 'grid'}
-            onclick={() => dState.setViewMode('grid')}
-            use:tooltip={$t('downloads.views.grid')}
-          >
-            <Icon name="gallery" size={18} />
-          </button>
-        </div>
-
-        {#if $settings.showHistoryStats && $historyStats.totalDownloads > 0}
-          <button
-            class="toolbar-btn stats-btn"
-            class:active={showStatsPanel}
-            onclick={() => (showStatsPanel = !showStatsPanel)}
-            use:tooltip={$t('downloads.stats.toggle')}
-          >
-            <Icon name="stats" size={18} />
-          </button>
-        {/if}
-      </div>
-    </div>
-
-    {#if dState.isSelectionMode}
-      <div class="selection-toolbar" transition:fly={{ y: -10, duration: 200 }}>
-        <div class="selection-count">
-          <span class="count-badge">{dState.selectedItemIds.size}</span>
-          <span class="count-label">{$t('downloads.selected')}</span>
-        </div>
-        <div class="selection-actions">
-          <button
-            class="selection-action"
-            onclick={() => {
-              const urls = Array.from(dState.selectedItemIds)
-                .map((id) => dState.getItemById(id)?.url)
-                .filter(Boolean)
-                .join('\n');
-              if (urls) {
-                navigator.clipboard.writeText(urls);
-                toast.success($t('common.copied'));
-              }
-            }}
-            use:tooltip={$t('downloads.copyUrl')}
-          >
-            <Icon name="copy" size={18} />
-            <span>{$t('downloads.copyUrl')}</span>
-          </button>
-          <button
-            class="selection-action"
-            onclick={() => {
-              for (const id of dState.selectedItemIds) {
-                const item = dState.getItemById(id);
-                if (item && item.filePath && !dState.isFileMissing(id)) {
-                  if (isAndroid()) {
-                    openFileOnAndroid(item.filePath);
+            {#if selectionHasCompleted}
+              <button
+                class="selection-action"
+                onclick={() => {
+                  for (const id of dState.selectedItemIds) {
+                    const item = dState.getItemById(id);
+                    if (item && item.filePath && !dState.isFileMissing(id)) {
+                      void openFile(item.filePath);
+                    }
+                  }
+                  dState.clearSelection();
+                }}
+                use:tooltip={$t('downloads.openSelected')}
+              >
+                <Icon name="play" size={16} />
+                <span>{$t('downloads.openSelected')}</span>
+              </button>
+              <button
+                class="selection-action"
+                onclick={async () => {
+                  for (const item of selectedItems) {
+                    if (!item.isActive && item.url) {
+                      navigation.openVideo(item.url);
+                      await goto('/');
+                    }
+                  }
+                  dState.clearSelection();
+                }}
+                use:tooltip={$t('downloads.redownload')}
+              >
+                <Icon name="download" size={16} />
+                <span>{$t('downloads.redownload')}</span>
+              </button>
+            {/if}
+            <div class="selection-divider"></div>
+            <button
+              class="selection-action danger"
+              onclick={() => {
+                for (const id of dState.selectedItemIds) {
+                  const item = dState.getItemById(id);
+                  if (item?.isActive) {
+                    queue.cancel(id);
                   } else {
-                    openPath(item.filePath);
+                    history.remove(id);
                   }
                 }
-              }
-              dState.clearSelection();
-            }}
-            use:tooltip={$t('downloads.openSelected')}
-          >
-            <Icon name="play" size={18} />
-            <span>{$t('downloads.openSelected')}</span>
-          </button>
-          <button
-            class="selection-action danger"
-            onclick={() => {
-              for (const id of dState.selectedItemIds) {
-                history.remove(id);
-              }
-              dState.clearSelection();
-            }}
-            use:tooltip={$t('downloads.deleteSelected')}
-          >
-            <Icon name="trash" size={18} />
-            <span>{$t('downloads.deleteSelected')}</span>
-          </button>
-          <button
-            class="selection-action"
-            onclick={() => dState.clearSelection()}
-            use:tooltip={$t('downloads.clearSelection')}
-          >
-            <Icon name="cross" size={18} />
-            <span>{$t('downloads.clearSelection')}</span>
-          </button>
-        </div>
-      </div>
-    {/if}
-  </div>
-  <Dropdown
-    open={columnsDropdownOpen}
-    anchorEl={columnsDropdownAnchor}
-    onclose={() => (columnsDropdownOpen = false)}
-  >
-    <span class="menu-section-title">{$t('downloads.columns.title')}</span>
-    <button
-      class="menu-option"
-      class:selected={dState.isColumnVisible('format')}
-      role="menuitemcheckbox"
-      aria-checked={dState.isColumnVisible('format')}
-      onclick={() => dState.toggleColumn('format')}
-    >
-      <span>{$t('downloads.table.format')}</span>
-      {#if dState.isColumnVisible('format')}
-        <Icon name="check" size={14} />
-      {/if}
-    </button>
-    <button
-      class="menu-option"
-      class:selected={dState.isColumnVisible('size')}
-      role="menuitemcheckbox"
-      aria-checked={dState.isColumnVisible('size')}
-      onclick={() => dState.toggleColumn('size')}
-    >
-      <span>{$t('downloads.table.size')}</span>
-      {#if dState.isColumnVisible('size')}
-        <Icon name="check" size={14} />
-      {/if}
-    </button>
-    <button
-      class="menu-option"
-      class:selected={dState.isColumnVisible('duration')}
-      role="menuitemcheckbox"
-      aria-checked={dState.isColumnVisible('duration')}
-      onclick={() => dState.toggleColumn('duration')}
-    >
-      <span>{$t('downloads.table.duration')}</span>
-      {#if dState.isColumnVisible('duration')}
-        <Icon name="check" size={14} />
-      {/if}
-    </button>
-
-    <div class="menu-divider"></div>
-
-    <span class="menu-section-title">{$t('downloads.display.title')}</span>
-    <button
-      class="menu-option"
-      class:selected={dState.hideMissingFiles}
-      role="menuitemcheckbox"
-      aria-checked={dState.hideMissingFiles}
-      onclick={() => dState.toggleHideMissingFiles()}
-    >
-      <span>{$t('downloads.display.hideMissing')}</span>
-      {#if dState.hideMissingFiles}
-        <Icon name="check" size={14} />
-      {/if}
-    </button>
-    <button
-      class="menu-option"
-      class:selected={dState.showSourceTags}
-      role="menuitemcheckbox"
-      aria-checked={dState.showSourceTags}
-      onclick={() => dState.toggleShowSourceTags()}
-    >
-      <span>{$t('downloads.display.showSourceTags')}</span>
-      {#if dState.showSourceTags}
-        <Icon name="check" size={14} />
-      {/if}
-    </button>
-
-    <button
-      class="menu-option"
-      class:selected={dState.ungroupPlaylistsOnSort}
-      role="menuitemcheckbox"
-      aria-checked={dState.ungroupPlaylistsOnSort}
-      onclick={() => dState.toggleUngroupPlaylistsOnSort()}
-    >
-      <span>{$t('downloads.display.ungroupPlaylistsOnSort')}</span>
-      {#if dState.ungroupPlaylistsOnSort}
-        <Icon name="check" size={14} />
-      {/if}
-    </button>
-  </Dropdown>
-
-  {#if $settings.showHistoryStats && showStatsPanel && $historyStats.totalDownloads > 0}
-    <div class="stats-panel">
-      <div class="stats-grid">
-        <div class="stat-card">
-          <Icon name="download" size={20} />
-          <div class="stat-content">
-            <span class="stat-value">{$historyStats.totalDownloads}</span>
-            <span class="stat-label">{$t('downloads.stats.totalDownloads')}</span>
+                dState.clearSelection();
+              }}
+              use:tooltip={$t('downloads.deleteSelected')}
+            >
+              <Icon name="trash" size={16} />
+              <span>{$t('downloads.deleteSelected')}</span>
+            </button>
+            <button
+              class="selection-action"
+              onclick={() => dState.clearSelection()}
+              use:tooltip={$t('downloads.clearSelection')}
+            >
+              <Icon name="cross" size={16} />
+            </button>
           </div>
         </div>
-        <div class="stat-card">
-          <Icon name="file_text" size={20} />
-          <div class="stat-content">
-            <span class="stat-value">{formatSize($historyStats.totalSize)}</span>
-            <span class="stat-label">{$t('downloads.stats.totalSize')}</span>
-          </div>
-        </div>
-        <div class="stat-card">
-          <Icon name="clock" size={20} />
-          <div class="stat-content">
-            <span class="stat-value">{formatDuration($historyStats.totalDuration)}</span>
-            <span class="stat-label">{$t('downloads.stats.totalDuration')}</span>
-          </div>
-        </div>
-      </div>
+      {/if}
+    </div>
+    <Dropdown
+      open={columnsDropdownOpen}
+      anchorEl={columnsDropdownAnchor}
+      onclose={() => (columnsDropdownOpen = false)}
+    >
+      <span class="menu-section-title">{$t('downloads.columns.title')}</span>
+      {#each COLUMNS as col}
+        <button
+          class="menu-option"
+          class:selected={dState.visibleColumns.includes(col)}
+          role="menuitemcheckbox"
+          aria-checked={dState.visibleColumns.includes(col)}
+          onclick={() => toggleCol(col)}
+        >
+          <span>{$t(`downloads.table.${col}`)}</span>
+          {#if dState.visibleColumns.includes(col)}
+            <Icon name="check" size={14} />
+          {/if}
+        </button>
+      {/each}
 
-      <div class="stats-breakdown">
-        <div class="breakdown-section">
-          <span class="breakdown-title">{$t('downloads.stats.byType')}</span>
-          <div class="breakdown-items">
-            {#if typeCounts.video > 0}
-              <span class="breakdown-item"
-                ><Icon name="video" size={14} />
-                {typeCounts.video}
-                {$t('downloads.filters.video')}</span
-              >
-            {/if}
-            {#if typeCounts.audio > 0}
-              <span class="breakdown-item"
-                ><Icon name="music" size={14} />
-                {typeCounts.audio}
-                {$t('downloads.filters.audio')}</span
-              >
-            {/if}
-            {#if typeCounts.image > 0}
-              <span class="breakdown-item"
-                ><Icon name="image" size={14} />
-                {typeCounts.image}
-                {$t('downloads.filters.image')}</span
-              >
-            {/if}
-            {#if typeCounts.file > 0}
-              <span class="breakdown-item"
-                ><Icon name="file_text" size={14} />
-                {typeCounts.file}
-                {$t('downloads.filters.file')}</span
-              >
-            {/if}
+      <div class="menu-divider"></div>
+
+      <span class="menu-section-title">{$t('downloads.display.title')}</span>
+      <button
+        class="menu-option"
+        class:selected={dState.hideMissingFiles}
+        role="menuitemcheckbox"
+        aria-checked={dState.hideMissingFiles}
+        onclick={() => (dState.hideMissingFiles = !dState.hideMissingFiles)}
+      >
+        <span>{$t('downloads.display.hideMissing')}</span>
+        {#if dState.hideMissingFiles}
+          <Icon name="check" size={14} />
+        {/if}
+      </button>
+      <button
+        class="menu-option"
+        class:selected={dState.showSourceTags}
+        role="menuitemcheckbox"
+        aria-checked={dState.showSourceTags}
+        onclick={() => (dState.showSourceTags = !dState.showSourceTags)}
+      >
+        <span>{$t('downloads.display.showSourceTags')}</span>
+        {#if dState.showSourceTags}
+          <Icon name="check" size={14} />
+        {/if}
+      </button>
+
+      <button
+        class="menu-option"
+        class:selected={dState.ungroupPlaylistsOnSort}
+        role="menuitemcheckbox"
+        aria-checked={dState.ungroupPlaylistsOnSort}
+        onclick={() => (dState.ungroupPlaylistsOnSort = !dState.ungroupPlaylistsOnSort)}
+      >
+        <span>{$t('downloads.display.ungroupPlaylistsOnSort')}</span>
+        {#if dState.ungroupPlaylistsOnSort}
+          <Icon name="check" size={14} />
+        {/if}
+      </button>
+    </Dropdown>
+
+    {#if $settings.showHistoryStats && showStatsPanel && $historyStats.totalDownloads > 0}
+      <div class="stats-panel">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <Icon name="download" size={20} />
+            <div class="stat-content">
+              <span class="stat-value">{$historyStats.totalDownloads}</span>
+              <span class="stat-label">{$t('downloads.stats.totalDownloads')}</span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <Icon name="file_text" size={20} />
+            <div class="stat-content">
+              <span class="stat-value">{formatSize($historyStats.totalSize)}</span>
+              <span class="stat-label">{$t('downloads.stats.totalSize')}</span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <Icon name="clock" size={20} />
+            <div class="stat-content">
+              <span class="stat-value">{formatDuration($historyStats.totalDuration)}</span>
+              <span class="stat-label">{$t('downloads.stats.totalDuration')}</span>
+            </div>
           </div>
         </div>
 
-        {#if topFormats.length > 0}
+        <div class="stats-breakdown">
           <div class="breakdown-section">
-            <span class="breakdown-title">{$t('downloads.stats.topFormats')}</span>
-            <div class="breakdown-items format-items">
-              {#each topFormats as [format, count]}
-                <span class="format-badge"
-                  >{format.toUpperCase()} <span class="format-count">{count}</span></span
-                >
+            <span class="breakdown-title">{$t('downloads.stats.byType')}</span>
+            <div class="breakdown-items">
+              {#each TYPE_BREAKDOWN as tb}
+                {#if typeCounts[tb.key] > 0}
+                  <span class="breakdown-item">
+                    <Icon name={tb.icon} size={14} />
+                    {typeCounts[tb.key]}
+                    {$t(`downloads.filters.${tb.key}`)}
+                  </span>
+                {/if}
               {/each}
             </div>
           </div>
-        {/if}
-      </div>
-    </div>
-  {/if}
 
-  <div class="list-container">
-    <VirtualList
-      bind:this={listRef}
-      items={dState.displayItems}
-      getKey={(item) => item.id}
-      estimatedItemHeight={dState.viewMode === 'list'
-        ? VIRTUALIZATION_HEIGHTS.listItem
-        : computeGridRowHeight(dState.containerWidth, dState.itemsPerRow)}
-      overscan={10}
-      useFadeMask={true}
-      useCustomScrollbar={true}
-      preserveScrollKey="downloads-scroll"
-      getItemSize={(index, item) => {
-        if (dState.viewMode === 'list') {
-          if (item.kind === 'date') return VIRTUALIZATION_HEIGHTS.dateHeader;
-          if (item.kind === 'playlist-header') return VIRTUALIZATION_HEIGHTS.playlistHeader;
-          if (item.kind === 'playlist-child') return VIRTUALIZATION_HEIGHTS.playlistChild;
-          return VIRTUALIZATION_HEIGHTS.listItem;
-        }
-        return computeGridRowHeight(dState.containerWidth, dState.itemsPerRow);
-      }}
-    >
-      {#snippet header()}
-        <div class="table-header-area">
-          {#if dState.viewMode === 'list'}
-            <TableHeader
-              sortType={dState.sortType}
-              sortDirection={dState.sortDirection}
-              visibleColumns={dState.visibleColumns}
-              onSortChange={(type, direction) => dState.setSortWithDirection(type, direction)}
-            />
-          {/if}
-
-          {#if dState.viewMode === 'list' && speedGraphVisible}
-            <div class="speed-sparkline" aria-hidden="true">
-              <DownloadSpeedGraph
-                points={$downloadSpeedPoints}
-                height={26}
-                showLabels={false}
-                variant="sparkline"
-              />
-              {#if $downloadSpeedNow > 0}
-                <div class="speed-sparkline-text">{formatSpeed($downloadSpeedNow)}</div>
-              {/if}
+          {#if topFormats.length > 0}
+            <div class="breakdown-section">
+              <span class="breakdown-title">{$t('downloads.stats.topFormats')}</span>
+              <div class="breakdown-items format-items">
+                {#each topFormats as [format, count]}
+                  <span class="format-badge"
+                    >{format.toUpperCase()} <span class="format-count">{count}</span></span
+                  >
+                {/each}
+              </div>
             </div>
           {/if}
         </div>
-      {/snippet}
+      </div>
+    {/if}
 
-      {#snippet children(item: VirtualListItem, index: number)}
-        {#if item.kind === 'date'}
-          <div class="date-header">
-            <span class="date-label">{item.label}</span>
+    <div class="list-container">
+      <VirtualList
+        bind:this={listRef}
+        items={dState.displayItems}
+        getKey={(item) => item.id}
+        estimatedItemHeight={dState.viewMode === 'list'
+          ? dState.listItemSize
+          : computeGridRowHeight(dState.containerWidth, dState.itemsPerRow)}
+        overscan={10}
+        useFadeMask={true}
+        useCustomScrollbar={true}
+        preserveScrollKey="downloads-scroll"
+        getItemSize={(index, item) => {
+          if (item.kind === 'date') return VIRTUALIZATION_HEIGHTS.dateHeader;
+          if (item.kind === 'playlist-header') return dState.listItemSize;
+          if (item.kind === 'playlist-child') return dState.listItemSize;
+          if (item.kind === 'grid-row')
+            return computeGridRowHeight(dState.containerWidth, dState.itemsPerRow);
+          return dState.listItemSize;
+        }}
+      >
+        {#snippet header()}
+          <div class="table-header-area">
+            {#if dState.viewMode === 'list'}
+              <TableHeader
+                sortType={dState.sortType}
+                sortDirection={dState.sortDirection}
+                visibleColumns={dState.visibleColumns}
+                listItemSize={dState.listItemSize}
+                onSortChange={(type, direction) => {
+                  dState.sortType = type;
+                  dState.sortDirection = direction;
+                }}
+              />
+            {/if}
+
+            {#if dState.viewMode === 'list' && speedGraphVisible}
+              <div class="speed-sparkline" aria-hidden="true">
+                <DownloadSpeedGraph
+                  points={$downloadSpeedPoints}
+                  height={26}
+                  showLabels={false}
+                  variant="sparkline"
+                />
+                {#if $downloadSpeedNow > 0}
+                  <div class="speed-sparkline-text">{formatSpeed($downloadSpeedNow)}</div>
+                {/if}
+              </div>
+            {/if}
           </div>
-        {:else if item.kind === 'playlist-header'}
-          <button
-            class="playlist-header"
-            class:collapsed={!item.isExpanded}
-            onclick={() => dState.togglePlaylist(item.groupKey)}
-            aria-expanded={item.isExpanded}
-          >
-            <Icon name="chevron_down" size={14} class="icon" />
-            <div class="playlist-info">
-              <span class="playlist-label">{item.playlistTitle}</span>
-              <span class="playlist-meta">
-                <span class="playlist-count">{item.childCount} items</span>
-                {#if item.totalSize > 0}
-                  <span class="playlist-size">{formatSize(item.totalSize)}</span>
-                {/if}
-                {#if item.totalDuration > 0}
-                  <span class="playlist-duration">{formatDuration(item.totalDuration)}</span>
-                {/if}
-              </span>
+        {/snippet}
+
+        {#snippet children(item: VirtualListItem, index: number)}
+          {#if item.kind === 'date'}
+            <div class="date-header">
+              <span class="date-label">{item.label}</span>
             </div>
-          </button>
-        {:else if item.kind === 'playlist-child'}
-          <div class="playlist-item" class:last={item.isLast}>
-            <HistoryItemRow
+          {:else if item.kind === 'playlist-header'}
+            <button
+              class="playlist-header"
+              class:collapsed={!item.isExpanded}
+              style="height: {dState.listItemSize}px;"
+              onclick={(e) => {
+                if (e.ctrlKey || e.shiftKey || dState.isSelectionMode) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  dState.toggleGroupSelection(item.groupKey);
+                } else {
+                  dState.togglePlaylist(item.groupKey);
+                }
+              }}
+              aria-expanded={item.isExpanded}
+            >
+              <Icon name="chevron_down" size={14} class="icon" />
+              <div class="playlist-info">
+                <span class="playlist-label">{item.playlistTitle}</span>
+                <span class="playlist-meta">
+                  <span class="playlist-count">{item.childCount} items</span>
+                  {#if item.totalSize > 0}
+                    <span class="playlist-size">{formatSize(item.totalSize)}</span>
+                  {/if}
+                  {#if item.totalDuration > 0}
+                    <span class="playlist-duration">{formatDuration(item.totalDuration)}</span>
+                  {/if}
+                </span>
+              </div>
+            </button>
+          {:else if item.kind === 'playlist-child'}
+            <div class="playlist-item" class:last={item.isLast}>
+              <DownloadItem
+                item={item.item}
+                {dState}
+                showSeparator={index > 0 &&
+                  dState.displayItems[index - 1]?.kind !== 'date' &&
+                  dState.displayItems[index - 1]?.kind !== 'playlist-header'}
+              />
+            </div>
+          {:else if item.kind === 'single'}
+            <DownloadItem
               item={item.item}
               {dState}
               showSeparator={index > 0 &&
                 dState.displayItems[index - 1]?.kind !== 'date' &&
                 dState.displayItems[index - 1]?.kind !== 'playlist-header'}
             />
-          </div>
-        {:else if item.kind === 'single'}
-          <HistoryItemRow
-            item={item.item}
-            {dState}
-            showSeparator={index > 0 &&
-              dState.displayItems[index - 1]?.kind !== 'date' &&
-              dState.displayItems[index - 1]?.kind !== 'playlist-header'}
-          />
-        {:else if item.kind === 'grid-row'}
-          <div class="grid-row">
-            {#each item.items as subItem (subItem.id)}
-              <div class="grid-cell">
-                <HistoryGridItem item={subItem} {dState} />
-              </div>
-            {/each}
-          </div>
-        {/if}
-      {/snippet}
-
-      {#snippet footer()}
-        {#if dState.displayItems.length === 0}
-          <div class="empty-state">
-            <div class="empty-icon">
-              <Icon name="download" size={48} />
+          {:else if item.kind === 'grid-row'}
+            <div class="grid-row">
+              {#each item.items as subItem (subItem.id)}
+                <div class="grid-cell">
+                  <DownloadItem item={subItem} {dState} />
+                </div>
+              {/each}
             </div>
-            <h3 class="empty-title">{$t('downloads.empty')}</h3>
-            <p class="empty-hint">{$t('downloads.startHint')}</p>
-            <button class="empty-action" onclick={() => goto('/')}>
-              <Icon name="add" size={16} />
-              {$t('nav.download')}
-            </button>
-          </div>
-        {:else if dState.displayItems.length > 0}
-          <p class="end-message">{$t('downloads.endMessage')}</p>
-        {/if}
-      {/snippet}
-    </VirtualList>
+          {/if}
+        {/snippet}
+
+        {#snippet footer()}
+          {#if dState.displayItems.length === 0}
+            <div class="empty-state">
+              <div class="empty-icon">
+                <Icon name="download" size={48} />
+              </div>
+              <h3 class="empty-title">{$t('downloads.empty')}</h3>
+              <p class="empty-hint">{$t('downloads.startHint')}</p>
+              <button class="empty-action" onclick={() => goto('/')}>
+                <Icon name="add" size={16} />
+                {$t('nav.download')}
+              </button>
+            </div>
+          {:else if dState.displayItems.length > 0}
+            <p class="end-message">{$t('downloads.endMessage')}</p>
+          {/if}
+        {/snippet}
+      </VirtualList>
+    </div>
   </div>
-</div>
+</PageShell>
 
 <style>
-  .page {
-    padding: 0 4px 0 var(--page-padding-inline);
+  .downloads-inner {
     height: 100%;
     display: flex;
     flex-direction: column;
@@ -1100,7 +1179,7 @@
   }
 
   .toolbar.selection-open {
-    height: 44px;
+    overflow: visible;
   }
 
   .search-container {
@@ -1466,8 +1545,7 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
     white-space: nowrap;
-    width: 56px;
-    text-align: center;
+    text-align: start;
   }
 
   .grid-row {
@@ -1486,7 +1564,7 @@
     align-items: center;
     gap: 10px;
     width: 100%;
-    height: 56px;
+    height: 100%;
     padding: 0 12px;
     background: rgba(255, 255, 255, 0.06);
     border: none;
@@ -1674,7 +1752,7 @@
   }
 
   @media (max-width: 700px) {
-    .page {
+    .downloads-inner {
       padding: 0 8px;
     }
 
@@ -1692,7 +1770,7 @@
     }
 
     .toolbar.selection-open {
-      height: 44px;
+      overflow: visible;
     }
 
     .controls-row {
@@ -1740,59 +1818,87 @@
     top: 0;
     left: 0;
     right: 0;
-    height: 44px;
+    height: 36px;
     box-sizing: border-box;
-    background: var(--surface-elevated-bg, rgba(20, 20, 22, 0.92));
+    background: var(--surface-elevated-bg, rgba(20, 20, 22, 0.98));
     border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.08));
     box-shadow: var(--surface-shadow, 0 8px 24px rgba(0, 0, 0, 0.35));
-    backdrop-filter: blur(var(--surface-blur, 12px));
+    backdrop-filter: blur(var(--surface-blur, 16px));
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 16px;
+    padding: 0 12px;
     z-index: 30;
     border-radius: var(--radius, 8px);
   }
 
-  .selection-count {
+  .selection-left {
     display: flex;
     align-items: center;
-    gap: 12px;
-    color: white;
-    font-weight: 600;
-    font-size: 14px;
+    gap: 8px;
+    flex-shrink: 0;
   }
 
   .count-badge {
     background: var(--accent, #6366f1);
     color: white;
-    padding: 2px 8px;
+    padding: 1px 7px;
     border-radius: var(--radius-lg, 12px);
+    font-size: 11px;
+    font-weight: 600;
+    min-width: 18px;
+    text-align: center;
+  }
+
+  .count-label {
     font-size: 12px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.7);
   }
 
   .selection-actions {
     display: flex;
-    gap: 8px;
+    gap: 4px;
     align-items: center;
     flex-wrap: nowrap;
+  }
+
+  .selection-divider {
+    width: 1px;
+    height: 20px;
+    background: rgba(255, 255, 255, 0.1);
+    margin: 0 2px;
+    flex-shrink: 0;
   }
 
   .selection-action {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    height: 36px;
+    gap: 6px;
+    height: 28px;
     box-sizing: border-box;
-    padding: 0 12px;
+    padding: 0 10px;
     border: none;
-    background: rgba(255, 255, 255, 0.06);
-    border-radius: var(--radius, 8px);
-    color: rgba(255, 255, 255, 0.75);
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-sm, 6px);
+    color: rgba(255, 255, 255, 0.7);
     cursor: pointer;
     transition: all 0.15s;
     white-space: nowrap;
     line-height: 1;
+    font-size: 12px;
+  }
+
+  .selection-action.compact {
+    padding: 0 8px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 11px;
+  }
+
+  .selection-action.compact:hover {
+    color: rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.05);
   }
 
   .selection-action:hover {
@@ -1806,17 +1912,25 @@
   }
 
   .selection-action span {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
   }
 
   @media (max-width: 700px) {
     .selection-action {
-      padding: 0 10px;
-      gap: 6px;
+      padding: 0 8px;
+      gap: 4px;
     }
 
     .selection-action span {
+      display: none;
+    }
+
+    .selection-action.compact span {
+      display: none;
+    }
+
+    .count-label {
       display: none;
     }
   }

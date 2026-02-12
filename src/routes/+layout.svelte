@@ -1,23 +1,23 @@
 <script lang="ts">
   import { onMount, onDestroy, type Snippet } from 'svelte';
-  import { get } from 'svelte/store';
+
   import { browser } from '$app/environment';
   import { getCurrentWindow, type Window as TauriWindow } from '@tauri-apps/api/window';
-  import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event';
+  import { listen, emit } from '@tauri-apps/api/event';
   import { readText } from '@tauri-apps/plugin-clipboard-manager';
   import { attachLogger } from '@tauri-apps/plugin-log';
   import { invoke } from '@tauri-apps/api/core';
   import { isPermissionGranted, sendNotification } from '@tauri-apps/plugin-notification';
-  import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
+
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import Icon, { type IconName } from '$lib/components/Icon.svelte';
-  import NavItem from '$lib/components/NavItem.svelte';
-  import Toast from '$lib/components/Toast.svelte';
-  import BackgroundProvider from '$lib/components/BackgroundProvider.svelte';
-  import AccentProvider from '$lib/components/AccentProvider.svelte';
-  import SurfaceProvider from '$lib/components/SurfaceProvider.svelte';
-  import { toast, updateToast, dismissToast } from '$lib/components/Toast.svelte';
+  import Icon, { type IconName } from '$lib/components/ui/Icon.svelte';
+  import NavItem from '$lib/components/layout/NavItem.svelte';
+  import Toast from '$lib/components/ui/Toast.svelte';
+  import BackgroundProvider from '$lib/components/providers/BackgroundProvider.svelte';
+  import AccentProvider from '$lib/components/providers/AccentProvider.svelte';
+  import SurfaceProvider from '$lib/components/providers/SurfaceProvider.svelte';
+  import { toast } from '$lib/components/ui/Toast.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { t } from '$lib/i18n';
   import {
@@ -26,73 +26,59 @@
     settingsReady,
     type CloseBehavior,
     getSettings,
-    getProxyConfig,
-    updateSettings,
   } from '$lib/stores/settings';
   import { history } from '$lib/stores/history';
   import { queue, activeDownloadsCount } from '$lib/stores/queue';
   import { deps } from '$lib/stores/deps';
   import { logs, type LogLevel } from '$lib/stores/logs';
   import { mediaCache } from '$lib/stores/mediaCache';
-  import { clearAllScrollPositions } from '$lib/stores/scroll';
   import { clearColorCache } from '$lib/utils/color';
   import { isTypingTarget } from '$lib/utils/keyboard';
-  import {
-    cleanUrl,
-    isLikelyPlaylist,
-    isLikelyChannel,
-    isValidMediaUrl,
-    isHttpUrl,
-    getQuickThumbnail,
-    isDirectFileUrl,
-    formatSpeed,
-    formatSize,
-  } from '$lib/utils/format';
-  import { resolveUrl, convertProxyConfig } from '$lib/backend/mediaBackend';
+  import { cleanUrl, isHttpUrl } from '$lib/utils/urlUtils';
+  import { formatSpeed } from '$lib/utils/format';
+
   import {
     isAndroid,
-    openFileOnAndroid,
     onShareIntent,
     onNavigateTo,
     setupAndroidLogHandler,
-    cleanupAndroidCallbacks,
   } from '$lib/utils/android';
   import {
     startUpdateChecker,
     stopUpdateChecker,
     clearDismissedVersionIfUpdated,
   } from '$lib/stores/updates';
-  import { appStats } from '$lib/stores/stats';
+  import { startDepUpdateChecker, stopDepUpdateChecker } from '$lib/stores/deps';
   import { navigation } from '$lib/stores/navigation';
-  import { setupServerSync } from '$lib/stores/serverSync';
-  import NotificationPopup from '$lib/components/NotificationPopup.svelte';
+  import NotificationPopup from '$lib/components/layout/NotificationPopup.svelte';
+  import { initRemoteSync } from '$lib/composables/remoteSync';
+  import { setupExtensionBridge } from '$lib/composables/extensionBridge';
+  import {
+    downloadFromClipboard,
+    setupClipboardWatcher,
+    cleanupClipboardListeners,
+  } from '$lib/composables/clipboardHandler';
 
   let { children }: { children: Snippet } = $props();
 
   let totalDownloadSpeed = $derived.by(() => {
-    const items = $queue.items.filter((i) => i.status === 'downloading' && i.speed);
-    if (items.length === 0) return '';
-
-    let totalBytesPerSec = 0;
-    for (const item of items) {
-      const speed = item.speed.toLowerCase();
-      const match = speed.match(/([\d.]+)\s*(k|m|g)?i?b?\/s?/i);
-      if (match) {
-        let value = parseFloat(match[1]);
-        const unit = (match[2] || '').toLowerCase();
-        if (unit === 'k') value *= 1024;
-        else if (unit === 'm') value *= 1024 * 1024;
-        else if (unit === 'g') value *= 1024 * 1024 * 1024;
-        totalBytesPerSec += value;
+    let totalBps = 0;
+    for (const item of $queue.items) {
+      if (item.status === 'downloading' && item.speedBps) {
+        totalBps += item.speedBps;
       }
     }
-
-    if (totalBytesPerSec === 0) return '';
-
-    return formatSpeed(totalBytesPerSec);
+    return totalBps > 0 ? formatSpeed(totalBps) : '';
   });
 
   let isDownloading = $derived($activeDownloadsCount > 0 && totalDownloadSpeed !== '');
+
+  let resolvedControlsStyle = $derived.by(() => {
+    const style = $settings.windowControlsStyle;
+    if (style !== 'auto') return style;
+    const ua = navigator.userAgent.toLowerCase();
+    return ua.includes('mac') ? 'macos' : 'windows';
+  });
 
   let isNotificationWindow = $derived(
     browser && window.location.pathname.startsWith('/notification')
@@ -100,83 +86,50 @@
 
   let appWindow: TauriWindow | null = $state(null);
 
-  let isMobile = $state(false);
-  let windowWidth = $state(0);
-  let lastClipboardText = $state('');
-  let clipboardCheckInterval: ReturnType<typeof setInterval> | null = null;
-
-  let lastClipboardSystemNotificationKey: string | null = null;
-  let lastClipboardSystemNotificationAtMs = 0;
-
-  async function maybeSendClipboardSystemNotification(
-    key: string,
-    title: string,
-    body: string
-  ): Promise<void> {
-    if (isAndroid()) return;
-    if (!$settings.notificationsEnabled) return;
-
-    const now = Date.now();
-    if (
-      lastClipboardSystemNotificationKey === key &&
-      now - lastClipboardSystemNotificationAtMs < 5000
-    ) {
-      return;
-    }
-
-    try {
-      const hasPermission = await isPermissionGranted();
-      if (!hasPermission) return;
-
-      lastClipboardSystemNotificationKey = key;
-      lastClipboardSystemNotificationAtMs = now;
-
-      sendNotification({
-        title,
-        body,
-      });
-    } catch (e) {
-      logs.debug('layout', `System clipboard notification skipped: ${e}`);
-    }
-  }
+  let isMobile = $derived(
+    $settings.navigationStyle === 'navbar' || ($settings.navigationStyle === 'auto' && isAndroid())
+  );
 
   let hasShownTrayNotification = false;
   let isWindowHidden = $state(false);
-  let depsToastId: number | null = null;
 
-  let unlistenClose: UnlistenFn | null = null;
-  let unlistenTrayDownload: UnlistenFn | null = null;
-  let unlistenNotificationDownload: UnlistenFn | null = null;
-  let unlistenNotificationStartDownload: UnlistenFn | null = null;
-  let unlistenWindowShown: UnlistenFn | null = null;
-  let unlistenWindowHidden: UnlistenFn | null = null;
-  let unlistenDeepLink: UnlistenFn | null = null;
-  let unlistenExtensionDownload: UnlistenFn | null = null;
-  let unlistenExtensionCancel: UnlistenFn | null = null;
-  let unlistenServerOpen: UnlistenFn | null = null;
-  let unlistenServerReveal: UnlistenFn | null = null;
-  let unlistenExtensionCookies: UnlistenFn | null = null;
-  let extensionProgressUnsub: (() => void) | null = null;
-  let detachLogger: (() => void) | null = null;
-  let cleanupShareIntent: (() => void) | null = null;
-  let cleanupNavigateTo: (() => void) | null = null;
+  // Single cleanup array replaces 12+ separate unlistenFn variables
+  const cleanups: (() => void)[] = [];
 
-  let broadcastPollTimer: ReturnType<typeof setInterval> | null = null;
-  let broadcastsFetchInFlight = false;
-  const BROADCAST_POLL_INTERVAL_MS = 30 * 60 * 1000;
-  let cleanupBroadcastVisibilityListener: (() => void) | null = null;
-  const activeBroadcastNotifIds = new Map<number, string>();
+  function waitForSettings(): Promise<void> {
+    if ($settingsReady) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const unsub = settingsReady.subscribe((ready) => {
+        if (ready) {
+          unsub();
+          resolve();
+        }
+      });
+    });
+  }
 
-  const extensionDownloads = new Map<
-    string,
-    { id: string; lastState: string; lastProgress: number }
-  >();
+  async function focusAppWindow(): Promise<void> {
+    if (!appWindow) return;
+    try {
+      await appWindow.unminimize();
+      await appWindow.show();
+      await appWindow.setFocus();
+    } catch (e) {
+      logs.warn('layout', `Failed to show/focus window: ${e}`);
+    }
+  }
 
-  const MOBILE_BREAKPOINT = 480;
-  const CLIPBOARD_CHECK_INTERVAL = 250;
-
-  let cleanupResize: (() => void) | null = null;
-  let cleanupKeyboard: (() => void) | null = null;
+  function setMediaPreview(
+    url: string,
+    metadata?: { title?: string | null; thumbnail?: string | null; uploader?: string | null } | null
+  ): void {
+    if (!metadata?.title && !metadata?.thumbnail && !metadata?.uploader) return;
+    mediaCache.setPreview(url, {
+      title: metadata.title || undefined,
+      thumbnail: metadata.thumbnail || undefined,
+      author: metadata.uploader || undefined,
+    });
+  }
 
   function setupKeyboardShortcuts() {
     const handleKeyDown = async (e: KeyboardEvent) => {
@@ -206,16 +159,9 @@
       if (e.ctrlKey && e.key === 'Tab') {
         e.preventDefault();
         const currentPath = $page.url.pathname;
-        const currentIndex = pages.indexOf(currentPath);
-        const idx = currentIndex === -1 ? 0 : currentIndex;
-
-        if (e.shiftKey) {
-          const prevIndex = idx === 0 ? pages.length - 1 : idx - 1;
-          goto(pages[prevIndex]);
-        } else {
-          const nextIndex = idx === pages.length - 1 ? 0 : idx + 1;
-          goto(pages[nextIndex]);
-        }
+        const idx = Math.max(0, pages.indexOf(currentPath));
+        const next = (idx + (e.shiftKey ? pages.length - 1 : 1)) % pages.length;
+        goto(pages[next]);
         return;
       }
 
@@ -230,117 +176,13 @@
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    cleanupKeyboard = () => window.removeEventListener('keydown', handleKeyDown);
-  }
-
-  async function autoInstallDependencies() {
-    await new Promise((r) => setTimeout(r, 1000));
-
-    const state = $deps;
-    const missing: Array<{ name: string; key: 'ytdlp' | 'ffmpeg' | 'aria2' | 'quickjs' }> = [];
-
-    if (!state.ytdlp?.installed) missing.push({ name: 'yt-dlp', key: 'ytdlp' });
-    if (!state.ffmpeg?.installed) missing.push({ name: 'FFmpeg', key: 'ffmpeg' });
-    if (!state.aria2?.installed) missing.push({ name: 'aria2', key: 'aria2' });
-    if (!state.quickjs?.installed) missing.push({ name: 'QuickJS', key: 'quickjs' });
-
-    if (missing.length === 0) return;
-
-    logs.info('deps', `Auto-installing ${missing.length} missing dependencies...`);
-
-    depsToastId = toast.progress(
-      $t('deps.installing') || 'Installing components...',
-      0,
-      `0/${missing.length} ${$t('deps.components') || 'components'}`
-    );
-
-    let installed = 0;
-
-    const aria2Idx = missing.findIndex((d) => d.key === 'aria2');
-    if (aria2Idx !== -1) {
-      const aria2 = missing.splice(aria2Idx, 1)[0];
-      updateToast(depsToastId, {
-        message: `${$t('deps.installing') || 'Installing'} ${aria2.name}...`,
-        subMessage: `${installed}/${missing.length + 1} ${$t('deps.components') || 'components'}`,
-      });
-      const success = await deps.installAria2();
-      if (success) installed++;
-      updateToast(depsToastId, {
-        progress: (installed / (missing.length + 1)) * 100,
-        subMessage: `${installed}/${missing.length + 1} ${$t('deps.components') || 'components'}`,
-      });
-    }
-
-    const results = await Promise.all(
-      missing.map(async (dep, i) => {
-        updateToast(depsToastId!, {
-          message: `${$t('deps.installing') || 'Installing'} ${dep.name}...`,
-        });
-
-        let success = false;
-        switch (dep.key) {
-          case 'ytdlp':
-            success = await deps.installYtdlp();
-            break;
-          case 'ffmpeg':
-            success = await deps.installFfmpeg();
-            break;
-          case 'quickjs':
-            success = await deps.installQuickjs();
-            break;
-        }
-
-        if (success) {
-          installed++;
-          updateToast(depsToastId!, {
-            progress: (installed / (missing.length + (aria2Idx !== -1 ? 1 : 0))) * 100,
-            subMessage: `${installed}/${missing.length + (aria2Idx !== -1 ? 1 : 0)} ${$t('deps.components') || 'components'}`,
-          });
-        }
-
-        return success;
-      })
-    );
-
-    if (depsToastId) {
-      const allSuccess = results.every(Boolean) && (aria2Idx === -1 || installed > 0);
-      if (allSuccess) {
-        updateToast(depsToastId, {
-          type: 'success',
-          message: $t('deps.ready') || 'Components ready!',
-          progress: 100,
-        });
-        setTimeout(() => {
-          if (depsToastId) dismissToast(depsToastId);
-          depsToastId = null;
-        }, 3000);
-      } else {
-        updateToast(depsToastId, {
-          type: 'warning',
-          message: $t('deps.someError') || 'Some components failed to install',
-          subMessage: $t('deps.checkSettings') || 'Check Settings → Dependencies',
-        });
-        setTimeout(() => {
-          if (depsToastId) dismissToast(depsToastId);
-          depsToastId = null;
-        }, 5000);
-      }
-    }
+    cleanups.push(() => window.removeEventListener('keydown', handleKeyDown));
   }
 
   let diskSpaceWarningShown = false;
 
   async function autoStartExtensionServer() {
-    if (!$settingsReady) {
-      await new Promise<void>((resolve) => {
-        const unsub = settingsReady.subscribe((ready) => {
-          if (ready) {
-            unsub();
-            resolve();
-          }
-        });
-      });
-    }
+    await waitForSettings();
 
     if ($settings.extensionServerEnabled) {
       const port = $settings.extensionLocalPort || 9549;
@@ -362,16 +204,7 @@
       return;
     }
 
-    if (!$settingsReady) {
-      await new Promise<void>((resolve) => {
-        const unsub = settingsReady.subscribe((ready) => {
-          if (ready) {
-            unsub();
-            resolve();
-          }
-        });
-      });
-    }
+    await waitForSettings();
 
     try {
       const downloadPath = $settings.downloadPath || '';
@@ -397,32 +230,62 @@
   onMount(() => {
     const isNotificationRoute = window.location.pathname.startsWith('/notification');
 
-    ensureAppRootVisible();
-
     const splash = document.getElementById('splash-screen');
     if (splash) {
       if (isNotificationRoute) {
         splash.remove();
+        ensureAppRootVisible();
       } else {
-        const holdMs = 500;
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (!isAndroid()) {
-              try {
-                emit('frontend-ready');
-              } catch (e) {}
-            }
-            setTimeout(() => {
-              splash.classList.add('fade-out');
-              ensureAppRootVisible();
-              setTimeout(() => splash.remove(), 400);
-            }, holdMs);
-          });
-        });
-      }
-    }
+        if (!isAndroid()) {
+          try {
+            emit('frontend-ready');
+          } catch (e) {}
+        }
 
-    ensureAppRootVisible();
+        const icon = document.getElementById('splash-icon');
+        const startShrink = () => {
+          if (!icon) {
+            splash.remove();
+            ensureAppRootVisible();
+            return;
+          }
+          icon.classList.add('animate');
+          setTimeout(() => ensureAppRootVisible(), 500);
+          const onEnd = () => {
+            icon.removeEventListener('animationend', onEnd);
+            splash.remove();
+          };
+          icon.addEventListener('animationend', onEnd);
+          setTimeout(() => {
+            splash.remove();
+            ensureAppRootVisible();
+          }, 900);
+        };
+
+        let started = false;
+        let splashUnlisten: (() => void) | null = null;
+        listen('window-shown', () => {
+          if (started) return;
+          started = true;
+          splashUnlisten?.();
+          requestAnimationFrame(() => startShrink());
+        }).then((fn) => {
+          if (started) {
+            fn();
+          } else {
+            splashUnlisten = fn;
+          }
+        });
+        setTimeout(() => {
+          if (started) return;
+          started = true;
+          splashUnlisten?.();
+          startShrink();
+        }, 300);
+      }
+    } else {
+      ensureAppRootVisible();
+    }
 
     if (isNotificationRoute) {
       return;
@@ -433,33 +296,20 @@
     initSettings();
     queue.init();
 
-    if (!isAndroid()) {
-      setupServerSync();
-    }
     autoStartExtensionServer();
 
     setTimeout(async () => {
       await deps.checkAll();
       if (!isAndroid()) {
-        autoInstallDependencies();
+        await deps.autoInstallBundle();
+        deps.forceUpdateYtdlp();
         checkDiskSpace();
       }
     }, 1500);
 
-    windowWidth = window.innerWidth;
-    isMobile = windowWidth < MOBILE_BREAKPOINT;
-
-    const handleResize = () => {
-      windowWidth = window.innerWidth;
-      isMobile = windowWidth < MOBILE_BREAKPOINT;
-
-      if (!isMobile) {
-        queueSidebarNavIndicatorUpdate();
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
-    cleanupResize = () => window.removeEventListener('resize', handleResize);
+    if (!isMobile) {
+      queueSidebarNavIndicatorUpdate();
+    }
 
     setupListeners();
 
@@ -470,16 +320,17 @@
     setupLogForwarding();
 
     if (!isAndroid()) {
-      startClipboardWatcher();
+      setupClipboardWatcher();
     }
 
     startUpdateChecker();
+    startDepUpdateChecker();
     clearDismissedVersionIfUpdated();
-    initStats();
+    initRemoteSyncComposable();
 
     if (isAndroid()) {
-      cleanupShareIntent = onShareIntent(handleAndroidShareIntent);
-      cleanupNavigateTo = onNavigateTo(handleAndroidNavigateTo);
+      cleanups.push(onShareIntent(handleAndroidShareIntent));
+      cleanups.push(onNavigateTo(handleAndroidNavigateTo));
 
       setupAndroidLogHandler((level, source, message) => {
         logs.log(level, source, message);
@@ -488,55 +339,40 @@
     }
   });
 
+  const LOG_LEVELS: LogLevel[] = ['info', 'error', 'warn', 'info', 'debug', 'trace'];
   function levelNumberToLogLevel(level: number): LogLevel {
-    switch (level) {
-      case 1:
-        return 'error';
-      case 2:
-        return 'warn';
-      case 3:
-        return 'info';
-      case 4:
-        return 'debug';
-      case 5:
-        return 'trace';
-      default:
-        return 'info';
-    }
+    return LOG_LEVELS[level] ?? 'info';
   }
+
+  // Matches: [date][time][target][LEVEL] ...  OR  module::sub::[LEVEL] ...
+  const LOG_PREFIX_RE =
+    /^(?:\[\d{4}-\d{2}-\d{2}\]\[\d{2}:\d{2}:\d{2}\])?(?:\[([^\]]+)\]\[([A-Z]+)\]\s*)?/;
 
   async function setupLogForwarding() {
     try {
-      detachLogger = await attachLogger(({ level, message }) => {
+      const detach = await attachLogger(({ level, message }) => {
         const levelStr = levelNumberToLogLevel(level);
-
+        const m = message.match(LOG_PREFIX_RE);
         let source = 'rust';
         let msg = message;
 
-        const timestampMatch = message.match(/^\[\d{4}-\d{2}-\d{2}\]\[\d{2}:\d{2}:\d{2}\]/);
-        if (timestampMatch) {
-          msg = message.substring(timestampMatch[0].length);
-
-          const targetLevelMatch = msg.match(/^\[([^\]]+)\]\[([A-Z]+)\]\s*/);
-          if (targetLevelMatch) {
-            source = targetLevelMatch[1].split('::').pop()?.split(' ').pop() || 'rust';
-            msg = msg.substring(targetLevelMatch[0].length);
-          }
+        if (m && m[0].length > 0) {
+          msg = message.substring(m[0].length).trim();
+          if (m[1]) source = m[1].split('::').pop()?.split(' ').pop() || 'rust';
         } else {
           const colonIdx = message.indexOf('::');
           if (colonIdx > 0 && colonIdx < 40) {
             source = message.substring(0, colonIdx).split('_').pop() || 'rust';
-            msg = message.substring(colonIdx + 2).trim();
-
-            const levelMatch = msg.match(/^\[([A-Z]+)\]\s*/);
-            if (levelMatch) {
-              msg = msg.substring(levelMatch[0].length);
-            }
+            msg = message
+              .substring(colonIdx + 2)
+              .replace(/^\[[A-Z]+\]\s*/, '')
+              .trim();
           }
         }
 
-        logs.log(levelStr, source, msg.trim());
+        logs.log(levelStr, source, msg);
       });
+      cleanups.push(detach);
       logs.info('system', 'Backend log forwarding initialized');
     } catch (e) {
       console.error('Failed to attach logger:', e);
@@ -544,20 +380,23 @@
   }
 
   async function setupListeners() {
-    unlistenClose = await listen('close-requested', async () => {
+    const ulClose = await listen('close-requested', async () => {
       await handleCloseRequest();
     });
+    cleanups.push(ulClose);
 
-    unlistenTrayDownload = await listen('tray-download-clipboard', async () => {
+    const ulTray = await listen('tray-download-clipboard', async () => {
       await downloadFromClipboard();
     });
+    cleanups.push(ulTray);
 
-    unlistenNotificationDownload = await listen<string>('notification-download', async (event) => {
+    const ulNotifDl = await listen<string>('notification-download', async (event) => {
       const url = cleanUrl(event.payload);
       if (url) {
         goto(`/?url=${encodeURIComponent(url)}`);
       }
     });
+    cleanups.push(ulNotifDl);
 
     interface NotificationPayload {
       url: string;
@@ -578,7 +417,7 @@
       } | null;
     }
 
-    unlistenNotificationStartDownload = await listen<NotificationPayload>(
+    const ulNotifStartDl = await listen<NotificationPayload>(
       'notification-start-download',
       async (event) => {
         const { url: rawUrl, metadata } = event.payload;
@@ -618,23 +457,8 @@
 
         if (isChannelNotification) {
           logs.info('layout', `Channel detected - showing window and opening channel view: ${url}`);
-
-          if (appWindow) {
-            try {
-              await appWindow.show();
-              await appWindow.setFocus();
-            } catch (e) {
-              logs.warn('layout', `Failed to show/focus window: ${e}`);
-            }
-          }
-
-          if (metadata?.title || metadata?.thumbnail || metadata?.uploader) {
-            mediaCache.setPreview(url, {
-              title: metadata.title || undefined,
-              thumbnail: metadata.thumbnail || undefined,
-              author: metadata.uploader || undefined,
-            });
-          }
+          await focusAppWindow();
+          setMediaPreview(url, metadata);
 
           navigation.openChannel(url, {
             title: metadata?.title || undefined,
@@ -651,23 +475,8 @@
             'layout',
             `Playlist detected - showing window and opening playlist view: ${url}`
           );
-
-          if (appWindow) {
-            try {
-              await appWindow.show();
-              await appWindow.setFocus();
-            } catch (e) {
-              logs.warn('layout', `Failed to show/focus window: ${e}`);
-            }
-          }
-
-          if (metadata?.title || metadata?.thumbnail || metadata?.uploader) {
-            mediaCache.setPreview(url, {
-              title: metadata.title || undefined,
-              thumbnail: metadata.thumbnail || undefined,
-              author: metadata.uploader || undefined,
-            });
-          }
+          await focusAppWindow();
+          setMediaPreview(url, metadata);
 
           navigation.openPlaylist(url, {
             title: metadata?.title || undefined,
@@ -681,23 +490,8 @@
 
         if (metadata?.openTrackBuilder) {
           logs.info('layout', `Opening Track Builder for: ${url}`);
-
-          if (appWindow) {
-            try {
-              await appWindow.show();
-              await appWindow.setFocus();
-            } catch (e) {
-              logs.warn('layout', `Failed to show/focus window: ${e}`);
-            }
-          }
-
-          if (metadata?.title || metadata?.thumbnail || metadata?.uploader) {
-            mediaCache.setPreview(url, {
-              title: metadata.title || undefined,
-              thumbnail: metadata.thumbnail || undefined,
-              author: metadata.uploader || undefined,
-            });
-          }
+          await focusAppWindow();
+          setMediaPreview(url, metadata);
 
           navigation.openVideo(url, {
             title: metadata?.title || undefined,
@@ -759,15 +553,35 @@
       }
     );
 
-    unlistenWindowShown = await listen('window-shown', () => {
+    cleanups.push(ulNotifStartDl);
+
+    // Download status toasts (moved from queue/eventHandler to separate UI from state)
+    const ulDlStatus = await listen<{
+      url: string;
+      status: string;
+      error?: string;
+      title?: string;
+    }>('download-status-changed', (event) => {
+      const { status: dlStatus, error } = event.payload;
+      if (dlStatus === 'completed') {
+        toast.success($t('downloads.status.completed'));
+      } else if (dlStatus === 'failed' && error) {
+        toast.error(`Download failed: ${error}`);
+      }
+    });
+    cleanups.push(ulDlStatus);
+
+    const ulShown = await listen('window-shown', () => {
       onWindowShown();
     });
+    cleanups.push(ulShown);
 
-    unlistenWindowHidden = await listen('window-hidden', () => {
+    const ulHidden = await listen('window-hidden', () => {
       isWindowHidden = true;
     });
+    cleanups.push(ulHidden);
 
-    unlistenDeepLink = await listen<string>('deep-link-url', async (event) => {
+    const ulDeepLink = await listen<string>('deep-link-url', async (event) => {
       logs.info('layout', `Deep link received: ${event.payload}`);
 
       let videoUrl = event.payload;
@@ -791,273 +605,20 @@
 
         if (appWindow) {
           try {
-            await appWindow.show();
             await appWindow.unminimize();
-            await appWindow.setFocus();
-          } catch (e) {
-            logs.warn('layout', `Failed to focus window: ${e}`);
-          }
+          } catch {}
         }
+        await focusAppWindow();
       }
     });
 
-    unlistenExtensionDownload = await listen<{
-      url: string;
-      title?: string | null;
-      thumbnail?: string | null;
-      id: string;
-      openApp?: boolean;
-      deviceId?: string;
-      fromRelay?: boolean;
-      options?: {
-        videoQuality?: string;
-        downloadMode?: string;
-        audioQuality?: string;
-        remux?: boolean;
-        convertToMp4?: boolean;
-        embedThumbnail?: boolean;
-        clearMetadata?: boolean;
-      };
-    }>('extension-download', async (event) => {
-      const {
-        url: rawUrl,
-        title,
-        thumbnail,
-        id,
-        openApp = true,
-        deviceId,
-        fromRelay,
-        options: extOptions,
-      } = event.payload;
-      logs.info(
-        'layout',
-        `Extension download received: ${rawUrl} (id: ${id}, openApp: ${openApp}, fromRelay: ${fromRelay})`
-      );
+    cleanups.push(ulDeepLink);
 
-      const url = cleanUrl(rawUrl);
-      if (!url) {
-        logs.warn('layout', 'Invalid URL from extension');
-        return;
-      }
-
-      if (title || thumbnail) {
-        mediaCache.setPreview(url, {
-          title: title || undefined,
-          thumbnail: thumbnail || undefined,
-        });
-      }
-
-      if (openApp) {
-        if (appWindow) {
-          try {
-            await appWindow.show();
-            await appWindow.unminimize();
-            await appWindow.requestUserAttention(1);
-            await appWindow.setFocus();
-            await onWindowShown();
-          } catch (e) {
-            logs.warn('layout', `Failed to focus window: ${e}`);
-          }
-        }
-
-        goto(`/?url=${encodeURIComponent(url)}`);
-        toast.info(`🔗 ${$t('extension.received') || 'URL received from browser extension'}`);
-      } else {
-        const currentSettings = getSettings();
-
-        extensionDownloads.set(url, { id, lastState: 'queued', lastProgress: 0 });
-        const videoQuality =
-          extOptions?.videoQuality ?? currentSettings.defaultVideoQuality ?? 'max';
-        const isYtmUrl = /music\.youtube\.com/i.test(url);
-        const shouldForceAudio =
-          isYtmUrl &&
-          currentSettings.youtubeMusicAudioOnly &&
-          (!extOptions?.downloadMode || extOptions?.downloadMode === 'auto');
-        const downloadMode = shouldForceAudio
-          ? 'audio'
-          : ((extOptions?.downloadMode as 'auto' | 'audio' | 'mute' | undefined) ?? undefined);
-        const audioQuality =
-          extOptions?.audioQuality ?? currentSettings.defaultAudioQuality ?? 'best';
-        const convertToMp4 = extOptions?.convertToMp4 ?? currentSettings.convertToMp4 ?? false;
-        const remux = extOptions?.remux ?? currentSettings.remux ?? true;
-        const clearMetadata = extOptions?.clearMetadata ?? currentSettings.clearMetadata ?? false;
-        const embedThumbnail = extOptions?.embedThumbnail ?? currentSettings.embedThumbnail ?? true;
-
-        const queueId = queue.add(url, {
-          ignoreMixes: currentSettings.ignoreMixes ?? true,
-          videoQuality,
-          downloadMode,
-          audioQuality,
-          convertToMp4,
-          remux,
-          clearMetadata,
-          embedThumbnail,
-          dontShowInHistory: currentSettings.dontShowInHistory ?? false,
-          useAria2: currentSettings.useAria2 ?? true,
-          cookiesFromBrowser: currentSettings.cookiesFromBrowser ?? '',
-          customCookies: currentSettings.customCookies ?? '',
-          prefetchedInfo:
-            title || thumbnail
-              ? {
-                  title: title || undefined,
-                  thumbnail: thumbnail || undefined,
-                }
-              : undefined,
-        });
-
-        if (queueId) {
-          toast.info(`${$t('extension.quickDownload') || 'Quick download started'}`);
-          logs.info('layout', `Quick download queued: ${queueId}`);
-        } else {
-          toast.info($t('queue.alreadyInQueue') || 'Already in queue');
-          extensionDownloads.delete(url);
-        }
-      }
+    const extBridgeCleanup = await setupExtensionBridge({
+      getAppWindow: () => appWindow,
+      onWindowShown,
     });
-
-    unlistenExtensionCancel = await listen<{
-      url: string;
-      id: string;
-      deviceId?: string;
-      fromRelay?: boolean;
-    }>('extension-cancel', async (event) => {
-      const { url, id, deviceId, fromRelay } = event.payload;
-      logs.info('layout', `Extension cancel received: ${url} (id: ${id}, fromRelay: ${fromRelay})`);
-
-      const state = get(queue);
-      const item = state.items.find((i) => i.url === url);
-      if (item) {
-        queue.cancel(item.id);
-        extensionDownloads.delete(url);
-      }
-    });
-
-    unlistenServerOpen = await listen<string>('server-open', async (event) => {
-      const filePath = event.payload;
-      logs.info('layout', `Server open request: ${filePath}`);
-      try {
-        if (isAndroid()) {
-          await openFileOnAndroid(filePath);
-        } else {
-          await openPath(filePath);
-        }
-      } catch (e) {
-        logs.error('layout', `Failed to open file: ${e}`);
-        toast.error($t('downloads.openError') || 'Failed to open file');
-      }
-    });
-
-    unlistenServerReveal = await listen<string>('server-reveal', async (event) => {
-      const filePath = event.payload;
-      logs.info('layout', `Server reveal request: ${filePath}`);
-      try {
-        await revealItemInDir(filePath);
-      } catch (e) {
-        logs.error('layout', `Failed to reveal file: ${e}`);
-        toast.error($t('downloads.revealError') || 'Failed to show in folder');
-      }
-    });
-
-    unlistenExtensionCookies = await listen<{
-      domain: string;
-      sourceUrl?: string | null;
-      count: number;
-      cookies: string;
-    }>('extension-cookies', async (event) => {
-      const { domain, sourceUrl, count, cookies } = event.payload;
-      logs.info('layout', `Extension cookies received: ${count} cookies from ${domain}`);
-
-      const currentCookies = getSettings().customCookies || '';
-      let newCookies = cookies;
-
-      if (currentCookies && currentCookies.includes('# Netscape HTTP Cookie File')) {
-        const existingMap = new Map<string, string>();
-        for (const line of currentCookies.split('\n')) {
-          if (line.startsWith('#') || !line.trim()) continue;
-          const parts = line.split('\t');
-          if (parts.length >= 7) {
-            const key = `${parts[0]}|${parts[5]}`;
-            existingMap.set(key, line);
-          }
-        }
-
-        for (const line of cookies.split('\n')) {
-          if (line.startsWith('#') || !line.trim()) continue;
-          const parts = line.split('\t');
-          if (parts.length >= 7) {
-            const key = `${parts[0]}|${parts[5]}`;
-            existingMap.set(key, line);
-          }
-        }
-
-        newCookies = '# Netscape HTTP Cookie File\n' + Array.from(existingMap.values()).join('\n');
-      }
-
-      const currentReceipt = getSettings().extensionCookiesReceived || [];
-      const nextEntry = { domain, sourceUrl: sourceUrl ?? null, count, receivedAt: Date.now() };
-      const merged = [nextEntry, ...currentReceipt.filter((e) => e.domain !== domain)].slice(0, 12);
-
-      await updateSettings({
-        customCookies: newCookies,
-        cookiesFromBrowser: 'custom',
-        extensionCookiesReceived: merged,
-      });
-
-      toast.success($t('extension.cookiesReceived') || `${count} cookies received from extension`);
-    });
-
-    extensionProgressUnsub = queue.subscribe((state) => {
-      for (const [url, tracking] of extensionDownloads) {
-        const item = state.items.find((i) => i.url === url);
-        if (!item) continue;
-
-        let extState: string;
-        switch (item.status) {
-          case 'pending':
-          case 'paused':
-          case 'fetching-info':
-            extState = 'queued';
-            break;
-          case 'downloading':
-          case 'processing':
-            extState = 'downloading';
-            break;
-          case 'completed':
-            extState = 'completed';
-            break;
-          case 'failed':
-            extState = 'error';
-            break;
-          default:
-            extState = 'queued';
-        }
-
-        const progressChanged = Math.abs(item.progress - tracking.lastProgress) >= 1;
-        const stateChanged = extState !== tracking.lastState;
-
-        if (stateChanged || progressChanged) {
-          tracking.lastState = extState;
-          tracking.lastProgress = item.progress;
-
-          invoke('extension_update_status', {
-            id: tracking.id,
-            state: extState,
-            progress: Math.round(item.progress) || null,
-            speed: item.speed || null,
-            eta: item.eta || null,
-            error: item.error || null,
-            filePath: extState === 'completed' ? item.filePath || null : null,
-            duration: item.duration || null,
-          }).catch((err) => {
-            logs.debug('layout', `Failed to update extension status: ${err}`);
-          });
-
-          if (extState === 'completed' || extState === 'error') {
-            extensionDownloads.delete(url);
-          }
-        }
-      }
-    });
+    cleanups.push(extBridgeCleanup);
 
     try {
       const { getCurrent } = await import('@tauri-apps/plugin-deep-link');
@@ -1088,323 +649,28 @@
   }
 
   onDestroy(() => {
-    if (cleanupResize) {
-      cleanupResize();
-    }
     if (sidebarNavIndicatorRaf !== null) {
       cancelAnimationFrame(sidebarNavIndicatorRaf);
       sidebarNavIndicatorRaf = null;
     }
-    if (cleanupKeyboard) {
-      cleanupKeyboard();
-    }
-    if (clipboardCheckInterval) {
-      clearInterval(clipboardCheckInterval);
-    }
+    cleanupClipboardListeners();
     stopUpdateChecker();
-    if (unlistenClose) {
-      unlistenClose();
-    }
-    if (unlistenTrayDownload) {
-      unlistenTrayDownload();
-    }
-    if (unlistenNotificationDownload) {
-      unlistenNotificationDownload();
-    }
-    if (unlistenNotificationStartDownload) {
-      unlistenNotificationStartDownload();
-    }
-    if (unlistenWindowShown) {
-      unlistenWindowShown();
-    }
-    if (unlistenWindowHidden) {
-      unlistenWindowHidden();
-    }
-    if (unlistenDeepLink) {
-      unlistenDeepLink();
-    }
-    if (unlistenExtensionDownload) {
-      unlistenExtensionDownload();
-    }
-    if (unlistenExtensionCancel) {
-      unlistenExtensionCancel();
-    }
-    if (unlistenServerOpen) {
-      unlistenServerOpen();
-    }
-    if (unlistenServerReveal) {
-      unlistenServerReveal();
-    }
-    if (unlistenExtensionCookies) {
-      unlistenExtensionCookies();
-    }
-    if (extensionProgressUnsub) {
-      extensionProgressUnsub();
-    }
-    if (detachLogger) {
-      detachLogger();
-    }
-    if (cleanupShareIntent) {
-      cleanupShareIntent();
-    }
-    if (cleanupNavigateTo) {
-      cleanupNavigateTo();
-    }
-    if (isAndroid()) {
-      cleanupAndroidCallbacks();
-    }
-
-    if (broadcastPollTimer) {
-      clearInterval(broadcastPollTimer);
-      broadcastPollTimer = null;
-    }
-    if (cleanupBroadcastVisibilityListener) {
-      cleanupBroadcastVisibilityListener();
-      cleanupBroadcastVisibilityListener = null;
-    }
+    stopDepUpdateChecker();
+    for (const fn of cleanups) fn();
+    cleanups.length = 0;
     queue.cleanup();
+    history.cleanup();
   });
 
-  async function initStats() {
-    logs.info('stats', 'initStats() called');
+  async function initRemoteSyncComposable() {
+    await waitForSettings();
 
-    if (!$settingsReady) {
-      logs.debug('stats', 'Waiting for settings to load...');
-      await new Promise<void>((resolve) => {
-        const unsub = settingsReady.subscribe((ready) => {
-          if (ready) {
-            unsub();
-            resolve();
-          }
-        });
-      });
-    }
-
-    logs.debug('stats', `Settings loaded. sendStats=${$settings.sendStats}`);
-
-    await maybeBackfillStatsFromHistory();
-    setupBroadcastPolling();
-    fetchBroadcasts();
-
-    if (!$settings.sendStats) {
-      logs.info('stats', 'Stats disabled in settings, skipping');
-      return;
-    }
-
-    const lastSyncKey = 'comine_last_stats_sync';
-    const lastSyncTime = localStorage.getItem(lastSyncKey);
-    const now = Date.now();
-    if (lastSyncTime && now - parseInt(lastSyncTime) < 3600000) {
-      logs.debug(
-        'stats',
-        `Rate limited - last sync was ${Math.round((now - parseInt(lastSyncTime)) / 60000)}min ago`
-      );
-      return;
-    }
-
-    const payload = appStats.getPayload();
-    logs.info('stats', `Sending stats: ${JSON.stringify(payload)}`);
-    fetch('https://stats.comine.app/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-      .then((res) => {
-        logs.info('stats', `Stats sent! Response: ${res.status}`);
-      })
-      .catch((e) => {
-        logs.warn('stats', `Failed to send stats: ${e}`);
-      });
-
-    localStorage.setItem(lastSyncKey, now.toString());
-  }
-
-  async function maybeBackfillStatsFromHistory() {
-    if (!browser) return;
-
-    const version = getAppVersionForBroadcast();
-    const migrationKey = 'comine_stats_history_backfill_v1';
-    const already = localStorage.getItem(migrationKey);
-    if (already === version) return;
-
-    try {
-      const items = await history.getItems();
-      const totalSuccessfulDownloads = items.length;
-      const totalSizeBytes = items.reduce((sum, item) => sum + (item.size || 0), 0);
-
-      appStats.mergeFromHistory({ totalSuccessfulDownloads, totalSizeBytes });
-      localStorage.setItem(migrationKey, version);
-
-      logs.info(
-        'stats',
-        `Backfilled stats from history (v${version}): ${totalSuccessfulDownloads} downloads`
-      );
-    } catch (e) {
-      logs.debug('stats', `History backfill skipped/failed: ${e}`);
-    }
-  }
-
-  function setupBroadcastPolling() {
-    if (!browser) return;
-    if (broadcastPollTimer) return;
-
-    broadcastPollTimer = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        fetchBroadcasts();
-      }
-    }, BROADCAST_POLL_INTERVAL_MS);
-
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        fetchBroadcasts();
-      }
-    };
-    document.addEventListener('visibilitychange', onVisibility);
-    cleanupBroadcastVisibilityListener = () => {
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }
-
-  interface Broadcast {
-    id: number;
-    message: string;
-    type: 'info' | 'warning' | 'error' | 'success';
-    title?: string;
-    icon?: string;
-    url?: string;
-    button_text?: string;
-    platforms?: string;
-    min_version?: string;
-    max_version?: string;
-  }
-
-  async function fetchBroadcasts() {
-    if (!browser) return;
-    if (document.visibilityState !== 'visible') return;
-    if (broadcastsFetchInFlight) return;
-    broadcastsFetchInFlight = true;
-
-    const dismissedKey = 'comine_dismissed_broadcasts';
-    const dismissedRaw = localStorage.getItem(dismissedKey);
-    const dismissed: number[] = dismissedRaw ? JSON.parse(dismissedRaw) : [];
-
-    try {
-      const res = await fetch('https://stats.comine.app/broadcast');
-      if (!res.ok) {
-        logs.debug('stats', `No active broadcasts (${res.status})`);
-        return;
-      }
-
-      const broadcasts: Broadcast[] = await res.json();
-      if (!Array.isArray(broadcasts) || broadcasts.length === 0) {
-        logs.debug('stats', 'No broadcasts returned');
-        return;
-      }
-
-      const platform = getPlatformForBroadcast();
-      const version = getAppVersionForBroadcast();
-
-      for (const bc of broadcasts) {
-        if (dismissed.includes(bc.id)) {
-          logs.debug('stats', `Broadcast ${bc.id} already dismissed`);
-          continue;
-        }
-
-        if (activeBroadcastNotifIds.has(bc.id)) {
-          continue;
-        }
-
-        if (bc.platforms) {
-          const platforms = bc.platforms.split(',').map((p) => p.trim().toLowerCase());
-          if (!platforms.includes('all') && !platforms.includes(platform)) {
-            logs.debug('stats', `Broadcast ${bc.id} not for platform ${platform}`);
-            continue;
-          }
-        }
-
-        if (bc.min_version && compareVersions(version, bc.min_version) < 0) {
-          logs.debug('stats', `Broadcast ${bc.id} requires min version ${bc.min_version}`);
-          continue;
-        }
-        if (bc.max_version && compareVersions(version, bc.max_version) > 0) {
-          logs.debug('stats', `Broadcast ${bc.id} requires max version ${bc.max_version}`);
-          continue;
-        }
-
-        logs.info('stats', `Showing broadcast ${bc.id}: ${bc.message}`);
-
-        const notifPopup = await import('$lib/components/NotificationPopup.svelte');
-        const notifId = notifPopup.show({
-          title: bc.title || getBroadcastTitle(bc.type),
-          body: bc.message,
-          thumbnail: bc.icon,
-          duration: 0,
-          url: bc.url,
-          actionLabel: bc.button_text || (bc.url ? $t('broadcast.learnMore') : undefined),
-          onAction: bc.url
-            ? () => {
-                window.open(bc.url, '_blank');
-              }
-            : undefined,
-          onDismiss: () => {
-            const curRaw = localStorage.getItem(dismissedKey);
-            const cur: number[] = curRaw ? JSON.parse(curRaw) : [];
-            if (!cur.includes(bc.id)) {
-              cur.push(bc.id);
-              localStorage.setItem(dismissedKey, JSON.stringify(cur));
-            }
-            activeBroadcastNotifIds.delete(bc.id);
-          },
-        });
-
-        activeBroadcastNotifIds.set(bc.id, notifId);
-      }
-    } catch (e) {
-      logs.debug('stats', `Failed to fetch broadcasts: ${e}`);
-    } finally {
-      broadcastsFetchInFlight = false;
-    }
-  }
-
-  function getBroadcastTitle(type: string): string {
-    switch (type) {
-      case 'warning':
-        return $t('broadcast.warning') || 'Warning';
-      case 'error':
-        return $t('broadcast.important') || 'Important';
-      case 'success':
-        return $t('broadcast.success') || 'Good news';
-      default:
-        return $t('broadcast.announcement') || 'Announcement';
-    }
-  }
-
-  function getPlatformForBroadcast(): string {
-    if (!browser) return 'unknown';
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes('android')) return 'android';
-    if (ua.includes('win')) return 'windows';
-    if (ua.includes('linux')) return 'linux';
-    if (ua.includes('mac')) return 'macos';
-    return 'unknown';
-  }
-
-  function getAppVersionForBroadcast(): string {
-    if (!browser) return '0.0.0';
-    // @ts-ignore
-    return typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
-  }
-
-  function compareVersions(a: string, b: string): number {
-    const partsA = a.split('.').map((n) => parseInt(n) || 0);
-    const partsB = b.split('.').map((n) => parseInt(n) || 0);
-    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
-      const numA = partsA[i] || 0;
-      const numB = partsB[i] || 0;
-      if (numA > numB) return 1;
-      if (numA < numB) return -1;
-    }
-    return 0;
+    const { show } = await import('$lib/components/layout/NotificationPopup.svelte');
+    const cleanup = await initRemoteSync({
+      showNotification: show,
+      isSendStatsEnabled: () => $settings.sendStats,
+    });
+    if (cleanup) cleanups.push(cleanup);
   }
 
   function handleAndroidShareIntent(rawUrl: string) {
@@ -1424,7 +690,6 @@
     logs.info('layout', 'Window hidden - flushing caches and releasing memory');
 
     await mediaCache.unload();
-    clearAllScrollPositions();
     clearColorCache();
     logs.clearMemory();
 
@@ -1440,6 +705,8 @@
   }
 
   async function onWindowShown() {
+    // Skip during initial splash animation — splash logic handles first reveal
+    if (document.getElementById('splash-screen')) return;
     logs.info('layout', 'Window restored - loading caches from disk');
     ensureAppRootVisible();
     isWindowHidden = false;
@@ -1477,10 +744,8 @@
           }
         }
 
-        isWindowHidden = true;
         await releaseMemoryOnHide();
-
-        await appWindow.hide();
+        await appWindow.destroy();
         break;
     }
   }
@@ -1489,344 +754,6 @@
     const appRoot = document.getElementById('app-root');
     if (appRoot) {
       appRoot.classList.add('is-visible');
-    }
-  }
-
-  function startClipboardWatcher() {
-    clipboardCheckInterval = setInterval(async () => {
-      if (!$settings.watchClipboard) return;
-
-      try {
-        const text = await readText();
-        if (!text || text === lastClipboardText) return;
-
-        lastClipboardText = text;
-        logs.debug('layout', `Clipboard changed: ${text.substring(0, 100)}...`);
-
-        if (isValidMediaUrl(text, $settings.clipboardPatterns || [])) {
-          logs.debug('layout', `Media URL detected: ${text}`);
-          await handleDetectedUrl(text);
-          return;
-        }
-
-        const fileCheck = isDirectFileUrl(text);
-        logs.debug(
-          'layout',
-          `Checking file URL: watchClipboardForFiles=${$settings.watchClipboardForFiles}, isDirectFileUrl=${fileCheck.isFile}`
-        );
-        if ($settings.watchClipboardForFiles && fileCheck.isFile) {
-          logs.info('layout', `Direct file URL detected: ${fileCheck.filename}`);
-          await handleDetectedFileUrl(text, fileCheck.filename);
-        }
-      } catch (err) {
-        const errorStr = String(err);
-        if (
-          errorStr.includes('not available in the requested format') ||
-          errorStr.includes('clipboard is empty')
-        ) {
-          return;
-        }
-        logs.error('layout', `Clipboard watcher error: ${err}`);
-      }
-    }, CLIPBOARD_CHECK_INTERVAL);
-  }
-
-  async function handleDetectedFileUrl(rawUrl: string, detectedFilename: string | null) {
-    if (!appWindow) return;
-
-    if (!$settings.fileDownloadNotifications) return;
-
-    const isVisible = await appWindow.isVisible();
-    const isFocused = await appWindow.isFocused();
-
-    if (isVisible && isFocused) {
-      toast.info(
-        `📋 ${$t('clipboard.fileDetected') || 'File URL detected'}: ${detectedFilename || 'file'}`
-      );
-      return;
-    }
-
-    if (!$settings.notificationsEnabled) return;
-
-    try {
-      interface FileUrlInfo {
-        isFile: boolean;
-        filename: string;
-        size: number;
-        mimeType: string;
-        supportsResume: boolean;
-      }
-
-      const fileInfo = await invoke<FileUrlInfo>('check_file_url', {
-        url: rawUrl,
-        proxyConfig: getProxyConfig(),
-      });
-
-      if (!fileInfo.filename && detectedFilename) {
-        fileInfo.filename = detectedFilename;
-      }
-
-      if (!fileInfo.isFile) {
-        logs.debug('layout', `URL is not a file: ${rawUrl}`);
-        return;
-      }
-
-      logs.info('layout', `File URL detected: ${fileInfo.filename} (${fileInfo.size} bytes)`);
-
-      const currentSettings = getSettings();
-
-      await invoke('show_notification_window', {
-        data: {
-          title: fileInfo.filename,
-          body: formatSize(fileInfo.size),
-          thumbnail: null,
-          url: rawUrl,
-          compact: currentSettings.compactNotifications,
-          downloadLabel: $t('notification.downloadButton'),
-          dismissLabel: $t('notification.dismissButton'),
-          isFile: true,
-          fileInfo: fileInfo,
-        },
-        position: currentSettings.notificationPosition,
-        monitor: currentSettings.notificationMonitor,
-        offset: currentSettings.notificationOffset,
-      });
-    } catch (err) {
-      logs.warn('layout', `Failed to check file URL: ${err}`);
-    }
-  }
-
-  async function handleDetectedUrl(rawUrl: string) {
-    const url = cleanUrl(rawUrl);
-
-    if (!appWindow) return;
-    const isVisible = await appWindow.isVisible();
-    const isFocused = await appWindow.isFocused();
-
-    if (isVisible && isFocused) {
-      toast.info(`📋 ${$t('clipboard.detected')}`);
-      goto(`/?url=${encodeURIComponent(url)}`);
-      return;
-    }
-
-    if (!$settings.notificationsEnabled) {
-      return;
-    }
-
-    const fetchingToastId = toast.loading(
-      $t('clipboard.fetchingInfo') || 'Fetching media info...',
-      url.length > 50 ? url.substring(0, 50) + '...' : url
-    );
-
-    const currentSettings = getSettings();
-    const isChannel = isLikelyChannel(url);
-    const isPlaylist =
-      !isChannel && isLikelyPlaylist(url, { ignoreMixes: currentSettings.ignoreMixes });
-
-    try {
-      if (isChannel && !isAndroid()) {
-        const { info: channelInfo } = await resolveUrl(url, {
-          cookies_from_browser: currentSettings.cookiesFromBrowser || null,
-          custom_cookies: currentSettings.customCookies || null,
-          proxy: convertProxyConfig(getProxyConfig()),
-          youtube_player_client: currentSettings.usePlayerClientForExtraction
-            ? currentSettings.youtubePlayerClient
-            : null,
-          flat_playlist: true,
-        });
-
-        const channelName =
-          channelInfo.channel || channelInfo.uploader || channelInfo.title || 'Channel';
-        const handle = channelInfo.channelId ? `@${channelInfo.channelId}` : '';
-        const totalCount = channelInfo.playlistCount ?? channelInfo.entries?.length ?? 0;
-
-        logs.info('layout', `Channel info: name=${channelName}, videos=${totalCount}`);
-
-        if (totalCount > 0) {
-          logs.info(
-            'layout',
-            `Showing channel notification: ${channelName} (${totalCount} videos)`
-          );
-
-          mediaCache.setPreview(url, {
-            title: channelName || undefined,
-            thumbnail: channelInfo.thumbnail || undefined,
-            author: handle || undefined,
-          });
-
-          dismissToast(fetchingToastId);
-          await maybeSendClipboardSystemNotification(
-            `clipboard:${url}`,
-            'Comine • Clipboard',
-            `${channelName} (${totalCount} videos)`
-          );
-          await invoke('show_notification_window', {
-            data: {
-              title: channelName,
-              body: `${totalCount} videos${handle ? ` • ${handle}` : ''}`,
-              thumbnail: channelInfo.thumbnail,
-              url: url,
-              compact: currentSettings.compactNotifications,
-              downloadLabel: $t('notification.downloadButton'),
-              dismissLabel: $t('notification.dismissButton'),
-              isChannel: true,
-            },
-            position: currentSettings.notificationPosition,
-            monitor: currentSettings.notificationMonitor,
-            offset: currentSettings.notificationOffset,
-          });
-          return;
-        }
-      }
-
-      if (isPlaylist && !isAndroid()) {
-        const { info: playlistInfo } = await resolveUrl(url, {
-          cookies_from_browser: currentSettings.cookiesFromBrowser || null,
-          custom_cookies: currentSettings.customCookies || null,
-          proxy: convertProxyConfig(getProxyConfig()),
-          youtube_player_client: currentSettings.usePlayerClientForExtraction
-            ? currentSettings.youtubePlayerClient
-            : null,
-          flat_playlist: true,
-        });
-        const totalCount = playlistInfo.playlistCount ?? playlistInfo.entries?.length ?? 0;
-        logs.info(
-          'layout',
-          `Playlist info: isPlaylist=${playlistInfo.isPlaylist}, title=${playlistInfo.title}, count=${totalCount}`
-        );
-
-        if (playlistInfo.isPlaylist && totalCount > 0) {
-          logs.info(
-            'layout',
-            `Showing playlist notification: ${playlistInfo.title} (${totalCount} items}`
-          );
-
-          mediaCache.setPreview(url, {
-            title: playlistInfo.title || undefined,
-            thumbnail: playlistInfo.thumbnail || undefined,
-            author: playlistInfo.uploader || undefined,
-          });
-
-          dismissToast(fetchingToastId);
-          await maybeSendClipboardSystemNotification(
-            `clipboard:${url}`,
-            'Comine • Clipboard',
-            `${playlistInfo.title || $t('playlist.notification.detected')} (${totalCount} ${$t('playlist.videos')})`
-          );
-          await invoke('show_notification_window', {
-            data: {
-              title: playlistInfo.title || $t('playlist.notification.detected'),
-              body: `${totalCount} ${$t('playlist.videos')}`,
-              thumbnail: null,
-              url: url,
-              compact: currentSettings.compactNotifications,
-              downloadLabel: $t('notification.downloadButton'),
-              dismissLabel: $t('notification.dismissButton'),
-              isPlaylist: true,
-            },
-            position: currentSettings.notificationPosition,
-            monitor: currentSettings.notificationMonitor,
-            offset: currentSettings.notificationOffset,
-          });
-          return;
-        }
-      }
-
-      const { info: videoInfo } = await resolveUrl(url, {
-        cookies_from_browser: currentSettings.cookiesFromBrowser || null,
-        custom_cookies: currentSettings.customCookies || null,
-        proxy: convertProxyConfig(getProxyConfig()),
-        youtube_player_client: currentSettings.usePlayerClientForExtraction
-          ? currentSettings.youtubePlayerClient
-          : null,
-      });
-
-      const originalThumbnailUrl = videoInfo.thumbnail || getQuickThumbnail(url);
-
-      let durationStr = '';
-      const duration = videoInfo.duration ? Number(videoInfo.duration) : 0;
-      if (duration) {
-        const mins = Math.floor(duration / 60);
-        const secs = Math.floor(duration % 60);
-        durationStr = ` • ${mins}:${secs.toString().padStart(2, '0')}`;
-      }
-
-      const isTwitter = /(?:twitter\.com|x\.com)/i.test(url);
-      const authorDisplay =
-        isTwitter && videoInfo.channelId
-          ? `@${videoInfo.channelId}`
-          : videoInfo.uploader || videoInfo.channel || '';
-
-      mediaCache.setPreview(url, {
-        title: videoInfo.title || undefined,
-        thumbnail: originalThumbnailUrl || undefined,
-        author: authorDisplay || undefined,
-        duration: duration,
-      });
-
-      dismissToast(fetchingToastId);
-
-      await maybeSendClipboardSystemNotification(
-        `clipboard:${url}`,
-        'Comine • Clipboard',
-        `${videoInfo.title || $t('notification.mediaDetected')}${authorDisplay ? ` • ${authorDisplay}` : ''}${durationStr}`
-      );
-      await invoke('show_notification_window', {
-        data: {
-          title: videoInfo.title || $t('notification.mediaDetected'),
-          body: `${authorDisplay}${durationStr}`,
-          thumbnail: originalThumbnailUrl,
-          url: url,
-          compact: currentSettings.compactNotifications,
-          downloadLabel: $t('notification.downloadButton'),
-          dismissLabel: $t('notification.dismissButton'),
-        },
-        position: currentSettings.notificationPosition,
-        monitor: currentSettings.notificationMonitor,
-        offset: currentSettings.notificationOffset,
-      });
-    } catch (err) {
-      console.error('Failed to get video info:', err);
-      dismissToast(fetchingToastId);
-      const currentSettings = getSettings();
-      const quickThumbnail = getQuickThumbnail(url);
-
-      await maybeSendClipboardSystemNotification(
-        `clipboard:${url}`,
-        'Comine • Clipboard',
-        $t('notification.clickToDownload')
-      );
-      await invoke('show_notification_window', {
-        data: {
-          title: $t('notification.mediaDetected'),
-          body: $t('notification.clickToDownload'),
-          thumbnail: quickThumbnail,
-          url: url,
-          compact: currentSettings.compactNotifications,
-          downloadLabel: $t('notification.downloadButton'),
-          dismissLabel: $t('notification.dismissButton'),
-        },
-        position: currentSettings.notificationPosition,
-        monitor: currentSettings.notificationMonitor,
-        offset: currentSettings.notificationOffset,
-      });
-    }
-  }
-
-  async function downloadFromClipboard() {
-    try {
-      const text = await readText();
-      if (text && isValidMediaUrl(text, $settings.clipboardPatterns || [])) {
-        goto(`/?url=${encodeURIComponent(text)}`);
-        if (appWindow) {
-          await appWindow.show();
-          await appWindow.setFocus();
-        }
-      } else {
-        toast.warning($t('clipboard.noValidUrl'));
-      }
-    } catch (err) {
-      toast.error($t('clipboard.error'));
     }
   }
 
@@ -1924,6 +851,13 @@
     allNavItems;
     queueSidebarNavIndicatorUpdate();
   });
+
+  $effect(() => {
+    $settings.compactSidebar;
+    // Wait for CSS transition to finish before recalculating indicator position
+    const timer = setTimeout(() => queueSidebarNavIndicatorUpdate(), 250);
+    return () => clearTimeout(timer);
+  });
 </script>
 
 {#if isNotificationWindow || currentPath.startsWith('/notification')}
@@ -1938,8 +872,62 @@
     style="--window-tint: {$settings.backgroundType === 'oled' ? 0 : $settings.windowTint / 100};"
   >
     {#if !isMobile}
-      <div class="titlebar" data-tauri-drag-region>
-        <div class="titlebar-spacer"></div>
+      <div
+        class="titlebar"
+        class:titlebar-macos={resolvedControlsStyle === 'macos'}
+        data-tauri-drag-region
+      >
+        {#if resolvedControlsStyle === 'macos'}
+          <div class="traffic-lights" data-tauri-drag-region="false">
+            <button
+              class="traffic-light traffic-close"
+              onclick={closeWindow}
+              aria-label={$t('window.close')}
+              use:tooltip={$t('window.close')}
+            >
+              <svg viewBox="0 0 12 12"
+                ><path
+                  d="M3.172 3.172a.5.5 0 0 1 .707 0L6 5.293l2.121-2.121a.5.5 0 1 1 .707.707L6.707 6l2.121 2.121a.5.5 0 0 1-.707.707L6 6.707 3.879 8.828a.5.5 0 1 1-.707-.707L5.293 6 3.172 3.879a.5.5 0 0 1 0-.707Z"
+                  fill="currentColor"
+                /></svg
+              >
+            </button>
+            <button
+              class="traffic-light traffic-minimize"
+              onclick={minimizeWindow}
+              aria-label={$t('window.minimize')}
+              use:tooltip={$t('window.minimize')}
+            >
+              <svg viewBox="0 0 12 12"
+                ><rect x="2" y="5.5" width="8" height="1" rx=".5" fill="currentColor" /></svg
+              >
+            </button>
+            <button
+              class="traffic-light traffic-maximize"
+              onclick={maximizeWindow}
+              aria-label={$t('window.maximize')}
+              use:tooltip={$t('window.maximize')}
+            >
+              <svg viewBox="0 0 12 12"
+                ><path
+                  d="M3.5 8.5V5a1.5 1.5 0 0 1 1.5-1.5h3.5"
+                  stroke="currentColor"
+                  stroke-width="1"
+                  fill="none"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                /><path
+                  d="M8.5 3.5 3.5 8.5"
+                  stroke="currentColor"
+                  stroke-width="1"
+                  stroke-linecap="round"
+                /></svg
+              >
+            </button>
+          </div>
+        {:else}
+          <div class="titlebar-spacer"></div>
+        {/if}
         <div class="titlebar-brand" data-tauri-drag-region>
           {#if isDownloading}
             <Icon name="download" size={13} />
@@ -1955,27 +943,39 @@
             <span class="titlebar-text">comine</span>
           {/if}
         </div>
-        <div class="window-controls" data-tauri-drag-region="false">
-          <button class="titlebar-btn" onclick={minimizeWindow} use:tooltip={$t('window.minimize')}>
-            <Icon name="minimize" size={16} />
-          </button>
-          <button class="titlebar-btn" onclick={maximizeWindow} use:tooltip={$t('window.maximize')}>
-            <Icon name="maximize" size={12} />
-          </button>
-          <button
-            class="titlebar-btn close-btn"
-            onclick={closeWindow}
-            use:tooltip={$t('window.close')}
-          >
-            <Icon name="close" size={16} />
-          </button>
-        </div>
+        {#if resolvedControlsStyle === 'macos'}
+          <div class="titlebar-spacer"></div>
+        {:else}
+          <div class="window-controls" data-tauri-drag-region="false">
+            <button
+              class="titlebar-btn"
+              onclick={minimizeWindow}
+              use:tooltip={$t('window.minimize')}
+            >
+              <Icon name="minimize" size={16} />
+            </button>
+            <button
+              class="titlebar-btn"
+              onclick={maximizeWindow}
+              use:tooltip={$t('window.maximize')}
+            >
+              <Icon name="maximize" size={12} />
+            </button>
+            <button
+              class="titlebar-btn close-btn"
+              onclick={closeWindow}
+              use:tooltip={$t('window.close')}
+            >
+              <Icon name="close" size={16} />
+            </button>
+          </div>
+        {/if}
       </div>
     {/if}
 
     <div class="main-container">
       {#if !isMobile}
-        <aside class="sidebar" data-tauri-drag-region>
+        <aside class="sidebar" class:compact={$settings.compactSidebar} data-tauri-drag-region>
           <nav class="sidebar-nav" bind:this={sidebarNavEl} data-tauri-drag-region>
             {#if sidebarNavIndicatorVisible}
               <div class="sidebar-nav-active-indicator" style={sidebarNavIndicatorStyle}></div>
@@ -1987,19 +987,33 @@
                 title={$t(item.labelKey)}
                 active={currentPath === item.path}
                 badge={item.badge}
+                compact={$settings.compactSidebar}
                 register={(node) => registerSidebarNavItem(node, item.path)}
               />
             {/each}
           </nav>
 
           <div class="sidebar-bottom" data-tauri-drag-region>
-            <NavItem href="https://t.me/comineapp" icon="telegram" title="Telegram" external />
-            <NavItem href="https://discord.gg/8sfk33Kr2A" icon="discord" title="Discord" external />
+            <NavItem
+              href="https://t.me/comineapp"
+              icon="telegram"
+              title="Telegram"
+              external
+              compact={$settings.compactSidebar}
+            />
+            <NavItem
+              href="https://discord.gg/8sfk33Kr2A"
+              icon="discord"
+              title="Discord"
+              external
+              compact={$settings.compactSidebar}
+            />
             <NavItem
               href="https://github.com/nichind/comine"
               icon="github"
               title="GitHub"
               external
+              compact={$settings.compactSidebar}
             />
           </div>
         </aside>
@@ -2067,19 +1081,6 @@
     line-height: 1;
   }
 
-  :global(.page) {
-    animation: fadeIn 0.2s ease-out;
-  }
-
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-
   :global(.spotlight) {
     --spotlight-x: 50%;
     --spotlight-y: 50%;
@@ -2140,7 +1141,7 @@
   }
 
   .app {
-    --page-padding-inline: 16px;
+    --page-padding-inline: 14px;
     --page-padding-inline-compact: 8px;
     background: rgba(19, 19, 19, var(--window-tint, 0.48));
     height: 100%;
@@ -2207,19 +1208,11 @@
     height: 13px;
     flex-shrink: 0;
     fill: rgba(255, 255, 255, 0.7);
-    animation: icon-shimmer 3s ease-in-out infinite;
+    transition: fill 0.3s ease;
   }
 
-  @keyframes icon-shimmer {
-    0%,
-    40%,
-    60%,
-    100% {
-      fill: rgba(255, 255, 255, 0.7);
-    }
-    50% {
-      fill: rgba(255, 255, 255, 1);
-    }
+  .titlebar-brand:hover .titlebar-icon {
+    fill: rgba(255, 255, 255, 1);
   }
 
   .titlebar-text {
@@ -2227,19 +1220,12 @@
     font-size: 13px;
     font-weight: 600;
     letter-spacing: 0.5px;
-    background: linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0.7) 0%,
-      rgba(255, 255, 255, 0.7) 40%,
-      rgba(255, 255, 255, 1) 50%,
-      rgba(255, 255, 255, 0.7) 60%,
-      rgba(255, 255, 255, 0.7) 100%
-    );
-    background-size: 200% 100%;
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    animation: shimmer 3s ease-in-out infinite;
+    color: rgba(255, 255, 255, 0.7);
+    transition: color 0.3s ease;
+  }
+
+  .titlebar-brand:hover .titlebar-text {
+    color: rgba(255, 255, 255, 1);
   }
 
   .titlebar-speed {
@@ -2296,6 +1282,72 @@
     color: #ffffff;
   }
 
+  .titlebar-macos {
+    justify-content: space-between;
+  }
+
+  .traffic-lights {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 14px;
+    height: 100%;
+  }
+
+  .traffic-light {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: filter 0.15s ease;
+    color: rgba(0, 0, 0, 0.5);
+  }
+
+  .traffic-light svg {
+    width: 8px;
+    height: 8px;
+    opacity: 0;
+    transition: opacity 0.1s ease;
+    flex-shrink: 0;
+  }
+
+  .traffic-lights:hover .traffic-light svg {
+    opacity: 1;
+  }
+
+  .traffic-close {
+    background: #ff5f57;
+  }
+
+  .traffic-close:hover {
+    filter: brightness(0.85);
+  }
+
+  .traffic-minimize {
+    background: #ffbd2e;
+  }
+
+  .traffic-minimize:hover {
+    filter: brightness(0.85);
+  }
+
+  .traffic-maximize {
+    background: #28c840;
+  }
+
+  .traffic-maximize:hover {
+    filter: brightness(0.85);
+  }
+
+  .traffic-light:active {
+    filter: brightness(0.7);
+  }
+
   .main-container {
     flex: 1;
     display: flex;
@@ -2311,6 +1363,11 @@
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
+    transition: width 0.2s ease;
+  }
+
+  .sidebar.compact {
+    width: 46px;
   }
 
   .sidebar-nav {
@@ -2320,6 +1377,11 @@
     padding: 0 0 8px;
     gap: 4px;
     position: relative;
+    transition: gap 0.2s ease;
+  }
+
+  .sidebar.compact .sidebar-nav {
+    gap: 2px;
   }
 
   .sidebar-nav-active-indicator {
@@ -2334,9 +1396,12 @@
       transform 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
       height 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
       opacity 180ms ease;
-    will-change: transform, height;
     z-index: 0;
     pointer-events: none;
+  }
+
+  .sidebar.compact .sidebar-nav-active-indicator {
+    border-radius: 0 6px 6px 0;
   }
 
   .sidebar-bottom {
@@ -2345,6 +1410,27 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+    transition:
+      padding 0.2s ease,
+      gap 0.2s ease;
+  }
+
+  .sidebar.compact .sidebar-bottom {
+    padding: 6px 0;
+    gap: 2px;
+  }
+
+  .sidebar.compact :global(.nav-item) {
+    width: 46px;
+    height: 42px;
+  }
+
+  .sidebar.compact :global(.nav-item .badge) {
+    bottom: 4px;
+    right: 4px;
+    min-width: 14px;
+    height: 14px;
+    font-size: 9px;
   }
 
   .content-area {
@@ -2485,16 +1571,16 @@
   }
 
   .app.mobile .content-area {
-    padding: 0 0 0 8px;
+    padding: 0 0 0 0;
     padding-top: env(safe-area-inset-top, 24px);
   }
 
-  .app.mobile :global(.page) {
+  .app.mobile :global(.page-shell) {
     padding: 0 !important;
     padding-bottom: 24px !important;
   }
 
-  .app.mobile :global(.page h1) {
+  .app.mobile :global(.page-shell h1) {
     font-size: 28px !important;
   }
 

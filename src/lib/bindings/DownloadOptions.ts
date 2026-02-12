@@ -2,4 +2,4 @@
 import type { ClipRange } from "./ClipRange";
 import type { ProxyConfig } from "./ProxyConfig";
 
-export type DownloadOptions = { cookiesFromBrowser: string | null, customCookies: string | null, proxy: ProxyConfig | null, speedLimit: bigint | null, embedThumbnail: boolean, embedMetadata: boolean, embedSubtitles: boolean, subtitleLangs: string | null, sponsorblockRemove: string | null, youtubePlayerClient: string | null, aria2Connections: number | null, aria2Splits: number | null, maxRetries: number | null, clipRanges: Array<ClipRange> | null, };
+export type DownloadOptions = { cookiesFromBrowser: string | null, customCookies: string | null, proxy: ProxyConfig | null, speedLimit: number | null, embedThumbnail: boolean, embedMetadata: boolean, embedSubtitles: boolean, subtitleLangs: string | null, sponsorblockRemove: string | null, youtubePlayerClient: string | null, aria2Connections: number | null, aria2Splits: number | null, aria2MinSplitSize: string | null, aria2DisableIpv6: boolean | null, aria2CustomArgs: string | null, maxRetries: number | null, clipRanges: Array<ClipRange> | null, useAria2: boolean, forceKeyframesAtCuts: boolean, };

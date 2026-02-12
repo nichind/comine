@@ -3,7 +3,6 @@ package com.nichind.comine
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
-import android.media.MediaScannerConnection
 import android.os.Binder
 import android.os.IBinder
 import android.util.Log
@@ -15,7 +14,9 @@ class DownloadService : Service() {
         private const val TAG = "DownloadService"
 
         const val EXTRA_JOB_ID = "jobId"
-        const val EXTRA_REQUEST_JSON = "requestJson"
+        const val EXTRA_PAYLOAD = "payload"
+        const val EXTRA_BACKEND = "backend"
+        const val EXTRA_TITLE = "title"
 
         const val ACTION_START = "com.nichind.comine.START"
         const val ACTION_PAUSE = "com.nichind.comine.PAUSE"
@@ -30,6 +31,7 @@ class DownloadService : Service() {
     
     data class DownloadJob(
         var title: String,
+        var backendName: String,
         var progress: Int = 0,
         var stage: String = "Downloading",
         var outputPath: String? = null,
@@ -57,9 +59,12 @@ class DownloadService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 val jobId = intent.getStringExtra(EXTRA_JOB_ID)
-                val requestJson = intent.getStringExtra(EXTRA_REQUEST_JSON)
-                if (!jobId.isNullOrBlank() && !requestJson.isNullOrBlank()) {
-                    startDownload(jobId, requestJson)
+                val payload = intent.getStringExtra(EXTRA_PAYLOAD)
+                val backendName = intent.getStringExtra(EXTRA_BACKEND)
+                val title = intent.getStringExtra(EXTRA_TITLE) ?: ""
+                
+                if (!jobId.isNullOrBlank() && !payload.isNullOrBlank() && !backendName.isNullOrBlank()) {
+                    startJob(jobId, backendName, payload, title)
                 }
             }
             ACTION_PAUSE -> {
@@ -82,10 +87,10 @@ class DownloadService : Service() {
         return START_STICKY
     }
 
-    fun startDownload(jobId: String, requestJson: String) {
-        activeJobs[jobId] = DownloadJob(title = jobId)
+    fun startJob(jobId: String, backendName: String, payloadJson: String, title: String) {
+        val displayTitle = if (title.isNotBlank()) title else jobId
+        activeJobs[jobId] = DownloadJob(title = displayTitle, backendName = backendName)
 
-        // Start/update foreground summary notification.
         val summary = DownloadNotifications.buildSummaryNotification(activeJobs.keys)
         if (!foregroundStarted) {
             startForeground(DownloadNotifications.SUMMARY_NOTIFICATION_ID, summary)
@@ -97,7 +102,7 @@ class DownloadService : Service() {
         DownloadNotifications.upsert(
             jobId = jobId,
             kind = DownloadNotifications.JobKind.DOWNLOAD,
-            title = jobId,
+            title = displayTitle,
             stage = "Starting",
             progress = 0,
             indeterminate = true,
@@ -106,25 +111,32 @@ class DownloadService : Service() {
         )
 
         downloadExecutor.execute {
-            executeDownload(jobId, requestJson)
+            executeJob(jobId, backendName, payloadJson, title)
         }
     }
     
     private fun pauseJob(jobId: String) {
-        val killed = YtDlp.cancel(jobId)
-        if (killed) {
+        val job = activeJobs[jobId]
+        if (job != null) {
+            val backend = BackendRegistry.get(job.backendName)
+            
+            backend?.cancel(jobId)
             RustBridge.notifyPaused(jobId)
+            removeJobAndUpdateSummary(jobId)
         }
-        removeJobAndUpdateSummary(jobId)
     }
 
     private fun cancelJob(jobId: String) {
-        val killed = YtDlp.cancel(jobId)
-        if (killed) {
+        val job = activeJobs[jobId]
+        if (job != null) {
+            val backend = BackendRegistry.get(job.backendName)
+            backend?.cancel(jobId)
             RustBridge.notifyCancelled(jobId)
+            removeJobAndUpdateSummary(jobId)
         }
-        removeJobAndUpdateSummary(jobId)
     }
+
+
 
     private fun removeJobAndUpdateSummary(jobId: String) {
         activeJobs.remove(jobId)
@@ -173,32 +185,6 @@ class DownloadService : Service() {
                 ongoing = true
             )
         }
-
-        refreshSummaryNotification()
-    }
-
-    private fun updateTitle(jobId: String, title: String) {
-        val t = title.trim()
-        if (t.isBlank()) return
-
-        val job = activeJobs[jobId] ?: return
-        if (job.title == t) return
-
-        job.title = t
-        DownloadNotifications.upsert(
-            jobId = jobId,
-            kind = DownloadNotifications.JobKind.DOWNLOAD,
-            title = job.title,
-            stage = job.stage,
-            progress = job.progress,
-            indeterminate = false,
-            speedBps = job.speedBps,
-            etaSeconds = job.etaSeconds,
-            downloadedBytes = job.downloadedBytes,
-            totalBytes = job.totalBytes,
-            canPause = true,
-            ongoing = true
-        )
 
         refreshSummaryNotification()
     }
@@ -253,71 +239,42 @@ class DownloadService : Service() {
         }
     }
 
-    private fun executeDownload(jobId: String, requestJson: String) {
-        if (!YtDlp.initialized) {
-            Log.e(TAG, "executeDownload: yt-dlp not initialized for job $jobId")
-            val err = "yt-dlp not initialized. Please wait for the app to fully start."
+    private fun executeJob(jobId: String, backendName: String, payloadJson: String, title: String) {
+        val backend = BackendRegistry.get(backendName)
+        if (backend == null) {
+            val err = "Backend '$backendName' not found"
+            Log.e(TAG, err)
             RustBridge.notifyFailed(jobId, err)
-            activeJobs.remove(jobId)
-
-            DownloadNotifications.fail(jobId, title = jobId, error = err)
-            refreshSummaryNotification()
-            maybeStopService()
+            removeJobAndUpdateSummary(jobId)
             return
         }
-        
-        val initialTitle = try {
-            val urlObj = java.net.URL(requestJson.let { 
-                org.json.JSONObject(it).optString("url", "") 
-            })
-            urlObj.path.substringAfterLast("/").takeIf { it.isNotBlank() } ?: "Downloading..."
-        } catch (_: Exception) {
-            "Downloading..."
+
+        val payload = try {
+             org.json.JSONObject(payloadJson)
+        } catch (e: Exception) {
+             val err = "Invalid payload JSON: ${e.message}"
+             RustBridge.notifyFailed(jobId, err)
+             removeJobAndUpdateSummary(jobId)
+             return
         }
         
+        val initialTitle = if (title.isNotBlank()) title else jobId
         RustBridge.notifyStarted(jobId, initialTitle)
-
-        activeJobs[jobId]?.let { it.stage = "Downloading"; it.progress = 0 }
-        activeJobs[jobId] = activeJobs[jobId]?.copy(title = initialTitle) ?: DownloadJob(title = initialTitle)
-        DownloadNotifications.upsert(
-            jobId = jobId,
-            kind = DownloadNotifications.JobKind.DOWNLOAD,
-            title = initialTitle,
-            stage = "Downloading",
-            progress = 0,
-            indeterminate = false,
-            canPause = true,
-            ongoing = true
-        )
+        
+        updateStage(jobId, "Running")
 
         val result = try {
-            YtDlp.execute(
-                jobId = jobId,
-                requestJson = requestJson,
-                onProgress = { u ->
-                    updateProgress(
-                        jobId = jobId,
-                        progress = u.percent,
-                        speedBps = u.speedBps,
-                        etaSeconds = u.etaSeconds,
-                        downloadedBytes = u.downloadedBytes,
-                        totalBytes = u.totalBytes
-                    )
-                },
-                onStage = { stage ->
-                    updateStage(jobId, stage)
-                },
-                onTitle = { title ->
-                    updateTitle(jobId, title)
-                }
-            )
+            backend.execute(applicationContext, jobId, payload) { progress, speed, eta ->
+                // speed string from backend might need parsing if we want valid speedBps
+                updateProgress(jobId, progress, etaSeconds = eta)
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "executeDownload exception for job $jobId", e)
-            YtDlp.ExecuteResult.Failed(e.message ?: "Unknown error during download")
+            Log.e(TAG, "Job execution failed", e)
+            JobResult.Failed(e.message ?: "Unknown error")
         }
 
         when (result) {
-            is YtDlp.ExecuteResult.Success -> {
+            is JobResult.Success -> {
                 updateProgress(jobId, 100)
                 activeJobs[jobId]?.outputPath = result.outputPath
                 DownloadNotifications.complete(
@@ -325,23 +282,20 @@ class DownloadService : Service() {
                     title = result.title ?: initialTitle,
                     info = "Saved",
                     outputPath = result.outputPath,
-                    thumbnailUrl = result.thumbnailUrl
+                    thumbnailUrl = result.thumbnail
                 )
-                RustBridge.notifyCompleted(jobId, result.outputPath, result.title, null)
                 
-                // Scan the file so it appears in gallery immediately
-                if (result.outputPath != null) {
-                    MediaScannerConnection.scanFile(this, arrayOf(result.outputPath), null, null)
-                }
+                backend.notifyRustSuccess(jobId, result)
             }
-            is YtDlp.ExecuteResult.Failed -> {
+            is JobResult.Failed -> {
                 DownloadNotifications.fail(jobId, title = initialTitle, error = result.error)
-                RustBridge.notifyFailed(jobId, result.error)
+                backend.notifyRustFailure(jobId, result.error)
+            }
+            is JobResult.Cancelled -> {
+                RustBridge.notifyCancelled(jobId) // Generic enough usually
             }
         }
 
-        activeJobs.remove(jobId)
-        refreshSummaryNotification()
-        maybeStopService()
+        removeJobAndUpdateSummary(jobId)
     }
 }

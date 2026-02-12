@@ -1,21 +1,13 @@
-import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+import type { MenuItem } from '$lib/components/ui/ContextMenu.svelte';
 import type { UnifiedDownloadItem } from '$lib/stores/downloadsState.svelte';
 import type { DownloadsContext } from '$lib/stores/downloadsContext';
 import { getConversionFormats, type FormatOption } from '$lib/utils/conversion';
 import { queue } from '$lib/stores/queue';
 import { history } from '$lib/stores/history';
 
-// Use a function to get translations since we can't use $t directly in a .ts file
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TranslateFn = (key: string, params?: any) => string;
 
-export interface ContextMenuState {
-  open: boolean;
-  x: number;
-  y: number;
-}
-
-export interface ConvertMenuState extends ContextMenuState {}
 export function buildActiveDownloadMenuItems(
   item: UnifiedDownloadItem,
   t: TranslateFn
@@ -121,14 +113,14 @@ export function handleContextMenuAction(
     const format = id.replace('convert-', '');
     const formatInfo = conversionFormats.find((f) => f.format === format);
     if (formatInfo && item.filePath) {
-      ctx.convertItem(item as any, format, formatInfo.audioOnly);
+      ctx.convertItem(item, format, formatInfo.audioOnly);
     }
     return false;
   }
 
   switch (id) {
     case 'details':
-      ctx.showDetails(item as any);
+      ctx.showDetails(item);
       break;
     case 'resume':
       queue.resumeItem(item.id);
@@ -140,13 +132,13 @@ export function handleContextMenuAction(
       queue.cancel(item.id);
       break;
     case 'play':
-      if (item.filePath) ctx.playItem(item as any);
+      if (item.filePath) ctx.playItem(item);
       break;
     case 'openInApp':
-      ctx.openItem(item as any);
+      ctx.openItem(item);
       break;
     case 'viewChannel':
-      ctx.openAuthor(item as any);
+      ctx.openAuthor(item);
       break;
     case 'toggleFavourite':
       history.toggleFavourite(item.id);

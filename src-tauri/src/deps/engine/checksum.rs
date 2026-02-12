@@ -7,10 +7,7 @@ fn is_hex64(token: &str) -> bool {
     if token.len() != 64 {
         return false;
     }
-    token
-        .as_bytes()
-        .iter()
-        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))
+    token.as_bytes().iter().all(|b: &u8| b.is_ascii_hexdigit())
 }
 
 pub fn extract_first_sha256(text: &str) -> Option<String> {
@@ -30,7 +27,6 @@ pub fn find_sha256_for_filename(sums_text: &str, filename: &str) -> Option<Strin
             continue;
         }
 
-        // Prefer lines that mention the filename.
         if trimmed.ends_with(filename)
             || trimmed.ends_with(&format!("/{}", filename))
             || trimmed.ends_with(&format!("*{}", filename))
@@ -41,7 +37,6 @@ pub fn find_sha256_for_filename(sums_text: &str, filename: &str) -> Option<Strin
         }
     }
 
-    // Fallback: accept the first hash.
     extract_first_sha256(sums_text)
 }
 
@@ -61,10 +56,10 @@ pub async fn try_fetch_sha256(
                 if let Some(hash) = parsed {
                     return Some(hash);
                 }
-                log::warn!("Checksum fetched but could not be parsed: {}", url);
+                tracing::warn!("Checksum fetched but could not be parsed: {}", url);
             }
             Err(e) => {
-                log::warn!("Checksum fetch failed from {}: {}", url, e);
+                tracing::warn!("Checksum fetch failed from {}: {}", url, e);
             }
         }
     }
@@ -101,6 +96,6 @@ pub async fn verify_sha256(path: &Path, expected: &str, dep_name: &'static str) 
         return Err(DepsError::checksum_mismatch(dep_name, expected, actual));
     }
 
-    log::info!("Checksum verified for {}: {}", dep_name, actual);
+    tracing::info!("Checksum verified for {}: {}", dep_name, actual);
     Ok(())
 }

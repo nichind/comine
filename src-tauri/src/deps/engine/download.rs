@@ -4,7 +4,7 @@ use std::path::Path;
 use futures_util::StreamExt;
 
 #[cfg(not(target_os = "android"))]
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[cfg(not(target_os = "android"))]
 use tokio::io::AsyncWriteExt;
@@ -36,7 +36,7 @@ const MAX_RETRY_ATTEMPTS: u32 = 5;
 #[cfg(not(target_os = "android"))]
 const PROGRESS_EMIT_INTERVAL_MS: u128 = 100;
 #[cfg(not(target_os = "android"))]
-const HTTP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+use crate::orchestrator::types::constants::USER_AGENT;
 #[cfg(not(target_os = "android"))]
 const RATELIMIT_DELAY_SECS: u64 = 10;
 #[cfg(not(target_os = "android"))]
@@ -45,7 +45,7 @@ const RATELIMIT_MAX_DELAY_SECS: u64 = 60;
 #[cfg(not(target_os = "android"))]
 fn http_client(proxy_url: Option<&str>) -> Result<reqwest::Client, DownloadError> {
     let mut builder = reqwest::Client::builder()
-        .user_agent(HTTP_USER_AGENT)
+        .user_agent(USER_AGENT)
         .redirect(reqwest::redirect::Policy::limited(MAX_REDIRECTS))
         .timeout(std::time::Duration::from_secs(HTTP_TIMEOUT_SECS))
         .connect_timeout(std::time::Duration::from_secs(HTTP_CONNECT_TIMEOUT_SECS))

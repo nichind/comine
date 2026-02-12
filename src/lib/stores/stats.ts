@@ -1,20 +1,17 @@
 import { writable, get } from 'svelte/store';
 import { browser } from '$app/environment';
 import { settings } from './settings';
+import { getPlatform, getAppVersion } from '$lib/composables/remoteSync';
+import type { AppStats as BindingAppStats } from '$lib/bindings';
 
 const STORAGE_KEY = 'comine_stats';
 const INSTALLATION_ID_KEY = 'comine_installation_id';
 
-export interface AppStats {
-  totalDownloads: number;
-  totalSizeMb: number;
-  successfulDownloads: number;
-  failedDownloads: number;
-  firstLaunch: string;
+export type AppStats = BindingAppStats & {
   lastSync: string | null;
-}
+};
 
-export interface HistoryBackfillInput {
+interface HistoryBackfillInput {
   totalSuccessfulDownloads: number;
   totalSizeBytes: number;
 }
@@ -48,7 +45,6 @@ function createStatsStore() {
     stats: defaultStats,
   };
 
-  // Load from localStorage
   let initial = defaultState;
   if (browser) {
     try {
@@ -61,9 +57,7 @@ function createStatsStore() {
           stats: { ...defaultStats, ...parsed.stats },
         };
       }
-    } catch {
-      // Ignore parse errors
-    }
+    } catch {}
   }
 
   const { subscribe, set, update } = writable<StatsState>(initial);
@@ -79,20 +73,6 @@ function createStatsStore() {
     set,
     update,
 
-    trackDownload(sizeMb: number, success: boolean) {
-      update((state) => ({
-        ...state,
-        stats: {
-          ...state.stats,
-          totalDownloads: state.stats.totalDownloads + 1,
-          totalSizeMb: state.stats.totalSizeMb + sizeMb,
-          successfulDownloads: state.stats.successfulDownloads + (success ? 1 : 0),
-          failedDownloads: state.stats.failedDownloads + (success ? 0 : 1),
-        },
-      }));
-    },
-
-    // Backfill stats from legacy history.
     mergeFromHistory(input: HistoryBackfillInput) {
       const historyDownloads = Math.max(0, Math.floor(input.totalSuccessfulDownloads || 0));
       const historySizeMb = Math.max(0, (input.totalSizeBytes || 0) / (1024 * 1024));
@@ -112,16 +92,6 @@ function createStatsStore() {
           },
         };
       });
-    },
-
-    markSynced() {
-      update((state) => ({
-        ...state,
-        stats: {
-          ...state.stats,
-          lastSync: new Date().toISOString(),
-        },
-      }));
     },
 
     getPayload() {
@@ -144,22 +114,6 @@ function createStatsStore() {
 
     getInstallationId,
   };
-}
-
-function getPlatform(): string {
-  if (!browser) return 'unknown';
-  const ua = navigator.userAgent.toLowerCase();
-  if (ua.includes('android')) return 'android';
-  if (ua.includes('win')) return 'windows';
-  if (ua.includes('linux')) return 'linux';
-  if (ua.includes('mac')) return 'macos';
-  return 'unknown';
-}
-
-function getAppVersion(): string {
-  if (!browser) return '0.0.0';
-  // @ts-ignore - injected by vite
-  return typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
 }
 
 export const appStats = createStatsStore();

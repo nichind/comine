@@ -66,12 +66,9 @@ export type TranslationKeys =\n`;
     const category = categories[i];
     const categoryKeys = grouped[category];
 
-    output += `  // ${category.charAt(0).toUpperCase() + category.slice(1)}\n`;
-
     for (let j = 0; j < categoryKeys.length; j++) {
       const key = categoryKeys[j];
-      const isLast = i === categories.length - 1 && j === categoryKeys.length - 1;
-      output += `  ${isLast ? '' : '| '}'${key}'\n`;
+      output += `  | '${key}'\n`;
     }
 
     if (i < categories.length - 1) {
@@ -79,7 +76,8 @@ export type TranslationKeys =\n`;
     }
   }
 
-  output += ';\n';
+  output += '  // Allows dynamic/computed keys while preserving autocomplete for known keys\n';
+  output += '  | (string & {});\n';
 
   fs.writeFileSync(outputFile, output, 'utf-8');
   console.log(`Generated ${keys.length} translation keys in keys.ts`);

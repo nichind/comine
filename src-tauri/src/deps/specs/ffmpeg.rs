@@ -1,20 +1,15 @@
 use std::path::PathBuf;
 
-use log::info;
+#[cfg(not(target_os = "android"))]
+use tauri::AppHandle;
+#[cfg(target_os = "android")]
 use tauri::{AppHandle, Manager};
 
 use crate::proxy::ProxyConfig;
-use crate::types::{DependencyStatus, InstallProgress};
+use crate::types::DependencyStatus;
 
-use crate::deps::engine::cancel;
-use crate::deps::engine::checksum::try_fetch_sha256;
-use crate::deps::engine::download::download_file_with_checksum;
-use crate::deps::engine::extract::{extract_from_zip_multiple, FileMatcher};
-use crate::deps::engine::progress::ProgressEmitter;
+use crate::deps::engine::installer::{self, get_bin_dir, ExtractStrategy, InstallPlan};
 use crate::deps::engine::verify::run_capture_async;
-
-#[cfg(unix)]
-use crate::deps::engine::fs::make_executable;
 
 const EVENT_PROGRESS: &str = "ffmpeg-install-progress";
 
@@ -28,20 +23,58 @@ const FFPROBE_NAME: &str = "ffprobe.exe";
 #[cfg(not(target_os = "windows"))]
 const FFPROBE_NAME: &str = "ffprobe";
 
-fn get_bin_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    Ok(app_data.join("bin"))
+fn get_binary_path(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
+    #[cfg(target_os = "android")]
+    {
+        let bin_dir = get_bin_dir(app)?;
+        let custom_path = bin_dir.join(name);
+        if custom_path.exists() {
+            return Ok(custom_path);
+        }
+
+        let app_data = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+        if let Some(parent) = app_data.parent() {
+            let lib_path = parent.join("no_backup").join(name);
+            if lib_path.exists() {
+                return Ok(lib_path);
+            }
+        }
+
+        Ok(custom_path)
+    }
+
+    #[cfg(not(target_os = "android"))]
+    Ok(get_bin_dir(app)?.join(name))
 }
 
 pub fn get_ffmpeg_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(get_bin_dir(app)?.join(BINARY_NAME))
+    get_binary_path(app, BINARY_NAME)
 }
 
-fn get_ffprobe_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(get_bin_dir(app)?.join(FFPROBE_NAME))
+pub fn get_ffprobe_path(app: &AppHandle) -> Result<PathBuf, String> {
+    get_binary_path(app, FFPROBE_NAME)
+}
+
+pub fn resolve_ffmpeg_path(app: &AppHandle) -> Option<PathBuf> {
+    if let Ok(managed) = get_ffmpeg_path(app) {
+        if managed.exists() {
+            return Some(managed);
+        }
+    }
+    crate::deps::engine::verify::find_in_system_path(BINARY_NAME)
+}
+
+pub fn resolve_ffprobe_path(app: &AppHandle) -> Option<PathBuf> {
+    if let Ok(managed) = get_ffprobe_path(app) {
+        if managed.exists() {
+            return Some(managed);
+        }
+    }
+    crate::deps::engine::verify::find_in_system_path(FFPROBE_NAME)
 }
 
 #[cfg(target_os = "windows")]
@@ -65,51 +98,62 @@ fn is_ffprobe_file(name: &str) -> bool {
 }
 
 pub async fn check_ffmpeg(app: AppHandle) -> Result<DependencyStatus, String> {
-    #[cfg(target_os = "android")]
-    {
-        return Ok(DependencyStatus::embedded("youtubedl-android library"));
-    }
+    let ffmpeg_path = match resolve_ffmpeg_path(&app) {
+        Some(path) => path,
+        None => {
+            #[cfg(target_os = "android")]
+            return Ok(DependencyStatus::embedded("youtubedl-android library"));
 
+            #[cfg(not(target_os = "android"))]
+            return Ok(DependencyStatus::not_installed());
+        }
+    };
     #[cfg(not(target_os = "android"))]
-    {
-        let ffmpeg_path = get_ffmpeg_path(&app)?;
-        let ffprobe_path = get_ffprobe_path(&app)?;
+    let ffprobe_path = resolve_ffprobe_path(&app);
 
-        if ffmpeg_path.exists() {
-            match run_capture_async(&ffmpeg_path, &["-version"]).await {
-                Ok(output) if output.status_code == Some(0) => {
-                    let version = output
-                        .stdout
-                        .lines()
-                        .next()
-                        .and_then(|line| line.strip_prefix("ffmpeg version "))
-                        .map(|v| v.split_whitespace().next().unwrap_or("unknown"))
-                        .unwrap_or("unknown")
-                        .to_string();
+    match run_capture_async(&ffmpeg_path, &["-version"]).await {
+        Ok(output) if output.status_code == Some(0) => {
+            let version = output
+                .stdout
+                .lines()
+                .next()
+                .and_then(|line| line.strip_prefix("ffmpeg version "))
+                .map(|v| v.split_whitespace().next().unwrap_or("unknown"))
+                .unwrap_or("unknown")
+                .to_string();
 
-                    let disk_size = {
-                        let ffmpeg_size = tokio::fs::metadata(&ffmpeg_path)
-                            .await
-                            .ok()
-                            .map(|m| m.len())
-                            .unwrap_or(0);
-                        let ffprobe_size = tokio::fs::metadata(&ffprobe_path)
-                            .await
-                            .ok()
-                            .map(|m| m.len())
-                            .unwrap_or(0);
-                        Some(ffmpeg_size.saturating_add(ffprobe_size))
-                    };
+            #[cfg(not(target_os = "android"))]
+            let disk_size = {
+                let ffmpeg_size = tokio::fs::metadata(&ffmpeg_path)
+                    .await
+                    .ok()
+                    .map(|m| m.len())
+                    .unwrap_or(0);
+                let ffprobe_size = match &ffprobe_path {
+                    Some(p) => tokio::fs::metadata(p)
+                        .await
+                        .ok()
+                        .map(|m| m.len())
+                        .unwrap_or(0),
+                    None => 0,
+                };
+                Some(ffmpeg_size.saturating_add(ffprobe_size))
+            };
 
-                    Ok(DependencyStatus::installed(
-                        version,
-                        ffmpeg_path.to_string_lossy().to_string(),
-                    )
-                    .with_disk_size(disk_size))
-                }
-                _ => Ok(DependencyStatus::not_installed()),
-            }
-        } else {
+            #[cfg(target_os = "android")]
+            let disk_size = None;
+
+            Ok(
+                DependencyStatus::installed(version, ffmpeg_path.to_string_lossy().to_string())
+                    .with_disk_size(disk_size),
+            )
+        }
+        _ => {
+            #[cfg(target_os = "android")]
+            return Ok(DependencyStatus::embedded(
+                "youtubedl-android library (not found in path)",
+            ));
+            #[cfg(not(target_os = "android"))]
             Ok(DependencyStatus::not_installed())
         }
     }
@@ -122,7 +166,7 @@ async fn extract_tar_xz_ffmpeg(
 ) -> Result<(), String> {
     use std::process::Stdio;
 
-    let output = tokio::process::Command::new("tar")
+    let output = crate::utils::new_command("tar")
         .args([
             "-xJf",
             archive_path.to_str().ok_or("Invalid path")?,
@@ -162,24 +206,10 @@ pub async fn install_ffmpeg(
 
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
+        let config = proxy_config.unwrap_or_default();
         let ffmpeg_path = get_ffmpeg_path(&app)?;
         let ffprobe_path = get_ffprobe_path(&app)?;
         let bin_dir = get_bin_dir(&app)?;
-
-        tokio::fs::create_dir_all(&bin_dir)
-            .await
-            .map_err(|e| format!("Failed to create bin directory: {}", e))?;
-
-        let progress = ProgressEmitter::new(&app, EVENT_PROGRESS);
-
-        progress.emit(InstallProgress {
-            stage: "downloading".to_string(),
-            progress: 0,
-            downloaded: 0,
-            total: 0,
-            speed: 0.0,
-            message: "Downloading ffmpeg...".to_string(),
-        });
 
         #[cfg(target_os = "windows")]
 		let download_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
@@ -188,98 +218,41 @@ pub async fn install_ffmpeg(
         #[cfg(target_os = "linux")]
 		let download_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz";
 
-        let temp_archive = bin_dir.join("ffmpeg_temp.archive");
-        let config = proxy_config.unwrap_or_default();
-        let cancel_token = cancel::reset_token("ffmpeg");
-        let checksum_urls = vec![
-            format!("{}.sha256", download_url),
-            format!("{}.sha256sum", download_url),
-            format!("{}.sha256.txt", download_url),
-            format!("{}.sha256sum.txt", download_url),
-        ];
-        let expected_sha256 = try_fetch_sha256(&checksum_urls, &config, Some("ffmpeg")).await;
-
-        download_file_with_checksum(
-            download_url,
-            &temp_archive,
-            &progress,
-            "ffmpeg",
-            "latest",
-            Some(&config),
-            expected_sha256.as_deref(),
-            Some(&cancel_token),
-        )
-        .await?;
-
-        if cancel_token.is_cancelled() {
-            let _ = tokio::fs::remove_file(&temp_archive).await;
-            return Err("Cancelled".to_string());
-        }
-
-        progress.emit(InstallProgress {
-            stage: "extracting".to_string(),
-            progress: 90,
-            downloaded: 0,
-            total: 0,
-            speed: 0.0,
-            message: "Extracting ffmpeg...".to_string(),
-        });
-
         #[cfg(any(target_os = "windows", target_os = "macos"))]
-        {
-            let matchers: &[(FileMatcher, &'static str)] = &[
-                (is_ffmpeg_file, BINARY_NAME),
-                (is_ffprobe_file, FFPROBE_NAME),
-            ];
-            extract_from_zip_multiple(&temp_archive, &bin_dir, matchers).await?;
-        }
+        let extract = ExtractStrategy::ZipMultiple {
+            matchers: vec![
+                (is_ffmpeg_file as fn(&str) -> bool, BINARY_NAME),
+                (is_ffprobe_file as fn(&str) -> bool, FFPROBE_NAME),
+            ],
+        };
 
         #[cfg(target_os = "linux")]
-        {
-            extract_tar_xz_ffmpeg(&temp_archive, &bin_dir).await?;
-        }
+        let extract = ExtractStrategy::Custom(Box::new(|archive_path, bin_dir| {
+            let archive_path = archive_path.to_path_buf();
+            let bin_dir = bin_dir.to_path_buf();
+            Box::pin(async move { extract_tar_xz_ffmpeg(&archive_path, &bin_dir).await })
+        }));
 
-        let _ = tokio::fs::remove_file(&temp_archive).await;
-
-        #[cfg(unix)]
-        {
-            make_executable(&ffmpeg_path).await?;
-            if ffprobe_path.exists() {
-                make_executable(&ffprobe_path).await?;
-            }
-        }
-
-        progress.emit(InstallProgress {
-            stage: "verifying".to_string(),
-            progress: 95,
-            downloaded: 0,
-            total: 0,
-            speed: 0.0,
-            message: "Verifying installation...".to_string(),
-        });
-
-        match run_capture_async(&ffmpeg_path, &["-version"]).await {
-            Ok(output) if output.status_code == Some(0) => {
-                info!("ffmpeg installed successfully");
-            }
-            Ok(output) => {
-                return Err(format!("ffmpeg verification failed: {}", output.stderr));
-            }
-            Err(e) => {
-                return Err(format!("ffmpeg verification failed: {}", e));
-            }
-        }
-
-        progress.emit(InstallProgress {
-            stage: "complete".to_string(),
-            progress: 100,
-            downloaded: 0,
-            total: 0,
-            speed: 0.0,
-            message: "ffmpeg installed successfully!".to_string(),
-        });
-
-        Ok(ffmpeg_path.to_string_lossy().to_string())
+        installer::run_install(
+            &app,
+            InstallPlan {
+                dep_name: "ffmpeg",
+                display_name: "ffmpeg",
+                event_name: EVENT_PROGRESS,
+                version: "latest".to_string(),
+                download_urls: vec![download_url.to_string()],
+                checksum_urls: vec![],
+                checksum_filename_hint: Some("ffmpeg"),
+                temp_archive: bin_dir.join("ffmpeg_temp.archive"),
+                binary_path: ffmpeg_path,
+                extract,
+                extra_executables: vec![ffprobe_path],
+                verify_args: vec!["-version"],
+                custom_verify: None,
+            },
+            &config,
+        )
+        .await
     }
 }
 

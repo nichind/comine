@@ -1,9 +1,6 @@
-// See https://kit.svelte.dev/docs/types#app
-// for information about these interfaces
 declare global {
   namespace App {}
 
-  // Vite build-time constants
   const __DEV__: boolean;
   const __COMMIT_HASH__: string;
   const __GIT_BRANCH__: string;
@@ -19,7 +16,6 @@ declare global {
       t: (key: string) => string;
       locale: string;
     };
-    __YTDLP_READY__?: boolean;
     __androidLog?: (level: string, source: string, message: string) => void;
   }
 }

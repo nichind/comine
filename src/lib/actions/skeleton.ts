@@ -1,82 +1,62 @@
 let styleInjected = false;
 
 function injectStyles() {
-  if (styleInjected) return;
+  if (styleInjected || typeof document === 'undefined') return;
 
   const style = document.createElement('style');
-  style.id = 'skeleton-loader-styles';
+  style.id = 'skeleton-styles';
   style.textContent = `
-    @keyframes skeletonShimmer {
-      from { background-position: 200% 0; }
-      to { background-position: -200% 0; }
+    @keyframes skeleton-shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
     }
 
-    .skeleton-loading {
+    .skel-loading {
+      position: relative;
       color: transparent !important;
+      user-select: none;
+      pointer-events: none;
+      overflow: hidden;
       background: linear-gradient(
         90deg,
-        rgba(255, 255, 255, 0.06) 0%,
-        rgba(255, 255, 255, 0.15) 50%,
-        rgba(255, 255, 255, 0.06) 100%
-      ) !important;
-      background-size: 200% 100% !important;
-      pointer-events: none;
-      user-select: none;
-      animation: skeletonShimmer 1.5s ease-in-out infinite !important;
+        var(--skel-base, rgba(255, 255, 255, 0.06)) 0%,
+        var(--skel-base, rgba(255, 255, 255, 0.06)) 40%,
+        var(--skel-highlight, rgba(255, 255, 255, 0.12)) 50%,
+        var(--skel-base, rgba(255, 255, 255, 0.06)) 60%,
+        var(--skel-base, rgba(255, 255, 255, 0.06)) 100%
+      );
+      background-size: 200% 100%;
+      background-attachment: fixed;
+      animation: skeleton-shimmer 2s ease-in-out infinite;
     }
 
-    .skeleton-loading * {
+    .skel-loading * {
+      visibility: hidden !important;
+    }
+
+    .skel-loading img,
+    .skel-loading svg,
+    .skel-loading video,
+    .skel-loading canvas {
       opacity: 0 !important;
-      transition: opacity 0.2s ease-out !important;
     }
 
-    .skeleton-loading img,
-    .skeleton-loading svg,
-    .skeleton-loading video {
-      opacity: 0 !important;
+    .skel-reveal {
+      animation: skel-fade-in 0.25s ease-out forwards;
     }
 
-    /* Smooth transition when skeleton is removed */
-    .skeleton-loaded {
-      animation: skeletonFadeIn 0.3s ease-out forwards !important;
+    .skel-reveal * {
+      animation: skel-content-in 0.25s ease-out forwards;
     }
 
-    .skeleton-loaded * {
-      animation: skeletonContentFadeIn 0.3s ease-out forwards !important;
+    @keyframes skel-fade-in {
+      from { background-color: var(--skel-base, rgba(255, 255, 255, 0.06)); }
+      to { background-color: transparent; }
     }
 
-    @keyframes skeletonFadeIn {
-      from {
-        background: linear-gradient(
-          90deg,
-          rgba(255, 255, 255, 0.06) 0%,
-          rgba(255, 255, 255, 0.15) 50%,
-          rgba(255, 255, 255, 0.06) 100%
-        );
-      }
-      to {
-        background: transparent;
-      }
-    }
-
-    @keyframes skeletonContentFadeIn {
+    @keyframes skel-content-in {
       from { opacity: 0; }
       to { opacity: 1; }
-    }
-
-    /* Variant: pill shape (only applies if explicitly set) */
-    .skeleton-loading.skeleton-pill {
-      border-radius: 999px !important;
-    }
-
-    /* Variant: circle shape (only applies if explicitly set) */
-    .skeleton-loading.skeleton-circle {
-      border-radius: 50% !important;
-    }
-
-    /* Variant: no animation (static) */
-    .skeleton-loading.skeleton-static {
-      animation: none !important;
     }
   `;
   document.head.appendChild(style);
@@ -85,11 +65,12 @@ function injectStyles() {
 
 export interface SkeletonOptions {
   loading?: boolean;
-  width?: string;
-  height?: string;
+  minWidth?: string;
+  minHeight?: string;
   radius?: string;
-  shape?: 'default' | 'pill' | 'circle';
-  static?: boolean;
+  circle?: boolean;
+  pill?: boolean;
+  randomWidth?: boolean | [number, number];
 }
 
 type SkeletonParam = boolean | SkeletonOptions | undefined;
@@ -104,96 +85,105 @@ function normalizeOptions(param: SkeletonParam): SkeletonOptions {
   return param;
 }
 
-function applyStyles(node: HTMLElement, options: SkeletonOptions) {
-  if (options.width) {
-    node.style.width = options.width;
-  }
-  if (options.height) {
-    node.style.height = options.height;
-  }
-  if (options.radius) {
-    node.style.borderRadius = options.radius;
-  }
-}
-
-function removeStyles(node: HTMLElement, options: SkeletonOptions) {
-  if (options.width) {
-    node.style.removeProperty('width');
-  }
-  if (options.height) {
-    node.style.removeProperty('height');
-  }
-  if (options.radius) {
-    node.style.removeProperty('border-radius');
-  }
-}
-
 export function skeleton(node: HTMLElement, param?: SkeletonParam) {
   injectStyles();
 
-  let currentOptions = normalizeOptions(param);
+  let opts = normalizeOptions(param);
   let wasLoading = false;
+  let originalStyles: Partial<CSSStyleDeclaration> = {};
 
-  function updateState(options: SkeletonOptions) {
-    if (options.loading) {
-      node.classList.remove('skeleton-loaded');
-      node.classList.add('skeleton-loading');
+  let randomWidthPercent: string | undefined;
 
-      node.classList.remove('skeleton-pill', 'skeleton-circle', 'skeleton-static');
-      if (options.shape === 'pill') {
-        node.classList.add('skeleton-pill');
-      } else if (options.shape === 'circle') {
-        node.classList.add('skeleton-circle');
-      }
-      if (options.static) {
-        node.classList.add('skeleton-static');
-      }
+  function calculateRandomWidth() {
+    const isTextTag = ['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'LI'].includes(node.tagName);
+    const shouldRandomize = opts.randomWidth !== false && (opts.randomWidth || isTextTag);
 
-      applyStyles(node, options);
-      wasLoading = true;
+    if (shouldRandomize) {
+      const [min, max] = Array.isArray(opts.randomWidth) ? opts.randomWidth : [60, 90];
+      const percent = Math.floor(Math.random() * (max - min + 1) + min);
+      randomWidthPercent = `${percent}%`;
     } else {
-      node.classList.remove(
-        'skeleton-loading',
-        'skeleton-pill',
-        'skeleton-circle',
-        'skeleton-static'
-      );
-      removeStyles(node, currentOptions);
-
-      if (wasLoading) {
-        node.classList.add('skeleton-loaded');
-        setTimeout(() => {
-          node.classList.remove('skeleton-loaded');
-        }, 300);
-        wasLoading = false;
-      }
+      randomWidthPercent = undefined;
     }
   }
 
-  updateState(currentOptions);
+  function saveOriginalStyles() {
+    originalStyles = {
+      minWidth: node.style.minWidth,
+      minHeight: node.style.minHeight,
+      borderRadius: node.style.borderRadius,
+      width: node.style.width,
+    };
+  }
+
+  function applyLoading() {
+    node.classList.remove('skel-reveal');
+    node.classList.add('skel-loading');
+
+    if (opts.minWidth) node.style.minWidth = opts.minWidth;
+    if (opts.minHeight) node.style.minHeight = opts.minHeight;
+    if (opts.radius) node.style.borderRadius = opts.radius;
+    if (opts.circle) node.style.borderRadius = '50%';
+    if (opts.pill) node.style.borderRadius = '999px';
+
+    if (randomWidthPercent) {
+      node.style.width = randomWidthPercent;
+    }
+
+    wasLoading = true;
+  }
+
+  function removeLoading() {
+    node.classList.remove('skel-loading');
+
+    node.style.minWidth = originalStyles.minWidth || '';
+    node.style.minHeight = originalStyles.minHeight || '';
+    node.style.borderRadius = originalStyles.borderRadius || '';
+    node.style.width = originalStyles.width || '';
+
+    if (wasLoading) {
+      node.classList.add('skel-reveal');
+
+      const cleanup = () => {
+        node.classList.remove('skel-reveal');
+        node.removeEventListener('animationend', cleanup);
+      };
+      node.addEventListener('animationend', cleanup, { once: true });
+
+      setTimeout(() => node.classList.remove('skel-reveal'), 300);
+      wasLoading = false;
+    }
+  }
+
+  function update() {
+    if (opts.loading) {
+      applyLoading();
+    } else {
+      removeLoading();
+    }
+  }
+
+  calculateRandomWidth();
+  saveOriginalStyles();
+  update();
 
   return {
     update(newParam: SkeletonParam) {
-      removeStyles(node, currentOptions);
-      currentOptions = normalizeOptions(newParam);
-      updateState(currentOptions);
+      const oldLoading = opts.loading;
+      opts = normalizeOptions(newParam);
+
+      if (opts.loading !== oldLoading) {
+        update();
+      } else if (opts.loading) {
+        applyLoading();
+      }
     },
     destroy() {
-      node.classList.remove(
-        'skeleton-loading',
-        'skeleton-loaded',
-        'skeleton-pill',
-        'skeleton-circle',
-        'skeleton-static'
-      );
-      removeStyles(node, currentOptions);
+      node.classList.remove('skel-loading', 'skel-reveal');
+      node.style.minWidth = originalStyles.minWidth || '';
+      node.style.minHeight = originalStyles.minHeight || '';
+      node.style.borderRadius = originalStyles.borderRadius || '';
+      node.style.width = originalStyles.width || '';
     },
   };
-}
-
-export function skeletonPlaceholder(
-  node: HTMLElement,
-  options: Omit<SkeletonOptions, 'loading'> = {}
-) {
-  return skeleton(node, { ...options, loading: true });
 }

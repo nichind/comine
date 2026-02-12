@@ -1,4 +1,4 @@
-export type DebouncedFn<T extends (...args: any[]) => any> = ((...args: Parameters<T>) => void) & {
+type DebouncedFn<T extends (...args: any[]) => any> = ((...args: Parameters<T>) => void) & {
   cancel: () => void;
   flush: () => void;
 };

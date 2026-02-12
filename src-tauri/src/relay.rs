@@ -157,7 +157,7 @@ impl RelayState {
         let config_path = self.data_dir.join("relay_config.json");
         let devices_path = self.data_dir.join("relay_devices.json");
         
-        log::info!("[Relay] Loading config from {:?}", config_path);
+        tracing::info!("[Relay] Loading config from {:?}", config_path);
 
         let mut config_dirty = false;
 
@@ -216,7 +216,7 @@ impl RelayState {
 
     pub async fn save_config(&self) -> Result<(), String> {
         let config_path = self.data_dir.join("relay_config.json");
-        log::info!("[Relay] Saving config to {:?}", config_path);
+        tracing::info!("[Relay] Saving config to {:?}", config_path);
         let config = self.config.read().await;
         let data = serde_json::to_string_pretty(&*config).map_err(|e| e.to_string())?;
         tokio::fs::write(&config_path, data)
@@ -312,7 +312,7 @@ fn decrypt_frame(key: &[u8; 32], nonce_b64: &str, box_b64: &str) -> Result<Vec<u
 
 pub async fn connect(app: AppHandle, state: Arc<RelayState>) {
     if state.connect_task_running.swap(true, Ordering::SeqCst) {
-        log::info!("[Relay] Connect task already running");
+        tracing::info!("[Relay] Connect task already running");
         return;
     }
 
@@ -328,12 +328,12 @@ pub async fn connect(app: AppHandle, state: Arc<RelayState>) {
         let config = state.config.read().await.clone();
 
         if !config.enabled {
-            log::info!("[Relay] Disabled, not connecting");
+            tracing::info!("[Relay] Disabled, not connecting");
             return;
         }
 
         let host_prefix = config.host_id.get(0..8).unwrap_or(config.host_id.as_str());
-        log::info!("[Relay] Connecting to {} (host_id {}…)", config.server_url, host_prefix);
+        tracing::info!("[Relay] Connecting to {} (host_id {}…)", config.server_url, host_prefix);
 
         let url_str = config.server_url.clone();
         let session_host_id = config.host_id.clone();
@@ -342,13 +342,13 @@ pub async fn connect(app: AppHandle, state: Arc<RelayState>) {
         let (ws_stream, _) = match ws_result {
             Ok(s) => s,
             Err(e) => {
-                log::error!("[Relay] Connection failed: {}", e);
+                tracing::error!("[Relay] Connection failed: {}", e);
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                 continue;
             }
         };
 
-        log::info!("[Relay] WebSocket connected");
+        tracing::info!("[Relay] WebSocket connected");
 
         let (write, mut read) = ws_stream.split();
         let (tx, mut rx) = mpsc::channel::<String>(256);
@@ -366,7 +366,7 @@ pub async fn connect(app: AppHandle, state: Arc<RelayState>) {
         {
             let mut w = write.lock().await;
             if let Err(e) = w.send(WsMessage::Text(hello.into())).await {
-                log::error!("[Relay] Failed to send host_hello: {}", e);
+                tracing::error!("[Relay] Failed to send host_hello: {}", e);
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                 continue;
             }
@@ -387,12 +387,12 @@ pub async fn connect(app: AppHandle, state: Arc<RelayState>) {
                 _ = tokio::time::sleep(tokio::time::Duration::from_millis(500)) => {
                     let cfg = state.config.read().await;
                     if !cfg.enabled {
-                        log::info!("[Relay] Disabled, closing connection");
+                        tracing::info!("[Relay] Disabled, closing connection");
                         break;
                     }
 
                     if cfg.server_url != url_str || cfg.host_id != session_host_id {
-                        log::info!("[Relay] Config changed, reconnecting");
+                        tracing::info!("[Relay] Config changed, reconnecting");
                         break;
                     }
                 }
@@ -411,11 +411,11 @@ pub async fn connect(app: AppHandle, state: Arc<RelayState>) {
                             let _ = w.send(WsMessage::Pong(data)).await;
                         }
                         Ok(WsMessage::Close(_)) => {
-                            log::info!("[Relay] Server closed connection");
+                            tracing::info!("[Relay] Server closed connection");
                             break;
                         }
                         Err(e) => {
-                            log::error!("[Relay] Read error: {}", e);
+                            tracing::error!("[Relay] Read error: {}", e);
                             break;
                         }
                         _ => {}
@@ -442,11 +442,11 @@ pub async fn connect(app: AppHandle, state: Arc<RelayState>) {
 
         let config = state.config.read().await;
         if !config.enabled {
-            log::info!("[Relay] Disabled, stopping reconnect loop");
+            tracing::info!("[Relay] Disabled, stopping reconnect loop");
             return;
         }
 
-        log::info!("[Relay] Reconnecting in 5 seconds...");
+        tracing::info!("[Relay] Reconnecting in 5 seconds...");
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
     }
 }
@@ -459,7 +459,7 @@ async fn handle_message(
 ) {
     match msg.t.as_str() {
         "host_ok" => {
-            log::info!("[Relay] Host registered successfully");
+            tracing::info!("[Relay] Host registered successfully");
             *state.connected.write().await = true;
             let config = state.config.read().await;
             let _ = app.emit("relay-status", RelayStatus {
@@ -480,7 +480,7 @@ async fn handle_message(
 
             let current_code = state.current_pairing_code.read().await.clone();
             if current_code.as_deref() != Some(&code) {
-                log::warn!("[Relay] Invalid pairing code from {}", device_id);
+                tracing::warn!("[Relay] Invalid pairing code from {}", device_id);
                 let reject = serde_json::to_string(&RelayMessage {
                     t: "pairing_reject".to_string(),
                     device_id: Some(device_id),
@@ -491,7 +491,7 @@ async fn handle_message(
                 return;
             }
 
-            log::info!("[Relay] Pairing request from {} ({})", device_name, browser);
+            tracing::info!("[Relay] Pairing request from {} ({})", device_name, browser);
 
             let pending = PendingPairing {
                 device_id: device_id.clone(),
@@ -517,7 +517,7 @@ async fn handle_message(
             let device = match devices.get(&device_id) {
                 Some(d) => d,
                 None => {
-                    log::warn!("[Relay] Frame from unknown device: {}", device_id);
+                    tracing::warn!("[Relay] Frame from unknown device: {}", device_id);
                     return;
                 }
             };
@@ -529,7 +529,7 @@ async fn handle_message(
                     arr
                 }
                 _ => {
-                    log::error!("[Relay] Invalid device secret for {}", device_id);
+                    tracing::error!("[Relay] Invalid device secret for {}", device_id);
                     return;
                 }
             };
@@ -537,7 +537,7 @@ async fn handle_message(
             let plaintext = match decrypt_frame(&secret, &nonce, &box_data) {
                 Ok(p) => p,
                 Err(e) => {
-                    log::error!("[Relay] Decrypt failed: {}", e);
+                    tracing::error!("[Relay] Decrypt failed: {}", e);
                     return;
                 }
             };
@@ -545,7 +545,7 @@ async fn handle_message(
             let inner: InnerMessage = match serde_json::from_slice(&plaintext) {
                 Ok(m) => m,
                 Err(e) => {
-                    log::error!("[Relay] Invalid inner message: {}", e);
+                    tracing::error!("[Relay] Invalid inner message: {}", e);
                     return;
                 }
             };
@@ -554,13 +554,13 @@ async fn handle_message(
         }
 
         "error" => {
-            log::error!("[Relay] Server error: {}", msg.error.unwrap_or_default());
+            tracing::error!("[Relay] Server error: {}", msg.error.unwrap_or_default());
         }
 
         "pong" => {}
 
         _ => {
-            log::debug!("[Relay] Unknown message type: {}", msg.t);
+            tracing::debug!("[Relay] Unknown message type: {}", msg.t);
         }
     }
 }
@@ -603,7 +603,7 @@ async fn handle_inner_message(
             let cmd_id = msg.cmd_id.clone();
             let open_app = msg.open_app.unwrap_or(false);
 
-            log::info!("[Relay] Download request from {}: {}", device_id, url);
+            tracing::info!("[Relay] Download request from {}: {}", device_id, url);
 
             let _ = app.emit(
                 "extension-download",
@@ -627,7 +627,7 @@ async fn handle_inner_message(
             let url = msg.url.unwrap_or_default();
             let cmd_id = msg.cmd_id.clone();
 
-            log::info!("[Relay] Cancel request from {}: {}", device_id, url);
+            tracing::info!("[Relay] Cancel request from {}: {}", device_id, url);
 
             let _ = app.emit(
                 "extension-cancel",
@@ -645,7 +645,7 @@ async fn handle_inner_message(
         }
 
         _ => {
-            log::debug!("[Relay] Unknown inner message type: {}", msg.msg_type);
+            tracing::debug!("[Relay] Unknown inner message type: {}", msg.msg_type);
         }
     }
 }
@@ -695,7 +695,7 @@ async fn send_ack(
 pub async fn start_pairing(state: &Arc<RelayState>) -> Result<String, String> {
     let code = generate_pairing_code();
     *state.current_pairing_code.write().await = Some(code.clone());
-    log::info!("[Relay] Pairing code generated: {}", code);
+    tracing::info!("[Relay] Pairing code generated: {}", code);
     Ok(code)
 }
 
@@ -746,7 +746,7 @@ pub async fn accept_pairing(state: &Arc<RelayState>, device_id: &str) -> Result<
 
     *state.current_pairing_code.write().await = None;
 
-    log::info!("[Relay] Pairing accepted for {}", device_id);
+    tracing::info!("[Relay] Pairing accepted for {}", device_id);
     Ok(())
 }
 
@@ -763,14 +763,14 @@ pub async fn reject_pairing(state: &Arc<RelayState>, device_id: &str) -> Result<
         tx.send(msg).await.map_err(|e| e.to_string())?;
     }
 
-    log::info!("[Relay] Pairing rejected for {}", device_id);
+    tracing::info!("[Relay] Pairing rejected for {}", device_id);
     Ok(())
 }
 
 pub async fn remove_device(state: &Arc<RelayState>, device_id: &str) -> Result<(), String> {
     state.devices.write().await.remove(device_id);
     state.save_devices().await?;
-    log::info!("[Relay] Device removed: {}", device_id);
+    tracing::info!("[Relay] Device removed: {}", device_id);
     Ok(())
 }
 
@@ -798,7 +798,7 @@ pub async fn set_enabled(
     {
         let config = state.config.read().await;
         let host_prefix = config.host_id.get(0..8).unwrap_or(config.host_id.as_str());
-        log::info!(
+        tracing::info!(
             "[Relay] Set enabled={} (server_url={}, host_id {}…)",
             enabled,
             config.server_url,

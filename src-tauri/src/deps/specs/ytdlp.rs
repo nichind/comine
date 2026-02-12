@@ -1,19 +1,19 @@
 use std::path::PathBuf;
 
-use log::{error, info, warn};
+#[cfg(not(target_os = "android"))]
+use tauri::AppHandle;
+#[cfg(target_os = "android")]
 use tauri::{AppHandle, Manager};
+use tracing::{error, info, warn};
 
 use crate::proxy::ProxyConfig;
-use crate::types::{DependencyStatus, InstallProgress, ReleaseInfo};
+use crate::types::{DependencyStatus, ReleaseInfo};
 
-use crate::deps::engine::cancel;
-use crate::deps::engine::checksum::try_fetch_sha256;
-use crate::deps::engine::download::{download_file_with_checksum, fetch_json};
-use crate::deps::engine::progress::ProgressEmitter;
+use crate::deps::engine::download::fetch_json;
+use crate::deps::engine::installer::{
+    self, get_bin_dir as get_bin_dir_default, ExtractStrategy, GitHubRelease, InstallPlan,
+};
 use crate::deps::engine::verify::run_capture_async;
-
-#[cfg(unix)]
-use crate::deps::engine::fs::make_executable;
 
 const EVENT_PROGRESS: &str = "ytdlp-install-progress";
 
@@ -46,11 +46,7 @@ fn get_bin_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
     #[cfg(not(target_os = "android"))]
     {
-        let app_data = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-        Ok(app_data.join("bin"))
+        get_bin_dir_default(app)
     }
 }
 
@@ -58,20 +54,17 @@ pub fn get_ytdlp_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(get_bin_dir(app)?.join(BINARY_NAME))
 }
 
-#[derive(serde::Deserialize)]
-struct GitHubRelease {
-    tag_name: String,
-    name: String,
-    published_at: String,
+pub fn resolve_ytdlp_path(app: &AppHandle) -> Option<PathBuf> {
+    if let Ok(managed) = get_ytdlp_path(app) {
+        if managed.exists() {
+            return Some(managed);
+        }
+    }
+    crate::deps::engine::verify::find_in_system_path(BINARY_NAME)
 }
 
 async fn fetch_latest_release(proxy_config: &ProxyConfig) -> Result<GitHubRelease, String> {
-    fetch_json::<GitHubRelease>(
-        "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest",
-        proxy_config,
-    )
-    .await
-    .map_err(|e| format!("Failed to fetch latest release: {}", e))
+    crate::deps::engine::installer::fetch_github_latest_release("yt-dlp/yt-dlp", proxy_config).await
 }
 
 pub async fn check_ytdlp(
@@ -86,51 +79,49 @@ pub async fn check_ytdlp(
 
     #[cfg(not(target_os = "android"))]
     {
-        let ytdlp_path = get_ytdlp_path(&app)?;
+        let ytdlp_path = match resolve_ytdlp_path(&app) {
+            Some(path) => path,
+            None => return Ok(DependencyStatus::not_installed()),
+        };
 
-        if ytdlp_path.exists() {
-            match run_capture_async(&ytdlp_path, &["--version"]).await {
-                Ok(output) if output.status_code == Some(0) => {
-                    let version = output.stdout.trim().to_string();
-                    info!("yt-dlp version: {}", version);
-                    let disk_size = tokio::fs::metadata(&ytdlp_path).await.ok().map(|m| m.len());
+        match run_capture_async(&ytdlp_path, &["--version"]).await {
+            Ok(output) if output.status_code == Some(0) => {
+                let version = output.stdout.trim().to_string();
+                info!("yt-dlp version: {}", version);
+                let disk_size = tokio::fs::metadata(&ytdlp_path).await.ok().map(|m| m.len());
 
-                    let update_available = if check_updates.unwrap_or(false) {
-                        match fetch_latest_release(&ProxyConfig::default()).await {
-                            Ok(release) => {
-                                if release.tag_name != version {
-                                    Some(release.tag_name)
-                                } else {
-                                    None
-                                }
+                let update_available = if check_updates.unwrap_or(false) {
+                    match fetch_latest_release(&ProxyConfig::default()).await {
+                        Ok(release) => {
+                            if release.tag_name != version {
+                                Some(release.tag_name)
+                            } else {
+                                None
                             }
-                            Err(_) => None,
                         }
-                    } else {
-                        None
-                    };
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
 
-                    Ok(DependencyStatus::installed(
-                        version,
-                        ytdlp_path.to_string_lossy().to_string(),
-                    )
-                    .with_update(update_available)
-                    .with_disk_size(disk_size))
-                }
-                Ok(output) => {
-                    warn!("yt-dlp exists but failed to run: {}", output.stderr);
-                    Ok(DependencyStatus::not_installed())
-                }
-                Err(e) => {
-                    error!("Failed to execute yt-dlp: {}", e);
-                    Ok(DependencyStatus {
-                        path: Some(ytdlp_path.to_string_lossy().to_string()),
-                        ..DependencyStatus::not_installed()
-                    })
-                }
+                Ok(
+                    DependencyStatus::installed(version, ytdlp_path.to_string_lossy().to_string())
+                        .with_update(update_available)
+                        .with_disk_size(disk_size),
+                )
             }
-        } else {
-            Ok(DependencyStatus::not_installed())
+            Ok(output) => {
+                warn!("yt-dlp exists but failed to run: {}", output.stderr);
+                Ok(DependencyStatus::not_installed())
+            }
+            Err(e) => {
+                error!("Failed to execute yt-dlp: {}", e);
+                Ok(DependencyStatus {
+                    path: Some(ytdlp_path.to_string_lossy().to_string()),
+                    ..DependencyStatus::not_installed()
+                })
+            }
         }
     }
 }
@@ -148,26 +139,7 @@ pub async fn install_ytdlp(
 
     #[cfg(not(target_os = "android"))]
     {
-        let ytdlp_path = get_ytdlp_path(&app)?;
-        let bin_dir = get_bin_dir(&app)?;
-
-        tokio::fs::create_dir_all(&bin_dir)
-            .await
-            .map_err(|e| format!("Failed to create bin directory: {}", e))?;
-
-        let progress = ProgressEmitter::new(&app, EVENT_PROGRESS);
-
-        progress.emit(InstallProgress {
-            stage: "fetching".to_string(),
-            progress: 0,
-            downloaded: 0,
-            total: 0,
-            speed: 0.0,
-            message: "Fetching latest release info...".to_string(),
-        });
-
         let config = proxy_config.unwrap_or_default();
-        let cancel_token = cancel::reset_token("ytdlp");
 
         let target_version = match version {
             Some(v) => v,
@@ -179,84 +151,36 @@ pub async fn install_ytdlp(
 
         info!("Target version: {}", target_version);
 
+        let ytdlp_path = get_ytdlp_path(&app)?;
         let download_url = format!(
             "https://github.com/yt-dlp/yt-dlp/releases/download/{}/{}",
             target_version, RELEASE_ASSET
         );
-
         let sums_url = format!(
             "https://github.com/yt-dlp/yt-dlp/releases/download/{}/SHA2-256SUMS",
             target_version
         );
-        let expected_sha256 = try_fetch_sha256(&vec![sums_url], &config, Some(RELEASE_ASSET)).await;
 
-        download_file_with_checksum(
-            &download_url,
-            &ytdlp_path,
-            &progress,
-            "yt-dlp",
-            &target_version,
-            Some(&config),
-            expected_sha256.as_deref(),
-            Some(&cancel_token),
+        installer::run_install(
+            &app,
+            InstallPlan {
+                dep_name: "ytdlp",
+                display_name: "yt-dlp",
+                event_name: EVENT_PROGRESS,
+                version: target_version,
+                download_urls: vec![download_url],
+                checksum_urls: vec![sums_url],
+                checksum_filename_hint: Some(RELEASE_ASSET),
+                temp_archive: ytdlp_path.clone(),
+                binary_path: ytdlp_path,
+                extract: ExtractStrategy::None,
+                extra_executables: vec![],
+                verify_args: vec!["--version"],
+                custom_verify: None,
+            },
+            &config,
         )
-        .await?;
-
-        if cancel_token.is_cancelled() {
-            let _ = tokio::fs::remove_file(&ytdlp_path).await;
-            return Err("Cancelled".to_string());
-        }
-
-        let metadata = tokio::fs::metadata(&ytdlp_path)
-            .await
-            .map_err(|e| format!("Downloaded file not found: {}", e))?;
-        let total_size = metadata.len();
-
-        #[cfg(unix)]
-        {
-            progress.emit(InstallProgress {
-                stage: "permissions".to_string(),
-                progress: 95,
-                downloaded: total_size,
-                total: total_size,
-                speed: 0.0,
-                message: "Setting executable permissions...".to_string(),
-            });
-
-            make_executable(&ytdlp_path).await?;
-        }
-
-        progress.emit(InstallProgress {
-            stage: "verifying".to_string(),
-            progress: 98,
-            downloaded: total_size,
-            total: total_size,
-            speed: 0.0,
-            message: "Verifying installation...".to_string(),
-        });
-
-        match run_capture_async(&ytdlp_path, &["--version"]).await {
-            Ok(output) if output.status_code == Some(0) => {
-                info!("yt-dlp verified: {}", output.stdout.trim());
-            }
-            Ok(output) => {
-                return Err(format!("yt-dlp verification failed: {}", output.stderr));
-            }
-            Err(e) => {
-                return Err(format!("yt-dlp verification failed: {}", e));
-            }
-        }
-
-        progress.emit(InstallProgress {
-            stage: "complete".to_string(),
-            progress: 100,
-            downloaded: total_size,
-            total: total_size,
-            speed: 0.0,
-            message: format!("yt-dlp {} installed successfully!", target_version),
-        });
-
-        Ok(ytdlp_path.to_string_lossy().to_string())
+        .await
     }
 }
 
@@ -308,17 +232,23 @@ pub async fn get_ytdlp_releases(
 pub async fn update_ytdlp_channel(app: AppHandle, channel: String) -> Result<String, String> {
     #[cfg(target_os = "android")]
     {
-        let _ = (app, channel);
-        return Err("Not supported on Android".to_string());
+        use crate::orchestrator::backends::android_jni::update_ytdlp_channel_jni;
+        let _ = app;
+
+        let channel = channel.clone();
+        tokio::task::spawn_blocking(move || -> Result<String, String> {
+            update_ytdlp_channel_jni(&channel)
+        })
+        .await
+        .map_err(|e| format!("Task panicked: {}", e))?
     }
 
     #[cfg(not(target_os = "android"))]
     {
-        let ytdlp_path = get_ytdlp_path(&app)?;
-
-        if !ytdlp_path.exists() {
-            return Err("yt-dlp is not installed".to_string());
-        }
+        let ytdlp_path = match resolve_ytdlp_path(&app) {
+            Some(path) => path,
+            None => return Err("yt-dlp is not installed".to_string()),
+        };
 
         let channel = channel.trim().to_string();
         let channel_lc = channel.to_lowercase();

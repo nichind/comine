@@ -12,15 +12,8 @@ use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
 use crate::orchestrator::backends::{
-    extract_filename_from_response,
-    extract_filename_from_url,
-    // Common helpers
-    has_file_extension,
-    http_status_to_error,
-    Backend,
-    BackendCapabilities,
-    SpawnContext,
-    DIRECT_FILE_EXTENSIONS,
+    extract_filename_from_url, has_file_extension, http_status_to_error, Backend,
+    BackendCapabilities, SpawnContext, DIRECT_FILE_EXTENSIONS,
 };
 use crate::orchestrator::types::*;
 
@@ -31,10 +24,7 @@ pub struct DirectBackend {
 impl DirectBackend {
     pub fn new() -> Self {
         Self {
-            client: Client::builder()
-                .user_agent(constants::USER_AGENT)
-                .build()
-                .expect("Failed to create HTTP client"),
+            client: crate::utils::http_client().expect("Failed to create HTTP client"),
         }
     }
 }
@@ -53,10 +43,18 @@ impl Backend for DirectBackend {
 
     fn capabilities(&self) -> BackendCapabilities {
         BackendCapabilities {
-            supports_pause: false,
-            supports_resume: false,
-            supports_progress: true,
-            supports_speed_limit: false,
+            name: "direct".into(),
+            streaming_resolve: false,
+            playlists: false,
+            pause_resume: false,
+            multi_connection: false,
+            format_selection: false,
+            subtitles: false,
+            speed_limit: false,
+            proxy: false,
+            cookies: false,
+            torrent_magnet: false,
+            post_processing: false,
         }
     }
 
@@ -75,38 +73,7 @@ impl Backend for DirectBackend {
         url: &str,
         _settings: &ResolveSettings,
     ) -> Result<UrlInfo, BackendError> {
-        let resp = self
-            .client
-            .head(url)
-            .send()
-            .await
-            .map_err(|e| BackendError::NetworkError(e.to_string()))?;
-
-        if !resp.status().is_success() {
-            return Err(http_status_to_error(resp.status().as_u16(), url));
-        }
-
-        let content_length = resp
-            .headers()
-            .get("content-length")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<u64>().ok());
-
-        let content_type = resp
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .map(String::from);
-
-        let filename = extract_filename_from_response(url, &resp);
-
-        Ok(UrlInfo::with_file_info(
-            url,
-            Some(filename),
-            "direct",
-            content_length,
-            content_type,
-        ))
+        crate::orchestrator::backends::resolve_http_file(url, "direct").await
     }
 
     async fn spawn(&self, ctx: SpawnContext) -> Result<String, BackendError> {
@@ -150,6 +117,7 @@ impl Backend for DirectBackend {
         let mut downloaded: u64 = 0;
         let mut stream = resp.bytes_stream();
         let mut last_update = std::time::Instant::now();
+        let mut last_downloaded: u64 = 0;
 
         loop {
             tokio::select! {
@@ -168,13 +136,13 @@ impl Backend for DirectBackend {
                             downloaded += bytes.len() as u64;
 
                             if last_update.elapsed().as_millis() >= 100 {
-                                let speed = Some(downloaded / last_update.elapsed().as_secs().max(1));
-                                let eta = total_size.map(|t| {
-                                    if downloaded > 0 {
-                                        ((t.saturating_sub(downloaded)) as f64 / speed.unwrap_or(1) as f64) as u64
-                                    } else {
-                                        0
-                                    }
+                                let elapsed_secs = last_update.elapsed().as_secs_f64().max(0.001);
+                                let bytes_delta = downloaded.saturating_sub(last_downloaded);
+                                let speed = Some((bytes_delta as f64 / elapsed_secs) as u64);
+                                let eta = total_size.and_then(|t| {
+                                    speed.filter(|&s| s > 0).map(|s| {
+                                        t.saturating_sub(downloaded) / s
+                                    })
                                 });
 
                                 let _ = ctx.progress_tx.send(ProgressUpdate {
@@ -186,6 +154,7 @@ impl Backend for DirectBackend {
                                 });
 
                                 last_update = std::time::Instant::now();
+                                last_downloaded = downloaded;
                             }
                         }
                         Some(Err(e)) => {

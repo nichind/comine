@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "defaults": {
+    "youtubePlayerClient": "default,-android_sdkless",
+    "extractionPlayerClient": "default,-android_sdkless",
+    "usePlayerClientForExtraction": false
+  }
+}

@@ -1,13 +1,3 @@
-const scrollPositions = new Map<string, number>();
-export function saveScrollPosition(path: string, position: number): void {
-  scrollPositions.set(path, position);
-}
-export function getScrollPosition(path: string): number {
-  return scrollPositions.get(path) ?? 0;
-}
-export function clearScrollPosition(path: string): void {
-  scrollPositions.delete(path);
-}
-export function clearAllScrollPositions(): void {
-  scrollPositions.clear();
-}
+// Scroll position management is handled by preserveScroll action (sessionStorage)
+// This module is intentionally minimal — kept for potential future use.
+export function clearAllScrollPositions(): void {}

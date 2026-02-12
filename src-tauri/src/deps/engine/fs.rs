@@ -2,7 +2,7 @@
 pub async fn make_executable(path: &std::path::Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
-    log::info!("Setting executable permissions on: {:?}", path);
+    tracing::info!("Setting executable permissions on: {:?}", path);
 
     let metadata = tokio::fs::metadata(path)
         .await
@@ -15,6 +15,6 @@ pub async fn make_executable(path: &std::path::Path) -> Result<(), String> {
         .await
         .map_err(|e| format!("Failed to set permissions on {:?}: {}", path, e))?;
 
-    log::info!("Successfully set executable permissions on {:?}", path);
+    tracing::info!("Successfully set executable permissions on {:?}", path);
     Ok(())
 }

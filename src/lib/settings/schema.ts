@@ -1,10 +1,9 @@
-import type { IconName } from '$lib/components/Icon.svelte';
+import type { IconName } from '$lib/components/ui/Icon.svelte';
 import type { AppSettings } from '$lib/stores/settings';
 import { invoke } from '@tauri-apps/api/core';
 import { get } from 'svelte/store';
 import { t, locales, setLocale, type Locale } from '$lib/i18n';
 
-// Platform targeting
 export type Platform = 'windows' | 'macos' | 'linux' | 'android';
 export type PlatformGroup = 'desktop' | 'mobile';
 
@@ -63,8 +62,14 @@ export type SettingDef =
   | (BaseDef & {
       type: 'select';
       options:
-        | { value: string; label: string }[]
-        | ((platform: Platform) => { value: string; label: string }[]);
+        | { value: string; label: string; description?: string; icon?: IconName; image?: string }[]
+        | ((platform: Platform) => {
+            value: string;
+            label: string;
+            description?: string;
+            icon?: IconName;
+            image?: string;
+          }[]);
       width?: number;
     })
   | (BaseDef & {
@@ -108,11 +113,10 @@ export type SettingDef =
       icon?: IconName;
     };
 
-// Initial empty arrays to be populated in migration
 export const SECTIONS = [
   { id: 'general', titleKey: 'settings.general.title', icon: 'settings' },
   { id: 'downloads', titleKey: 'settings.downloads.title', icon: 'download' },
-  { id: 'processing', titleKey: 'settings.processing.title', icon: 'server' },
+  { id: 'advanced', titleKey: 'settings.advanced.title', icon: 'server' },
   {
     id: 'notifications',
     titleKey: 'settings.notifications.title',
@@ -125,6 +129,7 @@ export const SECTIONS = [
     titleKey: 'settings.integration.title',
     icon: 'extensions',
   },
+  { id: 'appearance', titleKey: 'settings.appearance.title', icon: 'pen_new' },
   { id: 'app', titleKey: 'settings.app.title', icon: 'widgets' },
   { id: 'deps', titleKey: 'settings.deps.title', icon: 'package', platforms: ['desktop'] },
   { id: 'data', titleKey: 'settings.data.title', icon: 'folder' },
@@ -141,6 +146,7 @@ export const SETTINGS: SettingDef[] = [
     options: locales.map((l) => ({ value: l.code, label: l.nativeName })),
     onSet: (v) => {
       setLocale(v as Locale);
+      invoke('rebuild_tray_menu').catch(() => {});
     },
   },
   {
@@ -153,7 +159,8 @@ export const SETTINGS: SettingDef[] = [
     descriptionKey: 'settings.general.startOnBootDescription',
     platforms: ['desktop'],
     onSet: async (v) => {
-      await invoke('set_auto_start', { enable: v });
+      await invoke(v ? 'autostart_enable' : 'autostart_disable');
+      invoke('rebuild_tray_menu').catch(() => {});
     },
   },
   {
@@ -168,29 +175,10 @@ export const SETTINGS: SettingDef[] = [
     disabled: (s) => !s.startOnBoot,
   },
   {
-    type: 'toggle',
-    key: 'watchClipboard',
-    section: 'general',
-    subsection: 'clipboard',
-    icon: 'clipboard',
-    titleKey: 'settings.general.watchClipboard',
-    descriptionKey: 'settings.general.watchClipboardTooltip',
-    platforms: ['desktop'],
-  },
-  {
-    type: 'toggle',
-    key: 'statusPopup',
-    section: 'general',
-    subsection: 'clipboard',
-    icon: 'monitor',
-    titleKey: 'settings.general.statusPopup',
-    platforms: ['desktop'],
-  },
-  {
     type: 'select',
     key: 'closeBehavior',
     section: 'general',
-    subsection: 'closeBehavior',
+    subsection: 'startup',
     icon: 'close',
     titleKey: 'settings.general.closeBehavior',
     descriptionKey: 'settings.general.closeBehaviorDescription',
@@ -203,6 +191,29 @@ export const SETTINGS: SettingDef[] = [
         { value: 'tray', label: $t('settings.general.closeBehaviorTray') },
       ];
     },
+  },
+  {
+    type: 'toggle',
+    key: 'watchClipboard',
+    section: 'general',
+    subsection: 'clipboard',
+    icon: 'clipboard',
+    titleKey: 'settings.general.watchClipboard',
+    descriptionKey: 'settings.general.watchClipboardTooltip',
+    platforms: ['desktop'],
+    onSet: () => {
+      invoke('rebuild_tray_menu').catch(() => {});
+    },
+  },
+  {
+    type: 'toggle',
+    key: 'watchClipboardForFiles',
+    section: 'general',
+    subsection: 'clipboard',
+    icon: 'clipboard',
+    titleKey: 'settings.downloads.watchClipboardForFiles',
+    descriptionKey: 'settings.downloads.watchClipboardForFilesTooltip',
+    platforms: ['desktop'],
   },
   {
     type: 'path',
@@ -237,7 +248,7 @@ export const SETTINGS: SettingDef[] = [
     type: 'toggle',
     key: 'usePlaylistFolders',
     section: 'downloads',
-    subsection: 'folders',
+    subsection: 'options',
     icon: 'playlist',
     titleKey: 'settings.downloads.usePlaylistFolders',
     descriptionKey: 'settings.downloads.usePlaylistFoldersTooltip',
@@ -246,7 +257,7 @@ export const SETTINGS: SettingDef[] = [
     type: 'toggle',
     key: 'youtubeMusicAudioOnly',
     section: 'downloads',
-    subsection: 'folders',
+    subsection: 'options',
     icon: 'headphones',
     titleKey: 'settings.downloads.youtubeMusicAudioOnly',
     descriptionKey: 'settings.downloads.youtubeMusicAudioOnlyTooltip',
@@ -255,17 +266,16 @@ export const SETTINGS: SettingDef[] = [
     type: 'toggle',
     key: 'embedThumbnail',
     section: 'downloads',
-    subsection: 'folders',
+    subsection: 'options',
     icon: 'image',
     titleKey: 'settings.downloads.embedThumbnail',
     descriptionKey: 'settings.downloads.embedThumbnailTooltip',
   },
-  // Preferred codecs subsection
   {
     type: 'select',
     key: 'preferredVideoCodec',
     section: 'downloads',
-    subsection: 'codecs',
+    subsection: 'format',
     icon: 'video',
     titleKey: 'settings.downloads.preferredVideoCodec',
     descriptionKey: 'settings.downloads.preferredVideoCodecDescription',
@@ -284,7 +294,7 @@ export const SETTINGS: SettingDef[] = [
     type: 'select',
     key: 'preferredAudioCodec',
     section: 'downloads',
-    subsection: 'codecs',
+    subsection: 'format',
     icon: 'music',
     titleKey: 'settings.downloads.preferredAudioCodec',
     descriptionKey: 'settings.downloads.preferredAudioCodecDescription',
@@ -299,12 +309,31 @@ export const SETTINGS: SettingDef[] = [
       ];
     },
   },
-  // Concurrency subsection
+  {
+    type: 'select',
+    key: 'audioFormat',
+    section: 'downloads',
+    subsection: 'format',
+    icon: 'music',
+    titleKey: 'settings.downloads.audioFormat',
+    descriptionKey: 'settings.downloads.audioFormatDescription',
+    options: () => {
+      const $t = get(t);
+      return [
+        { value: 'any', label: $t('settings.downloads.codecAny') },
+        { value: 'mp3', label: 'MP3' },
+        { value: 'm4a', label: 'M4A' },
+        { value: 'opus', label: 'Opus' },
+        { value: 'wav', label: 'WAV' },
+        { value: 'flac', label: 'FLAC' },
+      ];
+    },
+  },
   {
     type: 'slider',
     key: 'concurrentDownloads',
     section: 'downloads',
-    subsection: 'concurrency',
+    subsection: 'performance',
     icon: 'queue',
     titleKey: 'settings.downloads.concurrentDownloads',
     descriptionKey: 'settings.downloads.concurrentDownloadsDescription',
@@ -317,7 +346,7 @@ export const SETTINGS: SettingDef[] = [
     type: 'slider',
     key: 'downloadSpeedLimit',
     section: 'downloads',
-    subsection: 'concurrency',
+    subsection: 'performance',
     icon: 'tuning',
     titleKey: 'settings.downloads.downloadSpeedLimit',
     descriptionKey: 'settings.downloads.downloadSpeedLimitDescription',
@@ -327,98 +356,19 @@ export const SETTINGS: SettingDef[] = [
     suffix: ' MB/s',
     debounce: 300,
   },
-  // Notifications subsection (in downloads)
-  {
-    type: 'toggle',
-    key: 'watchClipboardForFiles',
-    section: 'downloads',
-    subsection: 'notifications',
-    icon: 'clipboard',
-    titleKey: 'settings.downloads.watchClipboardForFiles',
-    descriptionKey: 'settings.downloads.watchClipboardForFilesTooltip',
-    platforms: ['desktop'],
-  },
-  {
-    type: 'toggle',
-    key: 'fileDownloadNotifications',
-    section: 'downloads',
-    subsection: 'notifications',
-    icon: 'bell',
-    titleKey: 'settings.downloads.fileDownloadNotifications',
-    descriptionKey: 'settings.downloads.fileDownloadNotificationsTooltip',
-    platforms: ['desktop'],
-  },
-  // aria2 subsection
-  {
-    type: 'slider',
-    key: 'aria2Connections',
-    section: 'downloads',
-    subsection: 'aria2',
-    icon: 'link',
-    titleKey: 'settings.downloads.aria2Connections',
-    descriptionKey: 'settings.downloads.aria2ConnectionsDescription',
-    min: 1,
-    max: 16,
-    step: 1,
-    debounce: 300,
-  },
-  {
-    type: 'slider',
-    key: 'aria2Splits',
-    section: 'downloads',
-    subsection: 'aria2',
-    icon: 'queue',
-    titleKey: 'settings.downloads.aria2Splits',
-    descriptionKey: 'settings.downloads.aria2SplitsDescription',
-    min: 1,
-    max: 16,
-    step: 1,
-    debounce: 300,
-  },
-  {
-    type: 'toggle',
-    key: 'aria2DisableIPv6',
-    section: 'downloads',
-    subsection: 'aria2',
-    icon: 'globe',
-    titleKey: 'settings.downloads.aria2DisableIPv6',
-    descriptionKey: 'settings.downloads.aria2DisableIPv6Description',
-  },
-  {
-    type: 'input',
-    key: 'aria2CustomArgs',
-    section: 'downloads',
-    subsection: 'aria2',
-    icon: 'code',
-    titleKey: 'settings.downloads.aria2CustomArgs',
-    descriptionKey: 'settings.downloads.aria2CustomArgsDescription',
-    placeholder: '--max-tries=5',
-    width: 250,
-  },
-  // Network subsection (in downloads)
-  {
-    type: 'toggle',
-    key: 'bypassProxyForDownloads',
-    section: 'downloads',
-    subsection: 'network',
-    icon: 'download',
-    titleKey: 'settings.downloads.bypassProxyForDownloads',
-    descriptionKey: 'settings.downloads.bypassProxyForDownloadsDescription',
-    visible: (s) => s.proxyMode !== 'none',
-  },
 
   {
     type: 'select',
     key: 'defaultProcessor',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'backend',
     icon: 'server',
-    titleKey: 'settings.processing.defaultProcessor',
-    descriptionKey: 'settings.processing.defaultProcessorDescription',
+    titleKey: 'settings.advanced.defaultProcessor',
+    descriptionKey: 'settings.advanced.defaultProcessorDescription',
     options: (p) => {
       const $t = get(t);
       const opts = [
-        { value: 'auto', label: $t('settings.processing.auto') },
+        { value: 'auto', label: $t('settings.advanced.auto') },
         { value: 'yt-dlp', label: 'yt-dlp' },
       ];
       if (p !== 'android') opts.push({ value: 'lux', label: 'Lux' });
@@ -428,38 +378,38 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'input',
     key: 'youtubePlayerClient',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'youtube',
     icon: 'video',
-    titleKey: 'settings.processing.youtubePlayerClient',
-    descriptionKey: 'settings.processing.youtubePlayerClientDescription',
+    titleKey: 'settings.advanced.youtubePlayerClient',
+    descriptionKey: 'settings.advanced.youtubePlayerClientDescription',
     placeholder: 'default,-android_sdkless',
     width: 200,
   },
   {
     type: 'toggle',
     key: 'usePlayerClientForExtraction',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'youtube',
     icon: 'link',
-    titleKey: 'settings.processing.usePlayerClientForExtraction',
-    descriptionKey: 'settings.processing.usePlayerClientForExtractionDescription',
+    titleKey: 'settings.advanced.usePlayerClientForExtraction',
+    descriptionKey: 'settings.advanced.usePlayerClientForExtractionDescription',
   },
   {
     type: 'input',
     key: 'extractionPlayerClient',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'youtube',
     icon: 'link',
-    titleKey: 'settings.processing.extractionPlayerClient',
-    descriptionKey: 'settings.processing.extractionPlayerClientDescription',
+    titleKey: 'settings.advanced.extractionPlayerClient',
+    descriptionKey: 'settings.advanced.extractionPlayerClientDescription',
     placeholder: 'default,-android_sdkless',
     visible: (s) => !s.usePlayerClientForExtraction,
   },
   {
     type: 'toggle',
     key: 'ytdlpAdvanced.extractionFlatPlaylist',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'extraction',
     icon: 'queue',
     titleKey: 'ytdlp.advanced.extraction.flatPlaylist',
@@ -468,7 +418,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'toggle',
     key: 'ytdlpAdvanced.extractionNoPlaylist',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'extraction',
     icon: 'video',
     titleKey: 'ytdlp.advanced.extraction.noPlaylist',
@@ -477,7 +427,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'toggle',
     key: 'ytdlpAdvanced.extractionPlayerSkipWebpage',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'extraction',
     icon: 'graph',
     titleKey: 'ytdlp.advanced.extraction.skipWebpage',
@@ -486,7 +436,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'toggle',
     key: 'ytdlpAdvanced.extractionPlayerSkipConfigs',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'extraction',
     icon: 'cog',
     titleKey: 'ytdlp.advanced.extraction.skipConfigs',
@@ -495,7 +445,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'input',
     key: 'ytdlpAdvanced.extractionCustomArgs',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'extraction',
     icon: 'code',
     titleKey: 'ytdlp.advanced.extraction.customArgs',
@@ -507,7 +457,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'toggle',
     key: 'ytdlpAdvanced.downloadNoPlaylist',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'download',
     icon: 'video',
     titleKey: 'ytdlp.advanced.download.noPlaylist',
@@ -516,7 +466,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'slider',
     key: 'ytdlpAdvanced.downloadConcurrentFragments',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'download',
     icon: 'documents',
     titleKey: 'ytdlp.advanced.download.concurrentFragments',
@@ -529,7 +479,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'slider',
     key: 'ytdlpAdvanced.downloadRetries',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'download',
     icon: 'refresh',
     titleKey: 'ytdlp.advanced.download.retries',
@@ -542,7 +492,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'slider',
     key: 'ytdlpAdvanced.downloadFragmentRetries',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'download',
     icon: 'refresh',
     titleKey: 'ytdlp.advanced.download.fragmentRetries',
@@ -555,7 +505,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'input',
     key: 'ytdlpAdvanced.downloadCustomArgs',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'download',
     icon: 'code',
     titleKey: 'ytdlp.advanced.download.customArgs',
@@ -567,7 +517,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'input',
     key: 'ytdlpAdvanced.outputTemplate',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'output',
     icon: 'file_text',
     titleKey: 'ytdlp.advanced.output.template',
@@ -578,7 +528,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'toggle',
     key: 'ytdlpAdvanced.outputRestrictFilenames',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'output',
     icon: 'file_text',
     titleKey: 'ytdlp.advanced.output.restrictFilenames',
@@ -587,7 +537,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'toggle',
     key: 'ytdlpAdvanced.outputWindowsFilenames',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'output',
     icon: 'file_text',
     titleKey: 'ytdlp.advanced.output.windowsFilenames',
@@ -597,7 +547,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'toggle',
     key: 'ytdlpAdvanced.postProcessKeepOriginal',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'postProcess',
     icon: 'copy',
     titleKey: 'ytdlp.advanced.postProcess.keepOriginal',
@@ -606,7 +556,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'toggle',
     key: 'ytdlpAdvanced.postProcessEmbedInfoJson',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'postProcess',
     icon: 'code',
     titleKey: 'ytdlp.advanced.postProcess.embedInfoJson',
@@ -615,7 +565,7 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'input',
     key: 'ytdlpAdvanced.postProcessCustomArgs',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'postProcess',
     icon: 'code',
     titleKey: 'ytdlp.advanced.postProcess.customArgs',
@@ -624,11 +574,10 @@ export const SETTINGS: SettingDef[] = [
     width: 250,
   },
 
-  // FFmpeg Settings
   {
     type: 'select',
     key: 'ffmpeg.hwAccel',
-    section: 'processing',
+    section: 'advanced',
     subsection: 'ffmpeg',
     icon: 'server',
     titleKey: 'settings.ffmpeg.hwAccel',
@@ -646,6 +595,52 @@ export const SETTINGS: SettingDef[] = [
       ];
     },
     width: 200,
+  },
+  {
+    type: 'slider',
+    key: 'aria2Connections',
+    section: 'advanced',
+    subsection: 'aria2',
+    icon: 'link',
+    titleKey: 'settings.downloads.aria2Connections',
+    descriptionKey: 'settings.downloads.aria2ConnectionsDescription',
+    min: 1,
+    max: 16,
+    step: 1,
+    debounce: 300,
+  },
+  {
+    type: 'slider',
+    key: 'aria2Splits',
+    section: 'advanced',
+    subsection: 'aria2',
+    icon: 'queue',
+    titleKey: 'settings.downloads.aria2Splits',
+    descriptionKey: 'settings.downloads.aria2SplitsDescription',
+    min: 1,
+    max: 16,
+    step: 1,
+    debounce: 300,
+  },
+  {
+    type: 'toggle',
+    key: 'aria2DisableIPv6',
+    section: 'advanced',
+    subsection: 'aria2',
+    icon: 'globe',
+    titleKey: 'settings.downloads.aria2DisableIPv6',
+    descriptionKey: 'settings.downloads.aria2DisableIPv6Description',
+  },
+  {
+    type: 'input',
+    key: 'aria2CustomArgs',
+    section: 'advanced',
+    subsection: 'aria2',
+    icon: 'code',
+    titleKey: 'settings.downloads.aria2CustomArgs',
+    descriptionKey: 'settings.downloads.aria2CustomArgsDescription',
+    placeholder: '--max-tries=5',
+    width: 250,
   },
 
   {
@@ -666,6 +661,16 @@ export const SETTINGS: SettingDef[] = [
     icon: 'download',
     titleKey: 'settings.notifications.showProgress',
     descriptionKey: 'settings.notifications.showProgressTooltip',
+    platforms: ['desktop'],
+  },
+  {
+    type: 'toggle',
+    key: 'fileDownloadNotifications',
+    section: 'notifications',
+    subsection: 'general',
+    icon: 'bell',
+    titleKey: 'settings.downloads.fileDownloadNotifications',
+    descriptionKey: 'settings.downloads.fileDownloadNotificationsTooltip',
     platforms: ['desktop'],
   },
   {
@@ -812,6 +817,15 @@ export const SETTINGS: SettingDef[] = [
     visible: (s) => s.proxyMode !== 'none',
   },
   {
+    type: 'toggle',
+    key: 'bypassProxyForDownloads',
+    section: 'network',
+    icon: 'download',
+    titleKey: 'settings.downloads.bypassProxyForDownloads',
+    descriptionKey: 'settings.downloads.bypassProxyForDownloadsDescription',
+    visible: (s) => s.proxyMode !== 'none',
+  },
+  {
     type: 'custom',
     key: 'network-check',
     section: 'network',
@@ -829,35 +843,38 @@ export const SETTINGS: SettingDef[] = [
   },
 
   {
-    type: 'custom',
-    key: 'app-updates',
-    section: 'app',
-    subsection: 'updates',
-    titleKey: 'settings.app.updates',
-  },
-  {
-    type: 'toggle',
-    key: 'allowPreReleases',
-    section: 'app',
-    subsection: 'updates',
-    icon: 'star',
-    titleKey: 'settings.app.allowPreReleases',
-    descriptionKey: 'settings.app.allowPreReleasesTooltip',
-  },
-  {
-    type: 'toggle',
-    key: 'sendStats',
-    section: 'app',
-    subsection: 'privacy',
-    icon: 'stats',
-    titleKey: 'settings.app.sendStats',
-    descriptionKey: 'settings.app.sendStatsTooltip',
+    type: 'select',
+    key: 'windowControlsStyle',
+    section: 'appearance',
+    subsection: 'layout',
+    icon: 'widgets',
+    titleKey: 'settings.app.windowControlsStyle',
+    descriptionKey: 'settings.app.windowControlsStyleDescription',
+    platforms: ['desktop'],
+    options: () => {
+      const $t = get(t);
+      return [
+        { value: 'auto', label: $t('settings.app.windowControlsAuto') },
+        { value: 'windows', label: $t('settings.app.windowControlsWindows') },
+        { value: 'macos', label: $t('settings.app.windowControlsMacos') },
+      ];
+    },
+    keywords: [
+      'window',
+      'controls',
+      'titlebar',
+      'traffic lights',
+      'buttons',
+      'minimize',
+      'maximize',
+      'close',
+    ],
   },
   {
     type: 'select',
     key: 'backgroundType',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'background',
     icon: 'image',
     titleKey: 'settings.app.background',
     descriptionKey: 'settings.app.backgroundDescription',
@@ -903,8 +920,8 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'color',
     key: 'backgroundColor',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'background',
     icon: 'starry',
     titleKey: 'settings.app.backgroundColor',
     visible: (s) => s.backgroundType === 'solid',
@@ -912,8 +929,8 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'path',
     key: 'backgroundVideo',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'background',
     icon: 'video',
     titleKey: 'settings.app.backgroundVideoUrl',
     descriptionKey: 'settings.app.backgroundVideoUrlDescription',
@@ -923,8 +940,8 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'path',
     key: 'backgroundImage',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'background',
     icon: 'image',
     titleKey: 'settings.app.backgroundImageUrl',
     descriptionKey: 'settings.app.backgroundImageUrlDescription',
@@ -934,8 +951,8 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'slider',
     key: 'backgroundBlur',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'background',
     icon: 'blur',
     titleKey: 'settings.app.backgroundBlurAmount',
     descriptionKey: 'settings.app.backgroundBlurAmountDescription',
@@ -949,8 +966,8 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'slider',
     key: 'backgroundOpacity',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'background',
     icon: 'image',
     titleKey: 'settings.app.backgroundOpacity',
     descriptionKey: 'settings.app.backgroundOpacityDescription',
@@ -980,8 +997,8 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'slider',
     key: 'windowTint',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'background',
     icon: 'image',
     titleKey: 'settings.app.windowTint',
     descriptionKey: 'settings.app.windowTintDescription',
@@ -997,23 +1014,23 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'custom',
     key: 'accent-picker',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'theme',
     titleKey: 'settings.app.accentColor',
     keywords: ['accent', 'color', 'theme', 'system', 'material', 'rgb'],
   },
   {
     type: 'custom',
     key: 'accent-style',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'theme',
     titleKey: 'settings.app.accentStyle',
   },
   {
     type: 'select',
     key: 'surfaceStyle',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'theme',
     icon: 'widgets',
     titleKey: 'settings.app.surfaceStyle',
     descriptionKey: 'settings.app.surfaceStyleDescription',
@@ -1033,8 +1050,8 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'slider',
     key: 'surfaceCustom.opacity',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'theme',
     icon: 'blur',
     titleKey: 'settings.app.surfaceOpacity',
     min: 30,
@@ -1047,8 +1064,8 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'slider',
     key: 'surfaceCustom.borderOpacity',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'theme',
     icon: 'tuning',
     titleKey: 'settings.app.surfaceBorderOpacity',
     min: 0,
@@ -1061,8 +1078,8 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'select',
     key: 'surfaceCustom.shadowIntensity',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'theme',
     icon: 'starry',
     titleKey: 'settings.app.surfaceShadow',
     options: () => {
@@ -1079,8 +1096,8 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'slider',
     key: 'surfaceCustom.accentTint',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'theme',
     icon: 'pen_new',
     titleKey: 'settings.app.surfaceAccentTint',
     min: 0,
@@ -1093,8 +1110,8 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'select',
     key: 'borderRadius',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'layout',
     icon: 'widget',
     titleKey: 'settings.app.borderRadius',
     descriptionKey: 'settings.app.borderRadiusDescription',
@@ -1113,8 +1130,8 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'slider',
     key: 'borderRadiusCustom',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'layout',
     icon: 'widget',
     titleKey: 'settings.app.borderRadiusCustom',
     min: 0,
@@ -1127,8 +1144,8 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'select',
     key: 'textScale',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'layout',
     icon: 'text',
     titleKey: 'settings.app.textScale',
     descriptionKey: 'settings.app.textScaleDescription',
@@ -1146,8 +1163,8 @@ export const SETTINGS: SettingDef[] = [
   {
     type: 'slider',
     key: 'textScaleCustom',
-    section: 'app',
-    subsection: 'appearance',
+    section: 'appearance',
+    subsection: 'layout',
     icon: 'text',
     titleKey: 'settings.app.textScaleCustom',
     min: 0.8,
@@ -1157,12 +1174,81 @@ export const SETTINGS: SettingDef[] = [
     debounce: 100,
     visible: (s) => s.textScale === 'custom',
   },
-
+  {
+    type: 'toggle',
+    key: 'thumbnailTheming',
+    section: 'appearance',
+    subsection: 'layout',
+    icon: 'pen_new',
+    titleKey: 'settings.app.thumbnailTheming',
+    descriptionKey: 'settings.app.thumbnailThemingDescription',
+  },
+  {
+    type: 'toggle',
+    key: 'builderThumbnailGlow',
+    section: 'appearance',
+    subsection: 'layout',
+    icon: 'blur',
+    titleKey: 'settings.app.builderThumbnailGlow',
+    descriptionKey: 'settings.app.builderThumbnailGlowDescription',
+  },
+  {
+    type: 'toggle',
+    key: 'compactSidebar',
+    section: 'appearance',
+    subsection: 'layout',
+    icon: 'minimize_square',
+    titleKey: 'settings.app.compactSidebar',
+    descriptionKey: 'settings.app.compactSidebarDescription',
+    platforms: ['desktop'],
+  },
+  {
+    type: 'select',
+    key: 'navigationStyle',
+    section: 'appearance',
+    subsection: 'layout',
+    icon: 'hamburger_menu_line_duotone',
+    titleKey: 'settings.app.navigationStyle',
+    descriptionKey: 'settings.app.navigationStyleDescription',
+    options: () => {
+      const $t = get(t);
+      return [
+        { value: 'auto', label: $t('settings.app.navigationStyleAuto') },
+        { value: 'navbar', label: $t('settings.app.navigationStyleNavbar') },
+        { value: 'sidebar', label: $t('settings.app.navigationStyleSidebar') },
+      ];
+    },
+  },
+  {
+    type: 'custom',
+    key: 'app-updates',
+    section: 'app',
+    subsection: 'updates',
+    titleKey: 'settings.app.updates',
+  },
+  {
+    type: 'toggle',
+    key: 'allowPreReleases',
+    section: 'app',
+    subsection: 'updates',
+    icon: 'star',
+    titleKey: 'settings.app.allowPreReleases',
+    descriptionKey: 'settings.app.allowPreReleasesTooltip',
+  },
+  {
+    type: 'toggle',
+    key: 'sendStats',
+    section: 'app',
+    subsection: 'privacy',
+    icon: 'stats',
+    titleKey: 'settings.app.sendStats',
+    descriptionKey: 'settings.app.sendStatsTooltip',
+  },
   {
     type: 'toggle',
     key: 'disableAnimations',
     section: 'app',
-    subsection: 'general',
+    subsection: 'preferences',
     icon: 'stop',
     titleKey: 'settings.app.disableAnimations',
   },
@@ -1170,7 +1256,7 @@ export const SETTINGS: SettingDef[] = [
     type: 'select',
     key: 'toastPosition',
     section: 'app',
-    subsection: 'general',
+    subsection: 'preferences',
     icon: 'chat',
     titleKey: 'settings.notifications.toastPosition',
     descriptionKey: 'settings.notifications.toastPositionDescription',
@@ -1190,7 +1276,7 @@ export const SETTINGS: SettingDef[] = [
     type: 'select',
     key: 'sizeUnit',
     section: 'app',
-    subsection: 'general',
+    subsection: 'preferences',
     icon: 'weight',
     titleKey: 'settings.app.sizeUnit',
     descriptionKey: 'settings.app.sizeUnitDescription',
@@ -1206,7 +1292,7 @@ export const SETTINGS: SettingDef[] = [
     type: 'toggle',
     key: 'showHistoryStats',
     section: 'app',
-    subsection: 'general',
+    subsection: 'preferences',
     icon: 'history',
     titleKey: 'settings.app.showHistoryStats',
     descriptionKey: 'settings.app.showHistoryStatsDescription',
@@ -1215,7 +1301,7 @@ export const SETTINGS: SettingDef[] = [
     type: 'slider',
     key: 'gridItemSize',
     section: 'app',
-    subsection: 'general',
+    subsection: 'preferences',
     icon: 'gallery',
     titleKey: 'settings.app.gridItemSize',
     descriptionKey: 'settings.app.gridItemSizeDescription',
@@ -1225,24 +1311,6 @@ export const SETTINGS: SettingDef[] = [
     suffix: 'px',
     debounce: 100,
   },
-  {
-    type: 'toggle',
-    key: 'thumbnailTheming',
-    section: 'app',
-    subsection: 'appearance',
-    icon: 'pen_new',
-    titleKey: 'settings.app.thumbnailTheming',
-    descriptionKey: 'settings.app.thumbnailThemingDescription',
-  },
-  {
-    type: 'toggle',
-    key: 'builderThumbnailGlow',
-    section: 'app',
-    subsection: 'appearance',
-    icon: 'blur',
-    titleKey: 'settings.app.builderThumbnailGlow',
-    descriptionKey: 'settings.app.builderThumbnailGlowDescription',
-  },
 
   {
     type: 'custom',
@@ -1250,6 +1318,25 @@ export const SETTINGS: SettingDef[] = [
     section: 'deps',
     titleKey: 'settings.deps.title',
     platforms: ['desktop'],
+  },
+  {
+    type: 'toggle',
+    key: 'checkDepUpdates',
+    section: 'deps',
+    icon: 'refresh',
+    titleKey: 'settings.deps.checkDepUpdates',
+    descriptionKey: 'settings.deps.checkDepUpdatesDescription',
+    platforms: ['desktop'],
+  },
+  {
+    type: 'toggle',
+    key: 'autoUpdateDeps',
+    section: 'deps',
+    icon: 'download',
+    titleKey: 'settings.deps.autoUpdateDeps',
+    descriptionKey: 'settings.deps.autoUpdateDepsDescription',
+    platforms: ['desktop'],
+    visible: (s) => s.checkDepUpdates,
   },
 
   {

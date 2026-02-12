@@ -1,37 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
-import type {
-  ResolveResult,
-  UrlInfo,
-  VideoFormat,
-  PlaylistEntry,
-  ProxyConfig as BindingProxyConfig,
-} from '$lib/bindings';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import type { ResolveResult, ResolveEvent, ProxyConfig as BindingProxyConfig } from '$lib/bindings';
 import type { ProxyConfig as AppProxyConfig } from '$lib/stores/settings';
-
-export type { ResolveResult, UrlInfo, VideoFormat, PlaylistEntry };
-
-const resolveCache = new Map<string, { result: ResolveResult; timestamp: number }>();
-const CACHE_TTL = 5 * 60 * 1000;
-
-function getCached(key: string): ResolveResult | null {
-  const cached = resolveCache.get(key);
-  if (!cached) return null;
-  if (Date.now() - cached.timestamp > CACHE_TTL) {
-    resolveCache.delete(key);
-    return null;
-  }
-  return cached.result;
-}
-
-function setCache(key: string, result: ResolveResult) {
-  if (resolveCache.size > 100) {
-    const oldest = Array.from(resolveCache.entries()).sort(
-      (a, b) => a[1].timestamp - b[1].timestamp
-    )[0];
-    if (oldest) resolveCache.delete(oldest[0]);
-  }
-  resolveCache.set(key, { result, timestamp: Date.now() });
-}
 
 export interface ResolveSettings {
   cookies_from_browser?: string | null;
@@ -39,6 +9,10 @@ export interface ResolveSettings {
   proxy?: BindingProxyConfig | null;
   youtube_player_client?: string | null;
   flat_playlist?: boolean;
+  /** Number of entries to fetch per page (default: fetch all) */
+  page_size?: number | null;
+  /** Cursor for pagination (typically the 1-based start index) */
+  cursor?: string | null;
 }
 
 export function convertProxyConfig(appConfig: AppProxyConfig): BindingProxyConfig {
@@ -54,11 +28,47 @@ export function convertProxyConfig(appConfig: AppProxyConfig): BindingProxyConfi
 }
 
 export async function resolveUrl(url: string, settings?: ResolveSettings): Promise<ResolveResult> {
-  const cacheKey = settings ? `${url}::${JSON.stringify(settings)}` : url;
-  const cached = getCached(cacheKey);
-  if (cached) return cached;
+  return invoke<ResolveResult>('resolve_url', { url, settings: settings ?? null });
+}
 
-  const result = await invoke<ResolveResult>('resolve_url', { url, settings: settings ?? null });
-  setCache(cacheKey, result);
-  return result;
+export type ResolveEventCallback = (event: ResolveEvent) => void;
+
+export interface StreamingResolveSession {
+  cancel: () => Promise<void>;
+  unlisten: () => void;
+}
+
+export async function resolveUrlStream(
+  url: string,
+  settings: ResolveSettings | undefined,
+  onEvent: ResolveEventCallback
+): Promise<StreamingResolveSession> {
+  const resolveId = crypto.randomUUID();
+  const eventName = `resolve-event:${resolveId}`;
+
+  // Set up the listener BEFORE starting the resolve
+  const unlisten = await listen<ResolveEvent>(eventName, (event) => {
+    onEvent(event.payload);
+  });
+
+  try {
+    await invoke('resolve_url_stream', {
+      resolveId,
+      url,
+      settings: settings ?? null,
+    });
+  } catch (e) {
+    unlisten();
+    throw e;
+  }
+
+  return {
+    cancel: async () => {
+      try {
+        await invoke('cancel_resolve_stream', { resolveId });
+      } catch {}
+      unlisten();
+    },
+    unlisten,
+  };
 }

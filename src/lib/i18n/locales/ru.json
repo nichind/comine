@@ -97,6 +97,7 @@
     "error": "Ошибка загрузки",
     "errorDiskFull": "Недостаточно места на диске",
     "pasteFromClipboard": "Вставить из буфера",
+    "filename_template": "Шаблон имени файла",
     "youtubeDetected": "Видео с YouTube",
     "playlistDetected": "Обнаружен плейлист",
     "customizeDownload": "Настроить",
@@ -172,6 +173,9 @@
       "noCombined": "Нет комбинированных форматов. Используйте Конструктор для выбора видео и аудио отдельно.",
       "addedToQueue": "Добавлено в очередь",
       "download": "Скачать"
+    },
+    "files": {
+      "count": "файлов"
     },
     "tracks": {
       "loading": "Загрузка форматов...",
@@ -250,6 +254,18 @@
       "advancedDesc": "Лимит скорости, папки и другие настройки"
     }
   },
+  "resolve": {
+    "music": {
+      "track": "Трек",
+      "artist": "Исполнитель",
+      "album": "Альбом",
+      "genre": "Жанр",
+      "year": "Год",
+      "disc": "Диск"
+    },
+    "categories": "Категории",
+    "tags": "Теги"
+  },
   "downloads": {
     "title": "Загрузки",
     "subtitle": "Активные и завершённые загрузки",
@@ -325,6 +341,7 @@
     "selectItem": "Выбрать",
     "deselectItem": "Снять выбор",
     "selected": "выбрано",
+    "selectAll": "Выбрать все",
     "clearSelection": "Снять выделение",
     "noFilePath": "Путь к файлу недоступен для этого элемента",
     "fileMissing": "Файл больше не существует",
@@ -464,7 +481,6 @@
   "settings": {
     "title": "Настройки",
     "subtitle": "Настройка приложения",
-    "comingSoon": "Настройки скоро появятся...",
     "noResults": "Настройки не найдены для",
     "resetSection": "Сбросить",
     "resetSectionTooltip": "Сбросить настройки раздела",
@@ -474,6 +490,10 @@
     },
     "general": {
       "title": "Основные",
+      "groups": {
+        "startup": "Запуск и окно",
+        "clipboard": "Буфер обмена"
+      },
       "language": "Язык",
       "startOnBoot": "Запускать при старте системы",
       "startOnBootDescription": "Запускать Comine автоматически при входе в систему",
@@ -488,15 +508,19 @@
       "closeBehaviorTray": "Свернуть в трей",
       "closeBehaviorMinimize": "Свернуть в панель задач",
       "closeBehaviorClose": "Закрыть приложение",
-      "showNotifications": "Показывать уведомления",
-      "downloadPath": "Папка загрузок",
       "browse": "Обзор"
     },
-    "processing": {
-      "title": "Бэкенд загрузки",
+    "advanced": {
+      "title": "Расширенные",
       "groups": {
         "backend": "Бэкенд",
-        "youtube": "YouTube"
+        "youtube": "yt-dlp: YouTube",
+        "extraction": "yt-dlp: Извлечение",
+        "download": "yt-dlp: Загрузка",
+        "output": "yt-dlp: Вывод",
+        "postProcess": "yt-dlp: Пост-обработка",
+        "aria2": "aria2",
+        "ffmpeg": "FFmpeg"
       },
       "defaultProcessor": "Процессор по умолчанию",
       "defaultProcessorDescription": "Какой бэкенд использовать по умолчанию",
@@ -533,6 +557,11 @@
     },
     "downloads": {
       "title": "Загрузки",
+      "groups": {
+        "options": "Параметры",
+        "format": "Формат и кодеки",
+        "performance": "Производительность"
+      },
       "downloadPath": "Папка загрузок",
       "downloadPathDescription": "Куда сохраняются загруженные файлы",
       "defaultPath": "По умолчанию системная",
@@ -549,6 +578,8 @@
       "preferredVideoCodecDescription": "Использовать этот кодек при наличии, иначе — другие доступные",
       "preferredAudioCodec": "Предпочтительный аудиокодек",
       "preferredAudioCodecDescription": "Использовать этот кодек при наличии, иначе — другие доступные",
+      "audioFormat": "Формат аудио",
+      "audioFormatDescription": "Конвертировать аудио в этот формат. «Любой» сохраняет исходный формат",
       "codecAny": "Любой (лучший доступный)",
       "concurrentDownloads": "Параллельные загрузки",
       "concurrentDownloadsDescription": "Количество загрузок, которые могут выполняться одновременно",
@@ -571,11 +602,19 @@
       "bypassProxyForDownloads": "Скачивать файлы без прокси",
       "bypassProxyForDownloadsDescription": "Загружать файлы напрямую без использования прокси (быстрее)"
     },
+    "appearance": {
+      "title": "Внешний вид",
+      "groups": {
+        "background": "Фон",
+        "theme": "Цвета и поверхности",
+        "layout": "Компоновка и типографика"
+      }
+    },
     "app": {
       "title": "Приложение",
       "groups": {
-        "appearance": "Внешний вид",
-        "privacy": "Конфиденциальность"
+        "privacy": "Конфиденциальность",
+        "preferences": "Настройки"
       },
       "updates": "Обновления",
       "currentVersion": "Текущая версия: {version}",
@@ -597,6 +636,11 @@
       "telemetryNotice": "Анонимная статистика помогает улучшить Comine",
       "acrylicBackground": "Использовать акриловый фон",
       "disableAnimations": "Отключить анимации",
+      "windowControlsStyle": "Стиль кнопок окна",
+      "windowControlsStyleDescription": "Внешний вид кнопок свернуть, развернуть и закрыть",
+      "windowControlsAuto": "Авто (определить платформу)",
+      "windowControlsWindows": "Windows",
+      "windowControlsMacos": "macOS",
       "background": "Фон",
       "backgroundDescription": "Выберите стиль фона приложения",
       "backgroundAcrylic": "Акрил",
@@ -688,6 +732,13 @@
       "thumbnailThemingDescription": "Использовать цвета миниатюр для прогресс-баров и эффектов наведения",
       "builderThumbnailGlow": "Свечение в окнах просмотра",
       "builderThumbnailGlowDescription": "Применять мягкое свечение цветов миниатюры в окнах видео, плейлистов и каналов",
+      "compactSidebar": "Компактная боковая панель",
+      "compactSidebarDescription": "Уменьшает ширину боковой панели, размер иконок и отступы",
+      "navigationStyle": "Стиль навигации",
+      "navigationStyleDescription": "Выберите боковую панель или нижнюю панель навигации",
+      "navigationStyleAuto": "Авто (определить платформу)",
+      "navigationStyleNavbar": "Нижняя панель",
+      "navigationStyleSidebar": "Боковая панель",
       "resetToDefault": "Сбросить"
     },
     "network": {
@@ -785,6 +836,7 @@
       "denoDescription": "JavaScript-рантайм для yt-dlp при работе с YouTube. Исправляет ошибки 'Войдите, чтобы подтвердить, что вы не бот'",
       "quickjsDescription": "Легковесный JavaScript-рантайм для PO токенов yt-dlp. Альтернатива Deno для обхода защиты YouTube от ботов",
       "luxDescription": "Альтернативный загрузчик для Bilibili, Douyin, TikTok и 40+ китайских платформ",
+      "galleryDlDescription": "Загружает изображения, галереи и файлы с Pixiv, Danbooru, Kemono, DeviantArt и 100+ сайтов",
       "missingRequired": "Отсутствуют необходимые компоненты",
       "missingYtdlp": "yt-dlp не установлен. Установите его в Настройки → Зависимости.",
       "missingFfmpeg": "ffmpeg не установлен. Установите его в Настройки → Зависимости.",
@@ -795,7 +847,11 @@
       "switchToStable": "Переключить на стабильную версию",
       "switchingChannel": "Переключение yt-dlp на {channel}...",
       "channelSwitched": "yt-dlp переключен на {channel} ({version})",
-      "channelSwitchFailed": "Не удалось переключить канал: {error}"
+      "channelSwitchFailed": "Не удалось переключить канал: {error}",
+      "checkDepUpdates": "Проверять обновления зависимостей",
+      "checkDepUpdatesDescription": "Периодически проверять наличие обновлений для установленных зависимостей",
+      "autoUpdateDeps": "Автоматическое обновление зависимостей",
+      "autoUpdateDepsDescription": "Автоматически обновлять зависимости при наличии обновлений"
     },
     "data": {
       "title": "Данные",
@@ -858,28 +914,6 @@
       "durationDescription": "Время до автоматического закрытия уведомления",
       "showProgress": "Показывать прогресс загрузки",
       "showProgressTooltip": "Оставить уведомление открытым для отображения прогресса и действий после загрузки"
-    },
-    "appearance": {
-      "title": "Оформление",
-      "theme": "Тема",
-      "themes": {
-        "system": "Системная",
-        "dark": "Тёмная",
-        "light": "Светлая"
-      }
-    },
-    "extensions": {
-      "title": "Расширения",
-      "warning": "Расширения могут получить доступ к вашим данным. Устанавливайте только из проверенных источников.",
-      "installed": "Установленные расширения",
-      "browse": "Обзор расширений"
-    },
-    "about": {
-      "title": "О программе",
-      "version": "Версия",
-      "checkUpdates": "Проверить обновления",
-      "changelog": "История изменений",
-      "licenses": "Лицензии открытого ПО"
     }
   },
   "info": {
@@ -980,6 +1014,12 @@
   "tray": {
     "show": "Показать Comine",
     "downloadClipboard": "Скачать из буфера",
+    "startOnBoot": "Запуск при старте",
+    "watchClipboard": "Следить за буфером",
+    "pauseAll": "Приостановить все",
+    "resumeAll": "Возобновить все",
+    "recentDownloads": "Недавние загрузки",
+    "noRecentDownloads": "Нет недавних загрузок",
     "quit": "Выход",
     "hiddenToTray": "Comine свёрнут в системный трей"
   },
@@ -1116,7 +1156,11 @@
     "bundleFailed": "Ошибка установки",
     "setupRequired": "Требуется настройка",
     "componentsNeeded": "компонентов",
-    "installAll": "Установить всё"
+    "installAll": "Установить всё",
+    "updateAvailableFor": "Доступно обновление для",
+    "updatesAvailable": "Доступны обновления",
+    "updateNow": "Обновить",
+    "updateAll": "Обновить всё"
   },
   "ytdlp": {
     "advanced": {

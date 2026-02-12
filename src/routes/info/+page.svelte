@@ -1,57 +1,9 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import Icon from '$lib/components/Icon.svelte';
+  import Icon from '$lib/components/ui/Icon.svelte';
   import { tooltip } from '$lib/actions/tooltip';
-  import Divider from '$lib/components/Divider.svelte';
-  import ScrollArea from '$lib/components/ScrollArea.svelte';
-  import { onMount } from 'svelte';
-  import { beforeNavigate } from '$app/navigation';
-  import { saveScrollPosition, getScrollPosition } from '$lib/stores/scroll';
-
-  const ROUTE_PATH = '/info';
-
-  let scrollAreaRef: ScrollArea | undefined = $state(undefined);
-
-  beforeNavigate(() => {
-    const pos = scrollAreaRef?.getScroll() ?? 0;
-    saveScrollPosition(ROUTE_PATH, pos);
-  });
-
-  let isAtBottom = $state(false);
-
-  onMount(() => {
-    const savedPosition = getScrollPosition(ROUTE_PATH);
-    if (savedPosition > 0) {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          scrollAreaRef?.restoreScroll(savedPosition);
-        });
-      });
-    }
-
-    let container: HTMLElement | null =
-      document.querySelector('.scroll-area') || document.querySelector('main');
-
-    if (container) {
-      const checkScroll = () => {
-        if (!container) return;
-        const { scrollTop, scrollHeight, clientHeight } = container;
-        isAtBottom = scrollTop + clientHeight >= scrollHeight - 10;
-      };
-      container.addEventListener('scroll', checkScroll);
-      checkScroll();
-
-      return () => {
-        if (container) {
-          container.removeEventListener('scroll', checkScroll);
-          container = null;
-        }
-        isAtBottom = false;
-      };
-    }
-    return undefined;
-  });
+  import PageShell from '$lib/components/layout/PageShell.svelte';
 
   const APP_VERSION = __APP_VERSION__;
   const GIT_BRANCH = __GIT_BRANCH__;
@@ -82,138 +34,114 @@
   }
 </script>
 
-<div class="page">
-  <ScrollArea bind:this={scrollAreaRef}>
-    <div class="page-header">
-      <h1>{$t('info.title')}</h1>
-      <p class="subtitle">{$t('info.subtitle')}</p>
-    </div>
+<PageShell
+  title={$t('info.title')}
+  subtitle={$t('info.subtitle')}
+  scrollMode="scroll-area"
+  preserveScrollKey="info"
+>
+  <div class="info-content">
+    <section class="info-section">
+      <div class="setting-item">
+        <span class="setting-label">{$t('info.version')}</span>
+        <button class="version-btn" onclick={copyVersion} use:tooltip={$t('info.clickToCopy')}>
+          <span>v{APP_VERSION}</span>
+          <Icon name={versionCopied ? 'check' : 'copy'} size={14} />
+        </button>
+      </div>
+      <div class="setting-item">
+        <span class="setting-label">{$t('info.branch')}</span>
+        <span class="setting-value mono">{GIT_BRANCH}</span>
+      </div>
+      <div class="setting-item">
+        <span class="setting-label">{$t('info.commit')}</span>
+        <span class="setting-value mono"
+          >{typeof COMMIT_HASH === 'string' ? COMMIT_HASH.slice(0, 7) : 'unknown'}</span
+        >
+      </div>
+      <div class="setting-item">
+        <span class="setting-label">{$t('info.buildDate')}</span>
+        <span class="setting-value mono">{BUILD_DATE}</span>
+      </div>
+      <p class="setting-description">{$t('app.description')}</p>
+    </section>
 
-    <Divider my={20} />
+    <section class="info-section">
+      <h2 class="section-title">{$t('info.links')}</h2>
+      <button class="setting-item clickable" onclick={() => openLink('https://comine.app')}>
+        <span class="setting-label">{$t('info.website')}</span>
+        <span class="setting-value link">comine.app</span>
+      </button>
+      <button
+        class="setting-item clickable"
+        onclick={() => openLink('https://github.com/nichind/comine')}
+      >
+        <span class="setting-label">GitHub</span>
+        <span class="setting-value link">nichind/comine</span>
+      </button>
+      <button
+        class="setting-item clickable"
+        onclick={() => openLink('https://github.com/nichind/comine-extension')}
+      >
+        <span class="setting-label">{$t('info.browserExtension')}</span>
+        <span class="setting-value link">{$t('info.getExtension')}</span>
+      </button>
+      <button
+        class="setting-item clickable"
+        onclick={() => openLink('https://discord.gg/8sfk33Kr2A')}
+      >
+        <span class="setting-label">Discord</span>
+        <span class="setting-value link">{$t('info.joinCommunity')}</span>
+      </button>
+      <button class="setting-item clickable" onclick={() => openLink('https://t.me/comineapp')}>
+        <span class="setting-label">Telegram</span>
+        <span class="setting-value link">{$t('info.joinCommunity')}</span>
+      </button>
+    </section>
 
-    <div class="info-content">
-      <section class="info-section">
-        <div class="setting-item">
-          <span class="setting-label">{$t('info.version')}</span>
-          <button class="version-btn" onclick={copyVersion} use:tooltip={$t('info.clickToCopy')}>
-            <span>v{APP_VERSION}</span>
-            <Icon name={versionCopied ? 'check' : 'copy'} size={14} />
-          </button>
+    <section class="info-section">
+      <h2 class="section-title">{$t('info.developer')}</h2>
+      <div class="dev-row">
+        <button class="dev-icon" onclick={() => openLink('https://nichind.dev')}>
+          <img src="/nichind.svg" alt="nichind" />
+        </button>
+        <div class="dev-info">
+          <button class="dev-name" onclick={() => openLink('https://nichind.dev')}>nichind</button>
+          <span class="dev-role">{$t('info.madeWith')}</span>
         </div>
-        <div class="setting-item">
-          <span class="setting-label">{$t('info.branch')}</span>
-          <span class="setting-value mono">{GIT_BRANCH}</span>
-        </div>
-        <div class="setting-item">
-          <span class="setting-label">{$t('info.commit')}</span>
-          <span class="setting-value mono"
-            >{typeof COMMIT_HASH === 'string' ? COMMIT_HASH.slice(0, 7) : 'unknown'}</span
+        <div class="dev-links">
+          <button
+            class="icon-btn"
+            onclick={() => openLink('https://nichind.dev')}
+            use:tooltip={'nichind.dev'}
           >
-        </div>
-        <div class="setting-item">
-          <span class="setting-label">{$t('info.buildDate')}</span>
-          <span class="setting-value mono">{BUILD_DATE}</span>
-        </div>
-        <p class="setting-description">{$t('app.description')}</p>
-      </section>
-
-      <section class="info-section">
-        <h2 class="section-title">{$t('info.links')}</h2>
-        <button class="setting-item clickable" onclick={() => openLink('https://comine.app')}>
-          <span class="setting-label">{$t('info.website')}</span>
-          <span class="setting-value link">comine.app</span>
-        </button>
-        <button
-          class="setting-item clickable"
-          onclick={() => openLink('https://github.com/nichind/comine')}
-        >
-          <span class="setting-label">GitHub</span>
-          <span class="setting-value link">nichind/comine</span>
-        </button>
-        <button
-          class="setting-item clickable"
-          onclick={() => openLink('https://github.com/nichind/comine-extension')}
-        >
-          <span class="setting-label">{$t('info.browserExtension')}</span>
-          <span class="setting-value link">{$t('info.getExtension')}</span>
-        </button>
-        <button
-          class="setting-item clickable"
-          onclick={() => openLink('https://discord.gg/8sfk33Kr2A')}
-        >
-          <span class="setting-label">Discord</span>
-          <span class="setting-value link">{$t('info.joinCommunity')}</span>
-        </button>
-        <button class="setting-item clickable" onclick={() => openLink('https://t.me/comineapp')}>
-          <span class="setting-label">Telegram</span>
-          <span class="setting-value link">{$t('info.joinCommunity')}</span>
-        </button>
-      </section>
-
-      <section class="info-section">
-        <h2 class="section-title">{$t('info.developer')}</h2>
-        <div class="dev-row">
-          <button class="dev-icon" onclick={() => openLink('https://nichind.dev')}>
-            <img src="https://nichind.dev/icon.svg" alt="nichind" />
+            <Icon name="globe" size={16} />
           </button>
-          <div class="dev-info">
-            <button class="dev-name" onclick={() => openLink('https://nichind.dev')}>nichind</button
-            >
-            <span class="dev-role">{$t('info.madeWith')}</span>
-          </div>
-          <div class="dev-links">
-            <button
-              class="icon-btn"
-              onclick={() => openLink('https://nichind.dev')}
-              use:tooltip={'nichind.dev'}
-            >
-              <Icon name="globe" size={16} />
-            </button>
-            <button
-              class="icon-btn"
-              onclick={() => openLink('https://github.com/nichind')}
-              use:tooltip={'GitHub'}
-            >
-              <Icon name="github" size={16} />
-            </button>
-          </div>
+          <button
+            class="icon-btn"
+            onclick={() => openLink('https://github.com/nichind')}
+            use:tooltip={'GitHub'}
+          >
+            <Icon name="github" size={16} />
+          </button>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <section class="info-section">
-        <h2 class="section-title">{$t('info.legal')}</h2>
-        <button
-          class="setting-item clickable"
-          onclick={() => openLink('https://github.com/nichind/comine/blob/main/LICENSE')}
-        >
-          <span class="setting-label">{$t('info.license')}</span>
-          <span class="setting-value link">GPL-3.0</span>
-        </button>
-      </section>
-    </div>
-  </ScrollArea>
-</div>
+    <section class="info-section">
+      <h2 class="section-title">{$t('info.legal')}</h2>
+      <button
+        class="setting-item clickable"
+        onclick={() => openLink('https://github.com/nichind/comine/blob/main/LICENSE')}
+      >
+        <span class="setting-label">{$t('info.license')}</span>
+        <span class="setting-value link">GPL-3.0</span>
+      </button>
+    </section>
+  </div>
+</PageShell>
 
 <style>
-  .page {
-    padding: 0 0 0 var(--page-padding-inline);
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  h1 {
-    font-size: 28px;
-    font-weight: 700;
-    margin-bottom: 6px;
-  }
-
-  .subtitle {
-    color: rgba(255, 255, 255, 0.6);
-    font-size: var(--text-md, 14px);
-  }
-
   .info-content {
     display: flex;
     flex-direction: column;

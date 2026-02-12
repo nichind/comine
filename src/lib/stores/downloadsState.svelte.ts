@@ -23,6 +23,7 @@ import {
 import { stat } from '@tauri-apps/plugin-fs';
 import { LRUCache } from '$lib/utils/LRUCache';
 import { translate } from '$lib/i18n';
+import { logs } from '$lib/stores/logs';
 
 export type SortDirection = 'asc' | 'desc';
 
@@ -58,7 +59,6 @@ export interface UnifiedDownloadItem {
   speed?: string;
   eta?: string;
   error?: string;
-  priority?: number;
   convertedFormat?: string;
   source?: 'ytdlp' | 'file' | 'convert';
   downloadSource?: string;
@@ -85,15 +85,7 @@ export type VirtualListItem =
       isLast: boolean;
       id: string;
     }
-  | { kind: 'grid-row'; items: UnifiedDownloadItem[]; id: string }
-  | {
-      kind: 'grid-playlist-header';
-      groupKey: string;
-      playlistTitle: string;
-      itemCount: number;
-      isExpanded: boolean;
-      id: string;
-    };
+  | { kind: 'grid-row'; items: UnifiedDownloadItem[]; id: string };
 
 interface HistoryDateGroup {
   label: string;
@@ -103,6 +95,28 @@ interface HistoryDateGroup {
 interface ActiveDownloadData {
   groups: PlaylistGroup[];
   singles: QueueItem[];
+}
+
+function matchesFilter(
+  item: { type: string; isFavourite?: boolean; id: string },
+  filter: FilterType,
+  hideMissing: boolean,
+  missingFiles: ReadonlySet<string>,
+  isActive = false
+): boolean {
+  if (filter !== 'all' && filter !== 'favourites' && item.type !== filter) return false;
+  if (filter === 'favourites' && !item.isFavourite) return false;
+  if (hideMissing && !isActive && missingFiles.has(item.id)) return false;
+  return true;
+}
+
+function matchesSearch(
+  item: { title: string; author: string; url: string },
+  query: string
+): boolean {
+  if (!query) return true;
+  const text = `${item.title} ${item.author} ${item.url}`.toLowerCase();
+  return calculateMatchScore(text, query) > 0;
 }
 
 function historyToUnified(item: HistoryItem): UnifiedDownloadItem {
@@ -155,22 +169,11 @@ function queueToUnified(item: QueueItem): UnifiedDownloadItem {
     speed: item.speed,
     eta: item.eta,
     error: item.error,
-    priority: item.priority,
     source: item.source,
   };
 }
 
-const CACHE_SIZES = {
-  colors: 200,
-  thumbnails: 300,
-  playlistThumbs: 50,
-  failedThumbnails: 100,
-} as const;
-
-const GRID_CONFIG = {
-  minColumnWidth: 160,
-  gap: 10,
-} as const;
+const GRID_GAP = 10;
 
 export const VIRTUALIZATION_HEIGHTS = {
   listItem: 56,
@@ -191,6 +194,19 @@ export function computeGridRowHeight(containerWidth: number, itemsPerRow: number
 
 export type ColumnKey = 'format' | 'size' | 'duration';
 
+export function getListGridTemplate(
+  visibleColumns: ColumnKey[],
+  listItemSize: number = 56
+): string {
+  const thumbHeight = listItemSize - 16;
+  const thumbWidth = Math.round(thumbHeight * (16 / 9));
+  const cols = [`${thumbWidth}px`, '1fr'];
+  if (visibleColumns.includes('format')) cols.push('50px');
+  if (visibleColumns.includes('size')) cols.push('70px');
+  if (visibleColumns.includes('duration')) cols.push('60px');
+  return cols.join(' ');
+}
+
 export class DownloadsState {
   searchQuery = $state('');
   activeFilter = $state<FilterType>('all');
@@ -198,6 +214,7 @@ export class DownloadsState {
   sortDirection = $state<SortDirection>('desc');
   viewMode = $state<'list' | 'grid'>('list');
   gridItemSize = $state(200);
+  listItemSize = $state(56);
   hoveredItemId = $state<string | null>(null);
   containerWidth = $state(800);
   visibleColumns = $state<ColumnKey[]>(['format', 'size', 'duration']);
@@ -205,26 +222,23 @@ export class DownloadsState {
   showSourceTags = $state(true);
   ungroupPlaylistsOnSort = $state(false);
 
-  selectedItemIds = $state(new Set<string>());
+  selectedItemIds = $state.raw(new Set<string>());
   lastSelectedItemId = $state<string | null>(null);
   isSelectionMode = $derived(this.selectedItemIds.size > 0);
 
-  private _collapsedHistoryPlaylists = $state(new Set<string>());
-  private missingFiles = $state(new Set<string>());
-  private failedThumbnails = $state(new Set<string>());
+  private _collapsedHistoryPlaylists = $state.raw(new Set<string>());
+  private missingFiles = $state.raw(new Set<string>());
+  private failedThumbnails = $state.raw(new Set<string>());
 
-  get collapsedHistoryPlaylists(): ReadonlySet<string> {
-    return this._collapsedHistoryPlaylists;
-  }
+  private readonly localThumbnailCache = new LRUCache<string, string>(300);
+  private thumbnailPromises = new LRUCache<string, Promise<string | null>>(300);
 
-  private readonly colorCache = new LRUCache<string, RGB>(CACHE_SIZES.colors);
-  private readonly thumbnailSrcCache = new LRUCache<string, string>(CACHE_SIZES.thumbnails);
-  private readonly playlistThumbCache = new LRUCache<string, string[]>(CACHE_SIZES.playlistThumbs);
-  private readonly localThumbnailCache = new LRUCache<string, string>(CACHE_SIZES.thumbnails);
-  private localThumbnailPending = new Set<string>();
-
-  historyGroups = $state<HistoryDateGroup[]>([]);
-  activeDownloadData = $state<ActiveDownloadData>({ groups: [], singles: [] });
+  // Use $state.raw to avoid deep-proxying these large nested structures.
+  // historyGroups contains ALL history items nested in date/playlist groups —
+  // with $state, every HistoryItem (19 fields) gets its own Proxy wrapper.
+  // These are replaced wholesale, so fine-grained reactivity isn't needed.
+  historyGroups = $state.raw<HistoryDateGroup[]>([]);
+  activeDownloadData = $state.raw<ActiveDownloadData>({ groups: [], singles: [] });
 
   private cleanupEffects: (() => void) | null = null;
 
@@ -239,6 +253,7 @@ export class DownloadsState {
     this.sortType = currentSettings.downloadsSortType ?? 'date';
     this.sortDirection = currentSettings.downloadsSortDirection ?? 'desc';
     this.gridItemSize = currentSettings.gridItemSize ?? 200;
+    this.listItemSize = currentSettings.listItemSize ?? 56;
 
     const isMobile =
       typeof window !== 'undefined' && window.matchMedia('(max-width: 700px)').matches;
@@ -269,6 +284,7 @@ export class DownloadsState {
           downloadsSortType: this.sortType,
           downloadsSortDirection: this.sortDirection,
           gridItemSize: this.gridItemSize,
+          listItemSize: this.listItemSize,
           downloadsVisibleColumns: this.visibleColumns,
           hideMissingFiles: this.hideMissingFiles,
           showSourceTags: this.showSourceTags,
@@ -283,74 +299,8 @@ export class DownloadsState {
     this.cleanupEffects = null;
     if (this.fileCheckDebounceTimer) clearTimeout(this.fileCheckDebounceTimer);
     this.pendingFileChecks.clear();
-    this.colorCache.clear();
-    this.thumbnailSrcCache.clear();
-    this.playlistThumbCache.clear();
     this.localThumbnailCache.clear();
-    this.localThumbnailPending.clear();
-  }
-
-  setFilter(filter: FilterType): void {
-    this.activeFilter = filter;
-  }
-
-  setSort(sort: SortType): void {
-    this.sortType = sort;
-  }
-
-  setSortWithDirection(sort: SortType, direction: SortDirection): void {
-    this.sortType = sort;
-    this.sortDirection = direction;
-  }
-
-  toggleSortDirection(): void {
-    this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
-  }
-
-  setViewMode(mode: 'list' | 'grid'): void {
-    this.viewMode = mode;
-  }
-
-  increaseGridSize(): void {
-    this.gridItemSize = Math.min(400, this.gridItemSize + 40);
-  }
-
-  decreaseGridSize(): void {
-    this.gridItemSize = Math.max(120, this.gridItemSize - 40);
-  }
-
-  resetGridSize(): void {
-    this.gridItemSize = 200;
-  }
-
-  isColumnVisible(column: ColumnKey): boolean {
-    return this.visibleColumns.includes(column);
-  }
-
-  toggleColumn(column: ColumnKey): void {
-    if (this.visibleColumns.includes(column)) {
-      this.visibleColumns = this.visibleColumns.filter((c) => c !== column);
-    } else {
-      const order: ColumnKey[] = ['format', 'size', 'duration'];
-      const newColumns = order.filter((c) => c === column || this.visibleColumns.includes(c));
-      this.visibleColumns = newColumns;
-    }
-  }
-
-  toggleUngroupPlaylistsOnSort(): void {
-    this.ungroupPlaylistsOnSort = !this.ungroupPlaylistsOnSort;
-  }
-
-  toggleHideMissingFiles(): void {
-    this.hideMissingFiles = !this.hideMissingFiles;
-  }
-
-  toggleShowSourceTags(): void {
-    this.showSourceTags = !this.showSourceTags;
-  }
-
-  setHoveredItem(id: string | null): void {
-    this.hoveredItemId = id;
+    this.thumbnailPromises.clear();
   }
 
   toggleSelection(id: string, multi: boolean, range: boolean): void {
@@ -358,7 +308,11 @@ export class DownloadsState {
 
     if (range && this.lastSelectedItemId) {
       const flatItems = this.flatRows
-        .map((r) => ('id' in r && r.kind === 'single' ? r.item.id : null))
+        .map((r) => {
+          if (r.kind === 'single') return r.item.id;
+          if (r.kind === 'playlist-child') return r.item.id;
+          return null;
+        })
         .filter(Boolean) as string[];
       const allIds = flatItems.length ? flatItems : this.getAllItemIds();
 
@@ -417,6 +371,22 @@ export class DownloadsState {
     return ids;
   }
 
+  toggleGroupSelection(groupKey: string): void {
+    const childIds = this.flatRows
+      .filter((r) => r.kind === 'playlist-child' && r.groupKey === groupKey)
+      .map((r) => (r as { kind: 'playlist-child'; item: UnifiedDownloadItem }).item.id);
+
+    if (childIds.length === 0) return;
+
+    const next = new Set(this.selectedItemIds);
+    const allSelected = childIds.every((id) => next.has(id));
+    for (const id of childIds) {
+      if (allSelected) next.delete(id);
+      else next.add(id);
+    }
+    this.selectedItemIds = next;
+  }
+
   togglePlaylist(groupKey: string): void {
     const next = new Set(this._collapsedHistoryPlaylists);
 
@@ -448,7 +418,6 @@ export class DownloadsState {
         const batch = checksToRun.slice(i, i + BATCH_SIZE);
         await Promise.all(
           batch.map(async (checkId) => {
-            // Find the item's file path from history
             const item = this.unifiedItems.find((u) => u.id === checkId);
             if (!item?.filePath) return;
 
@@ -469,19 +438,12 @@ export class DownloadsState {
 
   getThumbnailSrc(thumbnail: string | undefined): string | undefined {
     if (!thumbnail) return undefined;
-
-    const cached = this.thumbnailSrcCache.get(thumbnail);
-    if (cached) return cached;
-
     const isLocalPath = /^[A-Z]:\\/i.test(thumbnail) || thumbnail.startsWith('/');
-    const result = isLocalPath ? convertFileSrc(thumbnail) : thumbnail;
-
-    this.thumbnailSrcCache.set(thumbnail, result);
-    return result;
+    return isLocalPath ? convertFileSrc(thumbnail) : thumbnail;
   }
 
   markThumbnailFailed(id: string): void {
-    this.updateSet('failedThumbnails', id, 'add', CACHE_SIZES.failedThumbnails);
+    this.updateSet('failedThumbnails', id, 'add', 100);
   }
 
   isThumbnailFailed(id: string): boolean {
@@ -492,82 +454,73 @@ export class DownloadsState {
     return this.localThumbnailCache.get(id);
   }
 
-  async generateLocalThumbnail(id: string, filePath: string | undefined): Promise<string | null> {
-    if (!filePath) return null;
-    if (this.localThumbnailPending.has(id)) return null;
+  generateLocalThumbnail(id: string, filePath: string | undefined): Promise<string | null> {
+    if (!filePath) return Promise.resolve(null);
+    return this.cachedThumbnailOp(id, () => this._doGenerateLocalThumbnail(id, filePath));
+  }
 
-    // Check cache first
-    const cached = this.localThumbnailCache.get(id);
-    if (cached) return cached;
-
-    this.localThumbnailPending.add(id);
-
+  private async _doGenerateLocalThumbnail(id: string, filePath: string): Promise<string | null> {
     try {
       const result = await invoke<string>('generate_local_thumbnail', {
         filePath,
         itemId: id,
       });
 
-      // Convert file:// URL to convertFileSrc format for Tauri
       const thumbnailPath = result.replace('file://', '');
       const srcUrl = convertFileSrc(thumbnailPath);
 
-      // Precompute dominant color for local thumbnails. This avoids relying on canvas,
-      // and it works even though srcUrl is an asset://... URL.
       try {
         const rgbArr = await invoke<[number, number, number]>('extract_local_thumbnail_color', {
           path: thumbnailPath,
         });
         const color: RGB = { r: rgbArr[0], g: rgbArr[1], b: rgbArr[2] };
-        this.colorCache.set(srcUrl, color);
         setColorInCache(srcUrl, color);
       } catch {}
 
       this.localThumbnailCache.set(id, srcUrl);
       return srcUrl;
     } catch (e) {
-      console.debug('Failed to generate local thumbnail:', e);
+      logs.debug('downloads', `Failed to generate local thumbnail: ${e}`);
       return null;
-    } finally {
-      this.localThumbnailPending.delete(id);
     }
   }
 
-  getPlaylistGridThumbs(playlistId: string, items: { thumbnail?: string }[]): string[] {
-    const cached = this.playlistThumbCache.get(playlistId);
-    if (cached) return cached;
+  ensureCachedThumbnail(id: string, url: string): Promise<string | null> {
+    return this.cachedThumbnailOp(id, () => this._doEnsureCachedThumbnail(id, url));
+  }
 
-    const thumbs = items
-      .filter((i): i is { thumbnail: string } => !!i.thumbnail)
-      .slice(0, 4)
-      .map((i) => this.getThumbnailSrc(i.thumbnail) ?? i.thumbnail);
+  private async _doEnsureCachedThumbnail(id: string, url: string): Promise<string | null> {
+    try {
+      const localPath = await invoke<string>('get_or_cache_thumbnail', {
+        url,
+        itemId: id,
+      });
 
-    this.playlistThumbCache.set(playlistId, thumbs);
-    return thumbs;
+      const srcUrl = convertFileSrc(localPath);
+      this.localThumbnailCache.set(id, srcUrl);
+      return srcUrl;
+    } catch (e) {
+      logs.debug('downloads', `Failed to cache thumbnail: ${e}`);
+      return null;
+    }
   }
 
   async extractItemColor(thumbnailUrl: string | undefined): Promise<void> {
     const currentSettings = get(settings);
     if (!currentSettings.thumbnailTheming || !thumbnailUrl) return;
-    if (this.colorCache.has(thumbnailUrl)) return;
+    if (getCachedColor(thumbnailUrl)) return;
 
     const cachedColor = await getCachedColorAsync(thumbnailUrl);
-    if (cachedColor) {
-      this.colorCache.set(thumbnailUrl, cachedColor);
-      return;
-    }
+    if (cachedColor) return;
 
-    const color = await extractDominantColor(thumbnailUrl);
-    if (color) {
-      this.colorCache.set(thumbnailUrl, color);
-    }
+    await extractDominantColor(thumbnailUrl);
   }
 
   getItemColorStyle(thumbnailUrl: string | undefined): string {
     const currentSettings = get(settings);
     if (!currentSettings.thumbnailTheming || !thumbnailUrl) return '';
 
-    const color = this.colorCache.get(thumbnailUrl) ?? getCachedColor(thumbnailUrl);
+    const color = getCachedColor(thumbnailUrl);
     return color ? generateColorVars(color) : '';
   }
 
@@ -630,6 +583,22 @@ export class DownloadsState {
     return { text: item.author, type: 'author' };
   }
 
+  private cachedThumbnailOp(id: string, op: () => Promise<string | null>): Promise<string | null> {
+    const existing = this.thumbnailPromises.get(id);
+    if (existing) return existing;
+
+    const cached = this.localThumbnailCache.get(id);
+    if (cached) {
+      const resolved = Promise.resolve(cached);
+      this.thumbnailPromises.set(id, resolved);
+      return resolved;
+    }
+
+    const promise = op();
+    this.thumbnailPromises.set(id, promise);
+    return promise;
+  }
+
   private updateSet(
     field: 'missingFiles' | 'failedThumbnails',
     id: string,
@@ -641,7 +610,6 @@ export class DownloadsState {
 
     if (action === 'add') {
       next.add(id);
-      // Evict oldest if over limit
       if (maxSize && next.size > maxSize) {
         const iterator = next.values();
         const toRemove = Math.min(20, next.size - maxSize);
@@ -659,73 +627,68 @@ export class DownloadsState {
 
   itemsPerRow = $derived.by(() => {
     const minColumnWidth = this.gridItemSize;
-    const { gap } = GRID_CONFIG;
     const width = this.containerWidth;
 
     if (!Number.isFinite(width) || width <= 0) return 1;
-    return Math.max(1, Math.floor((width + gap) / (minColumnWidth + gap)));
+    return Math.max(1, Math.floor((width + GRID_GAP) / (minColumnWidth + GRID_GAP)));
   });
 
-  private unifiedHistory = $derived.by<UnifiedDownloadItem[]>(() => {
-    const historyItems: UnifiedDownloadItem[] = [];
+  private unifiedItems = $derived.by<UnifiedDownloadItem[]>(() => {
+    const query = this.searchQuery.trim().toLowerCase();
+    const filter = this.activeFilter;
+    const hideMissing = this.hideMissingFiles;
+    const missing = this.missingFiles;
+
+    const allItems: UnifiedDownloadItem[] = [];
+
+    const { groups, singles } = this.activeDownloadData;
+    for (const item of singles) {
+      if (item.status !== 'completed') {
+        const unified = queueToUnified(item);
+        if (
+          matchesFilter(unified, filter, hideMissing, missing, true) &&
+          matchesSearch(unified, query)
+        ) {
+          allItems.push(unified);
+        }
+      }
+    }
+    for (const group of groups) {
+      for (const item of group.items) {
+        if (item.status !== 'completed') {
+          const unified = queueToUnified(item);
+          if (
+            matchesFilter(unified, filter, hideMissing, missing, true) &&
+            matchesSearch(unified, query)
+          ) {
+            allItems.push(unified);
+          }
+        }
+      }
+    }
+
     for (const group of this.historyGroups) {
       for (const item of group.items) {
         if (isPlaylistGroup(item)) {
           for (const child of item.items) {
-            historyItems.push(historyToUnified(child));
+            const unified = historyToUnified(child);
+            if (
+              matchesFilter(unified, filter, hideMissing, missing, false) &&
+              matchesSearch(unified, query)
+            ) {
+              allItems.push(unified);
+            }
           }
         } else {
-          historyItems.push(historyToUnified(item));
+          const unified = historyToUnified(item);
+          if (
+            matchesFilter(unified, filter, hideMissing, missing, false) &&
+            matchesSearch(unified, query)
+          ) {
+            allItems.push(unified);
+          }
         }
       }
-    }
-    return historyItems;
-  });
-
-  private unifiedQueue = $derived.by<UnifiedDownloadItem[]>(() => {
-    const { groups, singles } = this.activeDownloadData;
-    const queueItems: UnifiedDownloadItem[] = [];
-
-    for (const item of singles) {
-      if (item.status !== 'completed') {
-        queueItems.push(queueToUnified(item));
-      }
-    }
-
-    for (const group of groups) {
-      for (const item of group.items) {
-        if (item.status !== 'completed') {
-          queueItems.push(queueToUnified(item));
-        }
-      }
-    }
-    return queueItems;
-  });
-
-  private unifiedItems = $derived.by<UnifiedDownloadItem[]>(() => {
-    let allItems = [...this.unifiedQueue, ...this.unifiedHistory];
-
-    // Type filter (video, audio, image, file)
-    if (this.activeFilter !== 'all' && this.activeFilter !== 'favourites') {
-      allItems = allItems.filter((item) => item.type === this.activeFilter);
-    }
-
-    // Favourites filter
-    if (this.activeFilter === 'favourites') {
-      allItems = allItems.filter((item) => item.isFavourite);
-    }
-
-    // Filter out missing files if enabled
-    if (this.hideMissingFiles) {
-      allItems = allItems.filter((item) => item.isActive || !this.missingFiles.has(item.id));
-    }
-
-    const query = this.searchQuery.trim().toLowerCase();
-    if (query) {
-      allItems = allItems.filter((item) => {
-        const text = `${item.title} ${item.author} ${item.url}`.toLowerCase();
-        return calculateMatchScore(text, query) > 0;
-      });
     }
 
     const direction = this.sortDirection === 'asc' ? 1 : -1;
@@ -766,22 +729,16 @@ export class DownloadsState {
   }
 
   private flatRows = $derived.by<VirtualListItem[]>(() => {
-    if (this.viewMode === 'grid') return [];
-
     const shouldUngroup = this.ungroupPlaylistsOnSort && this.sortType !== 'date';
     if (shouldUngroup) {
       return this.unifiedItems.map((item) => ({
-        kind: 'single',
+        kind: 'single' as const,
         item,
         dateLabel: this.getDateLabel(new Date(item.addedAt)),
         id: `s-${item.id}`,
       }));
     }
 
-    const { groups: activeGroups, singles: activeSingles } = this.activeDownloadData;
-
-    // Build a unified list of all items (active + history)
-    // Each item will have its sort key for proper ordering
     type UnifiedEntry =
       | { type: 'single'; item: UnifiedDownloadItem; sortKey: number | string }
       | {
@@ -789,108 +746,34 @@ export class DownloadsState {
           playlistId: string;
           playlistTitle: string;
           items: UnifiedDownloadItem[];
+          totalSize: number;
+          totalDuration: number;
           sortKey: number | string;
         };
 
     const entries: UnifiedEntry[] = [];
     const playlistMap = new Map<string, { playlistTitle: string; items: UnifiedDownloadItem[] }>();
 
-    // Add active singles
-    for (const qItem of activeSingles) {
-      const item = queueToUnified(qItem);
-
-      // Apply filters
-      if (this.activeFilter !== 'all' && this.activeFilter !== 'favourites') {
-        if (item.type !== this.activeFilter) continue;
-      }
-
-      const query = this.searchQuery.trim().toLowerCase();
-      if (query) {
-        const text = `${item.title} ${item.author} ${item.url}`.toLowerCase();
-        if (calculateMatchScore(text, query) === 0) continue;
-      }
-
-      entries.push({
-        type: 'single',
-        item,
-        sortKey: this.getUnifiedSortKey(item),
-      });
-    }
-
-    // Add active playlist items to playlistMap
-    for (const group of activeGroups) {
-      const items = group.items.map(queueToUnified);
-      playlistMap.set(group.playlistId, {
-        playlistTitle: group.playlistTitle,
-        items,
-      });
-    }
-
-    // Process history items
-    for (const dateGroup of this.historyGroups) {
-      for (const entry of dateGroup.items) {
-        if (isPlaylistGroup(entry)) {
-          // Get or create playlist entry
-          let playlistEntry = playlistMap.get(entry.playlistId);
-          if (!playlistEntry) {
-            playlistEntry = { playlistTitle: entry.playlistTitle, items: [] };
-            playlistMap.set(entry.playlistId, playlistEntry);
-          }
-
-          // Apply filters to history items and add them
-          let filteredItems = entry.items;
-
-          if (this.activeFilter !== 'all' && this.activeFilter !== 'favourites') {
-            filteredItems = filteredItems.filter((item) => item.type === this.activeFilter);
-          }
-          if (this.activeFilter === 'favourites') {
-            filteredItems = filteredItems.filter((item) => item.isFavourite);
-          }
-          if (this.hideMissingFiles) {
-            filteredItems = filteredItems.filter((item) => !this.missingFiles.has(item.id));
-          }
-
-          const query = this.searchQuery.trim().toLowerCase();
-          if (query) {
-            filteredItems = filteredItems.filter((item) => {
-              const text = `${item.title} ${item.author} ${item.url}`.toLowerCase();
-              return calculateMatchScore(text, query) > 0;
-            });
-          }
-
-          // Append history items to playlist (active items are already there)
-          playlistEntry.items.push(...filteredItems.map(historyToUnified));
-        } else {
-          // Single history item
-          const item = entry as HistoryItem;
-
-          if (this.activeFilter !== 'all' && this.activeFilter !== 'favourites') {
-            if (item.type !== this.activeFilter) continue;
-          }
-          if (this.activeFilter === 'favourites' && !item.isFavourite) continue;
-          if (this.hideMissingFiles && this.missingFiles.has(item.id)) continue;
-
-          const query = this.searchQuery.trim().toLowerCase();
-          if (query) {
-            const text = `${item.title} ${item.author} ${item.url}`.toLowerCase();
-            if (calculateMatchScore(text, query) === 0) continue;
-          }
-
-          const unified = historyToUnified(item);
-          entries.push({
-            type: 'single',
-            item: unified,
-            sortKey: this.getUnifiedSortKey(unified),
-          });
+    for (const item of this.unifiedItems) {
+      if (item.playlistId) {
+        let playlistEntry = playlistMap.get(item.playlistId);
+        if (!playlistEntry) {
+          playlistEntry = { playlistTitle: item.playlistTitle ?? item.playlistId, items: [] };
+          playlistMap.set(item.playlistId, playlistEntry);
         }
+        playlistEntry.items.push(item);
+      } else {
+        entries.push({
+          type: 'single',
+          item,
+          sortKey: this.getUnifiedSortKey(item),
+        });
       }
     }
 
-    // Convert playlistMap to entries
     for (const [playlistId, playlist] of playlistMap) {
       if (playlist.items.length === 0) continue;
 
-      // Sort items within playlist by playlistIndex, then by addedAt
       playlist.items.sort((a, b) => {
         if (a.playlistIndex !== undefined && b.playlistIndex !== undefined) {
           return a.playlistIndex - b.playlistIndex;
@@ -898,22 +781,30 @@ export class DownloadsState {
         return b.addedAt - a.addedAt;
       });
 
-      // Use the most recent item's timestamp for sorting the playlist
-      const latestTime = Math.max(...playlist.items.map((i) => i.addedAt));
-      const totalSize = playlist.items.reduce((sum, i) => sum + (i.size || 0), 0);
-      const totalDuration = playlist.items.reduce((sum, i) => sum + (i.duration || 0), 0);
+      let totalSize = 0;
+      let totalDuration = 0;
+      let latestTime = 0;
+      for (const i of playlist.items) {
+        totalSize += i.size || 0;
+        totalDuration += i.duration || 0;
+        if (i.addedAt > latestTime) latestTime = i.addedAt;
+      }
 
       const formatKey =
-        playlist.items
-          .map((i) => (i.extension ?? '').toLowerCase())
-          .filter(Boolean)
-          .sort()[0] ?? '';
+        this.sortType === 'format'
+          ? (playlist.items
+              .map((i) => (i.extension ?? '').toLowerCase())
+              .filter(Boolean)
+              .sort()[0] ?? '')
+          : '';
 
       entries.push({
         type: 'playlist',
         playlistId,
         playlistTitle: playlist.playlistTitle,
         items: playlist.items,
+        totalSize,
+        totalDuration,
         sortKey:
           this.sortType === 'date'
             ? latestTime
@@ -927,7 +818,6 @@ export class DownloadsState {
       });
     }
 
-    // Sort all entries with stable secondary sort
     entries.sort((a, b) => {
       const aKey = a.sortKey;
       const bKey = b.sortKey;
@@ -940,7 +830,6 @@ export class DownloadsState {
         cmp = this.sortDirection === 'desc' ? -strCmp : strCmp;
       }
 
-      // Stable secondary sort by ID
       if (cmp === 0) {
         const aId = a.type === 'single' ? a.item.id : a.playlistId;
         const bId = b.type === 'single' ? b.item.id : b.playlistId;
@@ -950,7 +839,6 @@ export class DownloadsState {
       return cmp;
     });
 
-    // Build rows with date headers if sorting by date
     const rows: VirtualListItem[] = [];
     let currentDateLabel = '';
 
@@ -971,7 +859,6 @@ export class DownloadsState {
           id: `s-${item.id}`,
         });
       } else {
-        // Playlist - FLATTENED: header + individual children
         const latestTime = Math.max(...entry.items.map((i) => i.addedAt));
         const dateLabel = this.getDateLabel(new Date(latestTime));
 
@@ -982,8 +869,6 @@ export class DownloadsState {
 
         const groupKey = entry.playlistId;
         const isExpanded = !this._collapsedHistoryPlaylists.has(groupKey);
-        const totalSize = entry.items.reduce((sum, i) => sum + (i.size || 0), 0);
-        const totalDuration = entry.items.reduce((sum, i) => sum + (i.duration || 0), 0);
 
         rows.push({
           kind: 'playlist-header',
@@ -991,8 +876,8 @@ export class DownloadsState {
           playlistTitle: entry.playlistTitle,
           childCount: entry.items.length,
           isExpanded,
-          totalSize,
-          totalDuration,
+          totalSize: entry.totalSize,
+          totalDuration: entry.totalDuration,
           dateLabel,
           id: `playlist-${groupKey}`,
         });
@@ -1038,44 +923,30 @@ export class DownloadsState {
     });
   }
 
-  private gridRows = $derived.by<VirtualListItem[]>(() => {
-    if (this.viewMode !== 'grid') return [];
+  displayItems = $derived.by<VirtualListItem[]>(() => {
+    if (this.viewMode === 'list') return this.flatRows;
 
     const allItems = this.unifiedItems;
-    const rows: VirtualListItem[] = [];
     const perRow = this.itemsPerRow;
+    const result: VirtualListItem[] = [];
+    let currentRowItems: UnifiedDownloadItem[] = [];
 
-    for (let i = 0; i < allItems.length; i += perRow) {
-      rows.push({
+    const flushRow = () => {
+      if (currentRowItems.length === 0) return;
+      result.push({
         kind: 'grid-row',
-        items: allItems.slice(i, i + perRow),
-        id: `grid-row-${i}`,
+        items: currentRowItems,
+        id: `grid-${currentRowItems[0].id}`,
       });
+      currentRowItems = [];
+    };
+
+    for (const item of allItems) {
+      currentRowItems.push(item);
+      if (currentRowItems.length >= perRow) flushRow();
     }
+    flushRow();
 
-    return rows;
-  });
-
-  displayItems = $derived.by(() => {
-    return this.viewMode === 'grid' ? this.gridRows : this.flatRows;
-  });
-
-  activeDownloadGroups = $derived.by(() => {
-    const { groups, singles } = this.activeDownloadData;
-    const query = this.searchQuery.trim();
-
-    if (!query) return { groups, singles };
-
-    const matchesQuery = (item: QueueItem): boolean => {
-      const text = `${item.title} ${item.author} ${item.url}`;
-      return calculateMatchScore(text, query) > 0;
-    };
-
-    return {
-      groups: groups
-        .map((g) => ({ ...g, items: g.items.filter(matchesQuery) }))
-        .filter((g) => g.items.length > 0),
-      singles: singles.filter(matchesQuery),
-    };
+    return result;
   });
 }

@@ -1,10 +1,13 @@
+use crate::orchestrator::manager::JobManager;
+use crate::orchestrator::types::{EnqueueOverrides, EnqueueRequest};
 use crate::types::{NotificationData, NotificationMonitor, NotificationPosition};
 use crate::utils::lock_or_recover;
 use log::info;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, LazyLock, Mutex};
 use tauri::webview::Color;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_store::StoreExt;
 
 #[derive(Clone, Debug)]
 struct NotificationInfo {
@@ -78,9 +81,8 @@ impl NotificationManager {
     }
 }
 
-lazy_static::lazy_static! {
-    static ref NOTIFICATION_MANAGER: Mutex<NotificationManager> = Mutex::new(NotificationManager::new());
-}
+static NOTIFICATION_MANAGER: LazyLock<Mutex<NotificationManager>> =
+    LazyLock::new(|| Mutex::new(NotificationManager::new()));
 
 fn calculate_position(
     monitor_width: i32,
@@ -251,7 +253,6 @@ pub async fn show_notification_window(
         let download_label = urlencoding::encode(&data.download_label);
         let dismiss_label = urlencoding::encode(&data.dismiss_label);
 
-        // Serialize file_info as JSON and encode it
         let file_info_encoded = data
             .file_info
             .as_ref()
@@ -260,9 +261,79 @@ pub async fn show_notification_window(
             })
             .unwrap_or_default();
 
+        // Read settings from store and pass as URL params so the notification
+        // page doesn't need to load the store itself
+        let (
+            accent,
+            fancy_bg,
+            bg_type,
+            bg_color,
+            bg_image,
+            bg_video,
+            bg_blur,
+            corner_dismiss,
+            duration_secs,
+            show_progress,
+            thumb_theming,
+            download_path,
+        ) = {
+            let store = app.store("settings.json").ok();
+            let get_str = |key: &str, default: &str| -> String {
+                store
+                    .as_ref()
+                    .and_then(|s| s.get(key))
+                    .and_then(|v| v.as_str().map(|s| s.to_string()))
+                    .unwrap_or_else(|| default.to_string())
+            };
+            let get_bool = |key: &str, default: bool| -> bool {
+                store
+                    .as_ref()
+                    .and_then(|s| s.get(key))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(default)
+            };
+            let get_f64 = |key: &str, default: f64| -> f64 {
+                store
+                    .as_ref()
+                    .and_then(|s| s.get(key))
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(default)
+            };
+
+            (
+                get_str("accentColor", "#6366F1"),
+                get_bool("notificationFancyBackground", false),
+                get_str("backgroundType", "solid"),
+                get_str("backgroundColor", "#1a1a2e"),
+                get_str("backgroundImage", ""),
+                get_str("backgroundVideo", ""),
+                get_f64("backgroundBlur", 20.0) as u32,
+                get_bool("notificationCornerDismiss", false),
+                get_f64("notificationDuration", 12.0) as u32,
+                get_bool("notificationShowProgress", true),
+                get_bool("notificationThumbnailTheming", true),
+                get_str("downloadPath", ""),
+            )
+        };
+
         let notification_url = format!(
-            "/notification?title={}&body={}&thumbnail={}&url={}&window_id={}&compact={}&dl={}&dm={}&is_playlist={}&is_channel={}&is_file={}&file_info={}",
-            title_encoded, body_encoded, thumbnail_encoded, url_encoded, window_label, compact, download_label, dismiss_label, is_playlist, is_channel, is_file, file_info_encoded
+            "/notification?title={}&body={}&thumbnail={}&url={}&window_id={}&compact={}&dl={}&dm={}&is_playlist={}&is_channel={}&is_file={}&file_info={}\
+             &accent={}&fancy_bg={}&bg_type={}&bg_color={}&bg_image={}&bg_video={}&bg_blur={}\
+             &corner_dismiss={}&duration={}&show_progress={}&thumb_theming={}&dl_path={}",
+            title_encoded, body_encoded, thumbnail_encoded, url_encoded, window_label, compact,
+            download_label, dismiss_label, is_playlist, is_channel, is_file, file_info_encoded,
+            urlencoding::encode(&accent),
+            if fancy_bg { "1" } else { "0" },
+            urlencoding::encode(&bg_type),
+            urlencoding::encode(&bg_color),
+            urlencoding::encode(&bg_image),
+            urlencoding::encode(&bg_video),
+            bg_blur,
+            if corner_dismiss { "1" } else { "0" },
+            duration_secs,
+            if show_progress { "1" } else { "0" },
+            if thumb_theming { "1" } else { "0" },
+            urlencoding::encode(&download_path),
         );
 
         info!(
@@ -300,8 +371,8 @@ pub async fn show_notification_window(
         {
             use windows::Win32::Foundation::HWND;
             use windows::Win32::UI::WindowsAndMessaging::{
-                GetWindowLongW, SetWindowLongPtrW, SetWindowLongW, GWLP_HWNDPARENT, GWL_EXSTYLE,
-                WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+                GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+                WS_EX_TOOLWINDOW,
             };
 
             if let Some(window) = app.get_webview_window(&window_label) {
@@ -319,14 +390,6 @@ pub async fn show_notification_window(
                                 | WS_EX_TOOLWINDOW.0 as i32
                                 | WS_EX_NOACTIVATE.0 as i32,
                         );
-
-                        if let Some(main_window) = app.get_webview_window("main") {
-                            if let Ok(main_hwnd_raw) = main_window.hwnd() {
-                                let main_hwnd = HWND(main_hwnd_raw.0 as *mut _);
-                                let _ =
-                                    SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, main_hwnd.0 as isize);
-                            }
-                        }
                     }
                 }
             }
@@ -360,9 +423,9 @@ pub async fn reveal_notification_window(app: AppHandle, window_id: String) -> Re
             {
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::UI::WindowsAndMessaging::{
-                    GetWindowLongW, SetWindowLongPtrW, SetWindowLongW, SetWindowPos,
-                    GWLP_HWNDPARENT, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOOWNERZORDER,
-                    SWP_NOSIZE, SWP_NOZORDER, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+                    GetWindowLongW, SetWindowLongW, SetWindowPos, GWL_EXSTYLE, SWP_FRAMECHANGED,
+                    SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, WS_EX_APPWINDOW,
+                    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
                 };
 
                 if let Ok(raw_hwnd) = window.hwnd() {
@@ -376,14 +439,6 @@ pub async fn reveal_notification_window(app: AppHandle, window_id: String) -> Re
                                 | WS_EX_TOOLWINDOW.0 as i32
                                 | WS_EX_NOACTIVATE.0 as i32,
                         );
-
-                        if let Some(main_window) = app.get_webview_window("main") {
-                            if let Ok(main_hwnd_raw) = main_window.hwnd() {
-                                let main_hwnd = HWND(main_hwnd_raw.0 as *mut _);
-                                let _ =
-                                    SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, main_hwnd.0 as isize);
-                            }
-                        }
 
                         let _ = SetWindowPos(
                             hwnd,
@@ -492,17 +547,138 @@ pub async fn notification_action(
         );
 
         if let Some(video_url) = &url {
-            let payload = serde_json::json!({
-                "url": video_url,
-                "metadata": metadata
-            });
+            let is_playlist = metadata
+                .as_ref()
+                .and_then(|m| m.get("isPlaylist"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let is_channel = metadata
+                .as_ref()
+                .and_then(|m| m.get("isChannel"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let is_file = metadata
+                .as_ref()
+                .and_then(|m| m.get("isFile"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let open_track_builder = metadata
+                .as_ref()
+                .and_then(|m| m.get("openTrackBuilder"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
-            if let Some(main_window) = app.get_webview_window("main") {
-                let _ = main_window.emit("notification-start-download", payload);
-                info!("Emitted notification-start-download to main window");
+            // Playlists, channels, track builder — need the main window UI
+            if is_playlist || is_channel || open_track_builder {
+                let payload = serde_json::json!({
+                    "url": video_url,
+                    "metadata": metadata
+                });
+
+                if let Some(main_window) = app.get_webview_window("main") {
+                    let _ = main_window.unminimize();
+                    let _ = main_window.show();
+                    let _ = main_window.set_focus();
+                    let _ = main_window.emit("notification-start-download", payload);
+                    info!("Emitted notification-start-download to main window for playlist/channel/track-builder");
+                } else {
+                    #[cfg(not(target_os = "android"))]
+                    {
+                        if let Err(e) = crate::window_manager::recreate_main_window(&app) {
+                            tracing::error!("Failed to recreate window: {}", e);
+                            return Err(e);
+                        }
+                        let app_clone = app.clone();
+                        let payload_clone = payload.clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
+                            let _ = app_clone.emit("notification-start-download", payload_clone);
+                        });
+                        info!("Recreating window for playlist/channel notification action");
+                    }
+                }
+            } else if is_file {
+                // File downloads — enqueue directly if we have file info
+                let file_info = metadata.as_ref().and_then(|m| m.get("fileInfo"));
+                if let Some(manager) = app.try_state::<Arc<JobManager>>() {
+                    let download_mode = metadata
+                        .as_ref()
+                        .and_then(|m| m.get("downloadMode"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    let req = EnqueueRequest {
+                        url: video_url.clone(),
+                        id: None,
+                        overrides: EnqueueOverrides {
+                            download_mode,
+                            filename: file_info
+                                .and_then(|fi| fi.get("filename"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            ..Default::default()
+                        },
+                        playlist_id: None,
+                        playlist_title: None,
+                        playlist_index: None,
+                    };
+
+                    match manager.enqueue_url(req).await {
+                        Ok(job_id) => {
+                            info!("File download started from notification: job_id={}", job_id);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to enqueue file from notification: {}", e);
+                        }
+                    }
+                }
             } else {
-                let _ = app.emit("notification-start-download", payload);
-                info!("Emitted notification-start-download globally");
+                // Regular video/audio — enqueue directly in Rust, no window needed
+                if let Some(manager) = app.try_state::<Arc<JobManager>>() {
+                    let download_mode = metadata
+                        .as_ref()
+                        .and_then(|m| m.get("downloadMode"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    // Replicate YTM audio-only logic from frontend
+                    let final_mode = if video_url.contains("music.youtube.com") {
+                        let ytm_audio =
+                            crate::store_utils::get_bool(&app, "youtubeMusicAudioOnly", false);
+                        if ytm_audio
+                            && (download_mode.is_none() || download_mode.as_deref() == Some("auto"))
+                        {
+                            Some("audio".to_string())
+                        } else {
+                            download_mode
+                        }
+                    } else {
+                        download_mode
+                    };
+
+                    let req = EnqueueRequest {
+                        url: video_url.clone(),
+                        id: None,
+                        overrides: EnqueueOverrides {
+                            download_mode: final_mode,
+                            ..Default::default()
+                        },
+                        playlist_id: None,
+                        playlist_title: None,
+                        playlist_index: None,
+                    };
+
+                    match manager.enqueue_url(req).await {
+                        Ok(job_id) => {
+                            info!("Download started from notification: job_id={}", job_id);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to enqueue from notification: {}", e);
+                        }
+                    }
+                } else {
+                    tracing::error!("JobManager not available for notification download");
+                }
             }
         }
 

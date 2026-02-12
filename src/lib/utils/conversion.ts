@@ -37,11 +37,3 @@ export function getConversionFormats(extension: string): FormatOption[] {
 
   return [];
 }
-
-export function isVideoExtension(extension: string): boolean {
-  return VIDEO_EXTENSIONS.includes((extension || '').toLowerCase());
-}
-
-export function isAudioExtension(extension: string): boolean {
-  return AUDIO_EXTENSIONS.includes((extension || '').toLowerCase());
-}

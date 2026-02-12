@@ -2,4 +2,4 @@
 import type { DownloadRequest } from "./DownloadRequest";
 import type { JobStatus } from "./JobStatus";
 
-export type Job = { id: string, request: DownloadRequest, status: JobStatus, backend: string, createdAt: bigint, startedAt: bigint | null, completedAt: bigint | null, progress: number, downloadedBytes: bigint, totalBytes: bigint | null, speed: bigint | null, eta: bigint | null, tempFiles: Array<string>, retryCount: number, lastError: string | null, title: string | null, thumbnail: string | null, postProcessIndex: number, };
+export type Job = { id: string, request: DownloadRequest, status: JobStatus, backend: string, createdAt: number, startedAt: number | null, completedAt: number | null, progress: number, downloadedBytes: number, totalBytes: number | null, speed: number | null, eta: number | null, tempFiles: Array<string>, retryCount: number, lastError: string | null, title: string | null, thumbnail: string | null, author: string | null, authorUrl: string | null, duration: number | null, playlistId: string | null, playlistTitle: string | null, playlistIndex: number | null, };

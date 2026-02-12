@@ -51,9 +51,13 @@ if (typeof window !== 'undefined') {
   });
 
   window.i18n = {
-    t: (key: string) => translate(key),
+    t: (key: string) => translate(key as TranslationKeys),
     locale: get(locale),
   };
+
+  locale.subscribe((value) => {
+    if (window.i18n) window.i18n.locale = value;
+  });
 }
 
 function getNestedValue(obj: Record<string, unknown>, path: string): string | undefined {
@@ -78,23 +82,29 @@ function interpolate(str: string, vars?: Record<string, string | number>): strin
   });
 }
 
-export type TranslationFunction = (key: string, vars?: Record<string, string | number>) => string;
+import type { TranslationKeys } from './keys';
+
+export type TranslationFunction = (
+  key: TranslationKeys,
+  vars?: Record<string, string | number>
+) => string;
+
+function resolveTranslation(
+  loc: Locale,
+  key: TranslationKeys,
+  vars?: Record<string, string | number>
+): string {
+  const translation = getNestedValue(translations[loc], key);
+  if (translation !== undefined) return interpolate(translation, vars);
+  const fallback = getNestedValue(translations[DEFAULT_LOCALE], key);
+  if (fallback !== undefined) return interpolate(fallback, vars);
+  console.warn(`[i18n] Missing translation: ${key}`);
+  return key;
+}
 
 export const t = derived<typeof locale, TranslationFunction>(locale, ($locale) => {
-  return (key: string, vars?: Record<string, string | number>): string => {
-    const translation = getNestedValue(translations[$locale], key);
-
-    if (translation === undefined) {
-      const fallback = getNestedValue(translations[DEFAULT_LOCALE], key);
-      if (fallback === undefined) {
-        console.warn(`[i18n] Missing translation: ${key}`);
-        return key;
-      }
-      return interpolate(fallback, vars);
-    }
-
-    return interpolate(translation, vars);
-  };
+  return (key: TranslationKeys, vars?: Record<string, string | number>) =>
+    resolveTranslation($locale, key, vars);
 });
 
 export function setLocale(newLocale: Locale): void {
@@ -109,24 +119,8 @@ export function getLocale(): Locale {
   return get(locale);
 }
 
-export function translate(key: string, vars?: Record<string, string | number>): string {
-  const currentLocale = get(locale);
-  const translation = getNestedValue(translations[currentLocale], key);
-
-  if (translation === undefined) {
-    const fallback = getNestedValue(translations[DEFAULT_LOCALE], key);
-    if (fallback === undefined) {
-      console.warn(`[i18n] Missing translation: ${key}`);
-      return key;
-    }
-    return interpolate(fallback, vars);
-  }
-
-  return interpolate(translation, vars);
-}
-
-export function isLocaleAvailable(code: string): code is Locale {
-  return code in translations;
+export function translate(key: TranslationKeys, vars?: Record<string, string | number>): string {
+  return resolveTranslation(get(locale), key, vars);
 }
 
 export type Translations = typeof en;

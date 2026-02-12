@@ -1,14 +1,16 @@
 import { writable, get } from 'svelte/store';
 import { load, type Store } from '@tauri-apps/plugin-store';
+import { invoke } from '@tauri-apps/api/core';
 import { logs } from './logs';
 import { isAndroid } from '$lib/utils/android';
 
 export type VideoQuality = 'max' | '4k' | '1440p' | '1080p' | '720p' | '480p' | '360p' | '240p';
 export type DownloadMode = 'auto' | 'audio' | 'mute';
 export type AudioQuality = 'best' | '320' | '256' | '192' | '128' | '96';
-export type DefaultProcessor = 'auto' | 'yt-dlp' | 'lux';
-export type PreferredVideoCodec = 'any' | 'h264' | 'h265' | 'vp9' | 'av1';
-export type PreferredAudioCodec = 'any' | 'opus' | 'aac' | 'mp3' | 'vorbis';
+type DefaultProcessor = 'auto' | 'yt-dlp' | 'lux';
+type PreferredVideoCodec = 'any' | 'h264' | 'h265' | 'vp9' | 'av1';
+type PreferredAudioCodec = 'any' | 'opus' | 'aac' | 'mp3' | 'vorbis';
+type AudioFormat = 'any' | 'mp3' | 'm4a' | 'opus' | 'wav' | 'flac';
 
 export interface CustomPreset {
   id: string;
@@ -74,7 +76,7 @@ export type BackgroundType =
   | 'vibrancy-content'
   | 'vibrancy-under-window'
   | 'vibrancy-under-page';
-export type AccentStyle = 'solid' | 'gradient' | 'glow';
+type AccentStyle = 'solid' | 'gradient' | 'glow';
 export type SurfaceStyle = 'glass' | 'frosted' | 'elevated' | 'accent' | 'contrast' | 'custom';
 export type ShadowIntensity = 'none' | 'subtle' | 'medium' | 'strong';
 
@@ -85,10 +87,11 @@ export interface SurfaceSettings {
   accentTint: number;
 }
 
+export type WindowControlsStyle = 'auto' | 'windows' | 'macos';
 export type BorderRadiusPreset = 'none' | 'subtle' | 'rounded' | 'pill' | 'custom';
 export type TextScalePreset = 'compact' | 'default' | 'large' | 'custom';
 
-export type ProxyMode = 'none' | 'system' | 'custom';
+type ProxyMode = 'none' | 'system' | 'custom';
 
 export interface YtDlpAdvancedSettings {
   advancedMode: boolean;
@@ -160,7 +163,7 @@ export interface FFmpegSettings {
   hwAccel: FFmpegHwAccel;
 }
 
-export const defaultFFmpegSettings: FFmpegSettings = {
+const defaultFFmpegSettings: FFmpegSettings = {
   hwAccel: 'auto',
 };
 
@@ -196,9 +199,13 @@ export interface AppSettings {
 
   autoUpdate: boolean;
   allowPreReleases: boolean;
+  checkDepUpdates: boolean;
+  autoUpdateDeps: boolean;
   sendStats: boolean;
   acrylicBackground: boolean;
   disableAnimations: boolean;
+
+  windowControlsStyle: WindowControlsStyle;
 
   backgroundType: BackgroundType;
   backgroundColor: string;
@@ -240,6 +247,7 @@ export interface AppSettings {
   defaultAudioQuality: AudioQuality;
   preferredVideoCodec: PreferredVideoCodec;
   preferredAudioCodec: PreferredAudioCodec;
+  audioFormat: AudioFormat;
   selectedPreset: string;
   clearMetadata: boolean;
   dontShowInHistory: boolean;
@@ -270,6 +278,7 @@ export interface AppSettings {
 
   thumbnailTheming: boolean;
   builderThumbnailGlow: boolean;
+  compactSidebar: boolean;
 
   proxyMode: ProxyMode;
   customProxyUrl: string;
@@ -294,12 +303,15 @@ export interface AppSettings {
   downloadsSortDirection: 'asc' | 'desc';
   historyViewMode: 'list' | 'grid';
   gridItemSize: number;
+  listItemSize: number;
   downloadsVisibleColumns: ('format' | 'size' | 'duration')[];
   hideMissingFiles: boolean;
   showSourceTags: boolean;
   downloadsUngroupPlaylistsOnSort: boolean;
 
   showMobileNavLabels: boolean;
+
+  navigationStyle: 'auto' | 'navbar' | 'sidebar';
 
   customPresets: CustomPreset[];
 
@@ -367,12 +379,12 @@ export const defaultSettings: AppSettings = {
   extensionServerToken: '',
 
   notificationsEnabled: true,
-  notificationPosition: 'bottom-right',
+  notificationPosition: 'top-center',
   notificationMonitor: 'primary',
   compactNotifications: false,
   notificationFancyBackground: false,
   notificationThumbnailTheming: true,
-  notificationOffset: 48,
+  notificationOffset: 24,
   notificationCornerDismiss: false,
   notificationDuration: 12,
   notificationShowProgress: true,
@@ -383,9 +395,13 @@ export const defaultSettings: AppSettings = {
 
   autoUpdate: true,
   allowPreReleases: false,
+  checkDepUpdates: true,
+  autoUpdateDeps: false,
   sendStats: true,
   acrylicBackground: true,
   disableAnimations: false,
+
+  windowControlsStyle: 'auto',
 
   backgroundType: 'acrylic',
   backgroundColor: '#1a1a2e',
@@ -395,8 +411,8 @@ export const defaultSettings: AppSettings = {
   backgroundOpacity: 100,
   windowTint: 32,
 
-  accentColor: '#6366F1',
-  accentStyle: 'solid',
+  accentColor: '#0EA5E9',
+  accentStyle: 'gradient',
   useSystemAccent: false,
 
   surfaceStyle: 'glass',
@@ -429,7 +445,8 @@ export const defaultSettings: AppSettings = {
   defaultDownloadMode: 'auto',
   defaultAudioQuality: 'best',
   preferredVideoCodec: 'any',
-  preferredAudioCodec: 'any',
+  preferredAudioCodec: 'aac',
+  audioFormat: 'any',
   selectedPreset: 'custom',
   clearMetadata: false,
   dontShowInHistory: false,
@@ -454,6 +471,7 @@ export const defaultSettings: AppSettings = {
 
   thumbnailTheming: true,
   builderThumbnailGlow: true,
+  compactSidebar: true,
 
   proxyMode: 'system',
   customProxyUrl: '',
@@ -478,12 +496,15 @@ export const defaultSettings: AppSettings = {
   downloadsSortDirection: 'desc',
   historyViewMode: 'list',
   gridItemSize: 200,
+  listItemSize: 56,
   downloadsVisibleColumns: ['format', 'size', 'duration'],
   hideMissingFiles: false,
   showSourceTags: true,
   downloadsUngroupPlaylistsOnSort: false,
 
   showMobileNavLabels: true,
+
+  navigationStyle: 'auto',
 
   customPresets: [],
 
@@ -497,6 +518,93 @@ let store: Store | null = null;
 export const settings = writable<AppSettings>(defaultSettings);
 
 export const settingsReady = writable(false);
+
+const USER_MODIFIED_STORE_KEY = '_userModifiedKeys';
+
+let userModifiedKeys = new Set<string>();
+
+export const userModifiedKeysStore = writable<ReadonlySet<string>>(new Set());
+
+async function persistUserModifiedKeys(): Promise<void> {
+  if (!store) return;
+  try {
+    await store.set(USER_MODIFIED_STORE_KEY, [...userModifiedKeys]);
+    await store.save();
+  } catch (e) {
+    logs.error('settings', `Failed to persist user-modified keys: ${e}`);
+  }
+}
+
+function markKeyModified(key: string): void {
+  userModifiedKeys.add(key);
+  userModifiedKeysStore.set(userModifiedKeys);
+}
+
+function unmarkKeyModified(key: string): void {
+  userModifiedKeys.delete(key);
+  userModifiedKeysStore.set(userModifiedKeys);
+}
+
+function deepEquals(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return a === b;
+  if (typeof a !== typeof b) return false;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    return a.every((v, i) => deepEquals(v, b[i]));
+  }
+  if (typeof a === 'object' && typeof b === 'object') {
+    const keysA = Object.keys(a as Record<string, unknown>);
+    const keysB = Object.keys(b as Record<string, unknown>);
+    if (keysA.length !== keysB.length) return false;
+    return keysA.every((k) =>
+      deepEquals((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])
+    );
+  }
+  return false;
+}
+
+/**
+ * Bootstrap user-modified-keys on first run after update.
+ * Compares each stored value against the hardcoded default;
+ * any value that differs is marked as user-modified.
+ */
+function migrateUserModifiedKeys(loaded: AppSettings): Set<string> {
+  const modified = new Set<string>();
+  for (const key of Object.keys(defaultSettings) as (keyof AppSettings)[]) {
+    if (key === 'extensionServerToken') continue;
+    if (key === 'onboardingCompleted' || key === 'onboardingVersion') continue;
+    if (key === 'dismissedUpdateVersion') continue;
+    if (key === 'extensionCookiesReceived') continue;
+    if (key === 'customPresets') continue;
+
+    const loadedVal = loaded[key];
+    const defaultVal = defaultSettings[key];
+
+    if (!deepEquals(loadedVal, defaultVal)) {
+      // For nested objects, check individual sub-keys
+      if (
+        typeof loadedVal === 'object' &&
+        loadedVal !== null &&
+        !Array.isArray(loadedVal) &&
+        typeof defaultVal === 'object' &&
+        defaultVal !== null &&
+        !Array.isArray(defaultVal)
+      ) {
+        for (const subKey of Object.keys(defaultVal as unknown as Record<string, unknown>)) {
+          const subLoaded = (loadedVal as unknown as Record<string, unknown>)[subKey];
+          const subDefault = (defaultVal as unknown as Record<string, unknown>)[subKey];
+          if (!deepEquals(subLoaded, subDefault)) {
+            modified.add(`${key}.${subKey}`);
+          }
+        }
+      } else {
+        modified.add(key);
+      }
+    }
+  }
+  return modified;
+}
 
 export async function initSettings(): Promise<void> {
   try {
@@ -565,7 +673,7 @@ export async function initSettings(): Promise<void> {
         if (userAgent.includes('mac')) {
           loaded.backgroundType = 'vibrancy-sidebar';
         } else if (userAgent.includes('linux')) {
-          loaded.backgroundType = loaded.backgroundVideo ? 'animated' : 'solid';
+          loaded.backgroundType = 'solid';
         }
       }
     }
@@ -584,10 +692,35 @@ export async function initSettings(): Promise<void> {
       await store!.set('extractionPlayerClient', loaded.extractionPlayerClient);
     }
 
+    const storedModifiedKeys = await store!.get<string[]>(USER_MODIFIED_STORE_KEY);
+    if (storedModifiedKeys && Array.isArray(storedModifiedKeys)) {
+      userModifiedKeys = new Set(storedModifiedKeys);
+    } else {
+      userModifiedKeys = migrateUserModifiedKeys(loaded);
+      await persistUserModifiedKeys();
+      logs.info(
+        'settings',
+        `Migrated user-modified keys: ${userModifiedKeys.size} keys marked as user-modified`
+      );
+    }
+    userModifiedKeysStore.set(userModifiedKeys);
+
+    const { applyRemoteDefaultsToLoaded } = await import('$lib/composables/remoteSync');
+    const applied = applyRemoteDefaultsToLoaded(
+      loaded as unknown as Record<string, unknown>,
+      userModifiedKeys
+    );
+    if (applied.size > 0) {
+      logs.debug(
+        'settings',
+        `Applied ${applied.size} remote defaults on init: ${[...applied].join(', ')}`
+      );
+    }
+
     settings.set(loaded);
     settingsReady.set(true);
 
-    if (isAndroid()) setTimeout(() => syncUpdateSettingsToAndroid(), 1000);
+    syncDownloadSettings();
   } catch (error) {
     logs.error('settings', `Failed to load settings: ${error}`);
     settingsReady.set(true);
@@ -609,23 +742,15 @@ export async function updateSetting<K extends keyof AppSettings>(
 
     settings.update((s) => ({ ...s, [key]: value }));
 
-    if (isAndroid() && (key === 'autoUpdate' || key === 'allowPreReleases')) {
-      syncUpdateSettingsToAndroid();
+    markKeyModified(String(key));
+    persistUserModifiedKeys();
+
+    if (isDownloadSetting(String(key))) {
+      syncDownloadSettings();
     }
   } catch (error) {
     logs.error('settings', `Failed to update ${String(key)}: ${error}`);
   }
-}
-
-function syncUpdateSettingsToAndroid(): void {
-  if (!isAndroid()) return;
-  const s = get(settings);
-  const android = (
-    window as unknown as {
-      AndroidYtDlp?: { syncUpdateSettings?: (a: boolean, b: boolean) => void };
-    }
-  ).AndroidYtDlp;
-  android?.syncUpdateSettings?.(s.autoUpdate ?? true, s.allowPreReleases ?? false);
 }
 
 export async function updateSettings(updates: Partial<AppSettings>): Promise<void> {
@@ -639,6 +764,15 @@ export async function updateSettings(updates: Partial<AppSettings>): Promise<voi
     await store.save();
 
     settings.update((s) => ({ ...s, ...updates }));
+
+    for (const key of Object.keys(updates)) {
+      markKeyModified(key);
+    }
+    persistUserModifiedKeys();
+
+    if (Object.keys(updates).some(isDownloadSetting)) {
+      syncDownloadSettings();
+    }
   } catch (error) {
     logs.error('settings', `Failed to update settings: ${error}`);
   }
@@ -655,12 +789,104 @@ export async function resetSettings(): Promise<void> {
     await Promise.all(
       Object.entries(defaultSettings).map(([key, value]) => store!.set(key, value))
     );
-    await store.save();
+
+    userModifiedKeys = new Set();
+    userModifiedKeysStore.set(userModifiedKeys);
+    await persistUserModifiedKeys();
 
     settings.set(defaultSettings);
+    syncDownloadSettings();
   } catch (error) {
     logs.error('settings', `Failed to reset settings: ${error}`);
   }
+}
+
+export async function updateSettingDotNotation(
+  parentKey: string,
+  parentValue: unknown,
+  dotKey: string
+): Promise<void> {
+  if (!store) return;
+  try {
+    await store.set(parentKey, parentValue);
+    await store.save();
+    markKeyModified(dotKey);
+    persistUserModifiedKeys();
+    if (isDownloadSetting(parentKey) || isDownloadSetting(dotKey)) {
+      syncDownloadSettings();
+    }
+  } catch (error) {
+    logs.error('settings', `Failed to update ${dotKey}: ${error}`);
+  }
+}
+
+export async function resetSetting(key: string): Promise<void> {
+  if (!store) return;
+
+  try {
+    const { getEffectiveDefault } = await import('$lib/composables/remoteSync');
+    const effectiveDefault = getEffectiveDefault(key);
+
+    if (key.includes('.')) {
+      const [parent, child] = key.split('.');
+      settings.update((s) => {
+        const parentObj = s[parent as keyof AppSettings];
+        if (typeof parentObj === 'object' && parentObj !== null) {
+          return { ...s, [parent]: { ...parentObj, [child]: effectiveDefault } };
+        }
+        return s;
+      });
+      const current = getSettings();
+      await store.set(parent, current[parent as keyof AppSettings]);
+    } else {
+      settings.update((s) => ({ ...s, [key]: effectiveDefault }));
+      await store.set(key, effectiveDefault);
+    }
+    await store.save();
+    unmarkKeyModified(key);
+    await persistUserModifiedKeys();
+
+    if (isDownloadSetting(key)) {
+      syncDownloadSettings();
+    }
+  } catch (error) {
+    logs.error('settings', `Failed to reset setting ${key}: ${error}`);
+  }
+}
+
+export async function applyRemoteDefaultsMidSession(): Promise<void> {
+  if (!store) return;
+
+  const current = getSettings();
+  const loaded = JSON.parse(JSON.stringify(current)) as Record<string, unknown>;
+  const { applyRemoteDefaultsToLoaded: applyRemote } = await import('$lib/composables/remoteSync');
+  const applied = applyRemote(loaded, userModifiedKeys);
+
+  if (applied.size === 0) return;
+
+  const updates: Partial<AppSettings> = {};
+  for (const key of applied) {
+    if (key.includes('.')) {
+      const [parent] = key.split('.');
+      (updates as Record<string, unknown>)[parent] = (loaded as Record<string, unknown>)[parent];
+    } else {
+      (updates as Record<string, unknown>)[key] = (loaded as Record<string, unknown>)[key];
+    }
+  }
+
+  await Promise.all(Object.entries(updates).map(([k, v]) => store!.set(k, v)));
+  await store.save();
+
+  settings.update((s) => ({ ...s, ...updates }));
+
+  if ([...applied].some(isDownloadSetting)) {
+    syncDownloadSettings();
+  }
+
+  logs.debug(
+    'settings',
+    `Applied ${applied.size} remote defaults mid-session: ${[...applied].join(', ')}`
+  );
 }
 
 export function getSettings(): AppSettings {
@@ -680,4 +906,84 @@ export function getProxyConfig(): ProxyConfig {
     customUrl: s.customProxyUrl,
     retryWithoutProxy: s.retryWithoutProxy,
   };
+}
+
+const DOWNLOAD_SETTING_KEYS: ReadonlySet<string> = new Set([
+  'downloadPath',
+  'audioPath',
+  'useAudioPath',
+  'defaultDownloadMode',
+  'defaultVideoQuality',
+  'defaultAudioQuality',
+  'preferredVideoCodec',
+  'preferredAudioCodec',
+  'audioFormat',
+  'embedThumbnail',
+  'clearMetadata',
+  'embedSubtitles',
+  'subtitleLanguages',
+  'sponsorBlock',
+  'sponsorBlockSkipSponsors',
+  'sponsorBlockSkipIntros',
+  'sponsorBlockSkipSelfPromo',
+  'sponsorBlockSkipInteraction',
+  'cookiesFromBrowser',
+  'customCookies',
+  'proxyMode',
+  'customProxyUrl',
+  'downloadSpeedLimit',
+  'useAria2',
+  'aria2Connections',
+  'aria2Splits',
+  'aria2MinSplitSize',
+  'aria2DisableIPv6',
+  'aria2CustomArgs',
+  'youtubePlayerClient',
+  'concurrentDownloads',
+]);
+
+function buildDownloadSettings(s: AppSettings) {
+  return {
+    downloadPath: s.downloadPath || '',
+    audioPath: s.audioPath || '',
+    useAudioPath: s.useAudioPath ?? false,
+    defaultDownloadMode: s.defaultDownloadMode || 'auto',
+    defaultVideoQuality: s.defaultVideoQuality || 'max',
+    defaultAudioQuality: s.defaultAudioQuality || 'best',
+    preferredVideoCodec: s.preferredVideoCodec || 'any',
+    preferredAudioCodec: s.preferredAudioCodec || 'any',
+    audioFormat: s.audioFormat || 'any',
+    embedThumbnail: s.embedThumbnail ?? true,
+    embedMetadata: !(s.clearMetadata ?? false),
+    embedSubtitles: s.embedSubtitles ?? false,
+    subtitleLanguages: s.subtitleLanguages || '',
+    sponsorBlock: s.sponsorBlock ?? false,
+    sponsorBlockSkipSponsors: s.sponsorBlockSkipSponsors ?? true,
+    sponsorBlockSkipIntros: s.sponsorBlockSkipIntros ?? false,
+    sponsorBlockSkipSelfPromo: s.sponsorBlockSkipSelfPromo ?? false,
+    sponsorBlockSkipInteraction: s.sponsorBlockSkipInteraction ?? false,
+    cookiesFromBrowser: s.cookiesFromBrowser || '',
+    customCookies: s.customCookies || '',
+    proxyMode: s.proxyMode || 'none',
+    customProxyUrl: s.customProxyUrl || '',
+    // Convert from MB/s (UI) to bytes/sec (backend)
+    downloadSpeedLimit: s.downloadSpeedLimit ? s.downloadSpeedLimit * 1024 * 1024 : 0,
+    useAria2: s.useAria2 ?? false,
+    aria2Connections: s.aria2Connections ?? 8,
+    aria2Splits: s.aria2Splits ?? 8,
+    aria2MinSplitSize: s.aria2MinSplitSize || '1M',
+    aria2DisableIpv6: s.aria2DisableIPv6 ?? false,
+    aria2CustomArgs: s.aria2CustomArgs || '',
+    youtubePlayerClient: s.youtubePlayerClient || '',
+    concurrentDownloads: s.concurrentDownloads ?? 3,
+  };
+}
+
+export function syncDownloadSettings(): void {
+  const s = getSettings();
+  invoke('sync_download_settings', { settings: buildDownloadSettings(s) }).catch(() => {});
+}
+
+export function isDownloadSetting(key: string): boolean {
+  return DOWNLOAD_SETTING_KEYS.has(key);
 }

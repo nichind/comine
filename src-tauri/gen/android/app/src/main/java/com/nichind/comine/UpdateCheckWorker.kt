@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -22,21 +23,29 @@ class UpdateCheckWorker(
         const val WORK_NAME = "update_check_work"
         private const val PREFS_NAME = "update_check_prefs"
         private const val PREF_LAST_NOTIFIED_VERSION = "last_notified_version"
-        private const val PREF_AUTO_UPDATE_ENABLED = "auto_update_enabled"
-        private const val PREF_ALLOW_PRERELEASES = "allow_prereleases"
+    }
+
+    private fun readSettingBool(key: String, default: Boolean): Boolean {
+        return try {
+            val file = File(applicationContext.filesDir, "settings.json")
+            if (!file.exists()) return default
+            val json = JSONObject(file.readText())
+            if (json.has(key)) json.getBoolean(key) else default
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read $key from settings.json, using default", e)
+            default
+        }
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
             Log.i(TAG, "Starting background update check")
 
-            val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            
-            if (!prefs.getBoolean(PREF_AUTO_UPDATE_ENABLED, true)) {
+            if (!readSettingBool("autoUpdate", true)) {
                 return@withContext Result.success()
             }
 
-            val allowPrereleases = prefs.getBoolean(PREF_ALLOW_PRERELEASES, false)
+            val allowPrereleases = readSettingBool("allowPreReleases", false)
             val currentVersion = getCurrentVersion()
             
             Log.i(TAG, "Current version: $currentVersion, allow prereleases: $allowPrereleases")
@@ -47,7 +56,8 @@ class UpdateCheckWorker(
                 val remoteVersion = updateInfo.getString("version")
                 
                 if (isNewerVersion(remoteVersion, currentVersion)) {
-                    val lastNotified = prefs.getString(PREF_LAST_NOTIFIED_VERSION, null)
+                    val notifPrefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    val lastNotified = notifPrefs.getString(PREF_LAST_NOTIFIED_VERSION, null)
                     
                     if (lastNotified != remoteVersion) {
                         UpdateNotifications.init(applicationContext)
@@ -55,7 +65,7 @@ class UpdateCheckWorker(
                             version = remoteVersion,
                             isPreRelease = updateInfo.optBoolean("prerelease", false)
                         )
-                        prefs.edit().putString(PREF_LAST_NOTIFIED_VERSION, remoteVersion).apply()
+                        notifPrefs.edit().putString(PREF_LAST_NOTIFIED_VERSION, remoteVersion).apply()
                     }
                 } else {
                 }
@@ -157,14 +167,6 @@ class UpdateCheckWorker(
     class Settings(context: Context) {
         private val prefs: SharedPreferences = 
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-
-        fun setAutoUpdateEnabled(enabled: Boolean) {
-            prefs.edit().putBoolean(PREF_AUTO_UPDATE_ENABLED, enabled).apply()
-        }
-
-        fun setAllowPrereleases(allowed: Boolean) {
-            prefs.edit().putBoolean(PREF_ALLOW_PRERELEASES, allowed).apply()
-        }
 
         fun clearLastNotifiedVersion() {
             prefs.edit().remove(PREF_LAST_NOTIFIED_VERSION).apply()

@@ -1,8 +1,20 @@
 let tooltipEl: HTMLDivElement | null = null;
 let currentTarget: HTMLElement | null = null;
-let showTimeout: ReturnType<typeof setTimeout> | null = null;
-let hideTimeout: ReturnType<typeof setTimeout> | null = null;
 let styleInjected = false;
+
+const instanceTimers = new WeakMap<
+  HTMLElement,
+  { show: ReturnType<typeof setTimeout> | null; hide: ReturnType<typeof setTimeout> | null }
+>();
+
+function getTimers(node: HTMLElement) {
+  let t = instanceTimers.get(node);
+  if (!t) {
+    t = { show: null, hide: null };
+    instanceTimers.set(node, t);
+  }
+  return t;
+}
 
 function injectStyles() {
   if (styleInjected) return;
@@ -118,12 +130,13 @@ export function tooltip(node: HTMLElement, text?: string) {
 
   function onEnter() {
     if (!isElementInDOM(node)) return;
+    const timers = getTimers(node);
 
-    if (hideTimeout) {
-      clearTimeout(hideTimeout);
-      hideTimeout = null;
+    if (timers.hide) {
+      clearTimeout(timers.hide);
+      timers.hide = null;
     }
-    showTimeout = setTimeout(() => {
+    timers.show = setTimeout(() => {
       if (isElementInDOM(node)) {
         showTooltip(node, tooltipText);
       }
@@ -131,11 +144,12 @@ export function tooltip(node: HTMLElement, text?: string) {
   }
 
   function onLeave() {
-    if (showTimeout) {
-      clearTimeout(showTimeout);
-      showTimeout = null;
+    const timers = getTimers(node);
+    if (timers.show) {
+      clearTimeout(timers.show);
+      timers.show = null;
     }
-    hideTimeout = setTimeout(hideTooltip, 100);
+    timers.hide = setTimeout(hideTooltip, 100);
   }
 
   node.addEventListener('mouseenter', onEnter);
@@ -155,8 +169,10 @@ export function tooltip(node: HTMLElement, text?: string) {
       node.removeEventListener('mouseleave', onLeave);
       node.removeEventListener('focus', onEnter);
       node.removeEventListener('blur', onLeave);
-      if (showTimeout) clearTimeout(showTimeout);
-      if (hideTimeout) clearTimeout(hideTimeout);
+      const timers = getTimers(node);
+      if (timers.show) clearTimeout(timers.show);
+      if (timers.hide) clearTimeout(timers.hide);
+      instanceTimers.delete(node);
       if (currentTarget === node) {
         hideTooltip();
       }

@@ -97,6 +97,7 @@
     "error": "Download failed",
     "errorDiskFull": "Not enough disk space",
     "pasteFromClipboard": "Paste from clipboard",
+    "filename_template": "Filename template",
     "youtubeDetected": "YouTube video",
     "playlistDetected": "Playlist detected",
     "customizeDownload": "Customize",
@@ -172,6 +173,9 @@
       "noCombined": "No combined formats available. Use Track Builder to select video and audio separately.",
       "addedToQueue": "Added to queue",
       "download": "Download"
+    },
+    "files": {
+      "count": "files"
     },
     "tracks": {
       "loading": "Loading formats...",
@@ -250,6 +254,18 @@
       "advancedDesc": "Speed limits, folders, and other options"
     }
   },
+  "resolve": {
+    "music": {
+      "track": "Track",
+      "artist": "Artist",
+      "album": "Album",
+      "genre": "Genre",
+      "year": "Year",
+      "disc": "Disc"
+    },
+    "categories": "Categories",
+    "tags": "Tags"
+  },
   "downloads": {
     "title": "Downloads",
     "subtitle": "Active and completed downloads",
@@ -324,6 +340,7 @@
     "selectItem": "Select",
     "deselectItem": "Deselect",
     "selected": "selected",
+    "selectAll": "Select all",
     "clearSelection": "Clear selection",
     "noFilePath": "File path not available for this item",
     "fileMissing": "File no longer exists",
@@ -473,6 +490,10 @@
     },
     "general": {
       "title": "General",
+      "groups": {
+        "startup": "Startup & Window",
+        "clipboard": "Clipboard"
+      },
       "language": "Language",
       "startOnBoot": "Start on boot",
       "startOnBootDescription": "Launch Comine automatically when you log in",
@@ -489,11 +510,17 @@
       "closeBehaviorClose": "Close the app",
       "browse": "Browse"
     },
-    "processing": {
-      "title": "Download Backend",
+    "advanced": {
+      "title": "Advanced",
       "groups": {
         "backend": "Backend",
-        "youtube": "YouTube"
+        "youtube": "yt-dlp: YouTube",
+        "extraction": "yt-dlp: Extraction",
+        "download": "yt-dlp: Download",
+        "output": "yt-dlp: Output",
+        "postProcess": "yt-dlp: Post-Processing",
+        "aria2": "aria2",
+        "ffmpeg": "FFmpeg"
       },
       "defaultProcessor": "Default processor",
       "defaultProcessorDescription": "Which backend to use by default",
@@ -530,6 +557,11 @@
     },
     "downloads": {
       "title": "Downloads",
+      "groups": {
+        "options": "Options",
+        "format": "Format & Codecs",
+        "performance": "Performance"
+      },
       "downloadPath": "Download location",
       "downloadPathDescription": "Where downloaded files are saved",
       "defaultPath": "System default",
@@ -546,6 +578,8 @@
       "preferredVideoCodecDescription": "Prefer this codec when available, falls back to others if not",
       "preferredAudioCodec": "Preferred audio codec",
       "preferredAudioCodecDescription": "Prefer this codec when available, falls back to others if not",
+      "audioFormat": "Audio output format",
+      "audioFormatDescription": "Convert audio downloads to this format. 'Any' keeps the original format",
       "codecAny": "Any (best available)",
       "concurrentDownloads": "Concurrent downloads",
       "concurrentDownloadsDescription": "Number of downloads that can run simultaneously",
@@ -568,11 +602,19 @@
       "bypassProxyForDownloads": "Bypass proxy for file downloads",
       "bypassProxyForDownloadsDescription": "Download files directly without using proxy (faster)"
     },
+    "appearance": {
+      "title": "Appearance",
+      "groups": {
+        "background": "Background",
+        "theme": "Colors & Surfaces",
+        "layout": "Layout & Typography"
+      }
+    },
     "app": {
       "title": "App",
       "groups": {
-        "appearance": "Appearance",
-        "privacy": "Privacy"
+        "privacy": "Privacy",
+        "preferences": "Preferences"
       },
       "updates": "Updates",
       "currentVersion": "Current version: {version}",
@@ -606,6 +648,18 @@
       "thumbnailThemingDescription": "Use colors from thumbnails for progress bars and hover effects",
       "builderThumbnailGlow": "Builder view glow effect",
       "builderThumbnailGlowDescription": "Apply a subtle glow effect using thumbnail colors in video, playlist, and channel views",
+      "compactSidebar": "Compact sidebar",
+      "compactSidebarDescription": "Reduces sidebar width, icon sizes and item spacing",
+      "navigationStyle": "Navigation style",
+      "navigationStyleDescription": "Choose between a sidebar or bottom navigation bar",
+      "navigationStyleAuto": "Auto (detect platform)",
+      "navigationStyleNavbar": "Bottom bar",
+      "navigationStyleSidebar": "Sidebar",
+      "windowControlsStyle": "Window controls style",
+      "windowControlsStyleDescription": "Appearance of minimize, maximize, and close buttons",
+      "windowControlsAuto": "Auto (detect platform)",
+      "windowControlsWindows": "Windows",
+      "windowControlsMacos": "macOS",
       "resetToDefault": "Reset to default",
       "background": "Background",
       "backgroundDescription": "Choose the app background style",
@@ -710,6 +764,7 @@
       "denoDescription": "JavaScript runtime required by yt-dlp for YouTube. Fixes 'Sign in to confirm you're not a bot' errors",
       "quickjsDescription": "Lightweight JavaScript runtime for yt-dlp PO tokens. Alternative to Deno for YouTube bot detection bypass",
       "luxDescription": "Alternative downloader for Bilibili, Douyin, TikTok, and 40+ Chinese platforms",
+      "galleryDlDescription": "Downloads images, galleries, and files from Pixiv, Danbooru, Kemono, DeviantArt, and 100+ sites",
       "missingRequired": "Missing required dependencies",
       "missingYtdlp": "yt-dlp is not installed. Please install it from Settings → Dependencies.",
       "missingFfmpeg": "ffmpeg is not installed. Please install it from Settings → Dependencies.",
@@ -720,7 +775,11 @@
       "switchToStable": "Switch to stable release",
       "switchingChannel": "Switching yt-dlp to {channel} channel...",
       "channelSwitched": "yt-dlp switched to {channel} ({version})",
-      "channelSwitchFailed": "Failed to switch channel: {error}"
+      "channelSwitchFailed": "Failed to switch channel: {error}",
+      "checkDepUpdates": "Check for dependency updates",
+      "checkDepUpdatesDescription": "Periodically check if installed dependencies have updates available",
+      "autoUpdateDeps": "Auto-update dependencies",
+      "autoUpdateDepsDescription": "Automatically update dependencies when updates are available"
     },
     "data": {
       "title": "Data",
@@ -955,6 +1014,12 @@
   "tray": {
     "show": "Show Comine",
     "downloadClipboard": "Download from clipboard",
+    "startOnBoot": "Start on boot",
+    "watchClipboard": "Watch clipboard",
+    "pauseAll": "Pause all",
+    "resumeAll": "Resume all",
+    "recentDownloads": "Recent downloads",
+    "noRecentDownloads": "No recent downloads",
     "quit": "Quit",
     "hiddenToTray": "Comine is still running in the system tray"
   },
@@ -1091,7 +1156,11 @@
     "bundleFailed": "Installation failed",
     "setupRequired": "Setup required",
     "componentsNeeded": "components needed",
-    "installAll": "Install All"
+    "installAll": "Install All",
+    "updateAvailableFor": "Update available for",
+    "updatesAvailable": "Updates available",
+    "updateNow": "Update",
+    "updateAll": "Update All"
   },
   "ytdlp": {
     "advanced": {

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <link rel="icon" href="%sveltekit.assets%/icon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <title>Comine</title>
     <style>
       @font-face {
@@ -37,25 +37,53 @@
         z-index: 99999;
         pointer-events: none;
         opacity: 1;
-        transition: opacity 0.4s ease-out;
+        transition: opacity 0.15s ease-out;
       }
       #splash-screen.fade-out {
         opacity: 0;
       }
       #splash-icon {
-        width: 120px;
-        height: 120px;
+        width: min(45vh, 45vw);
+        height: min(45vh, 45vw);
         display: block;
-        animation: splash-zoom 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        will-change: transform, opacity;
+        opacity: 0.4;
+        animation: splash-shrink 0.8s cubic-bezier(0.22, 0.6, 0.36, 1) forwards;
+        animation-play-state: paused;
       }
-      @keyframes splash-zoom {
+      #splash-icon.animate {
+        animation-play-state: running;
+      }
+      #splash-white {
+        opacity: 1;
+        animation: splash-reveal 0.8s cubic-bezier(0.22, 0.6, 0.36, 1) forwards;
+        animation-play-state: paused;
+      }
+      #splash-icon.animate #splash-white {
+        animation-play-state: running;
+      }
+      @keyframes splash-shrink {
         0% {
-          transform: scale(0.5);
+          transform: scale(1);
+          opacity: 0.4;
+        }
+        100% {
+          transform: scale(0);
+          opacity: 0;
+        }
+      }
+      @keyframes splash-reveal {
+        0% {
+          opacity: 1;
+        }
+        30% {
+          opacity: 0.6;
+        }
+        55% {
           opacity: 0;
         }
         100% {
-          transform: scale(1);
-          opacity: 1;
+          opacity: 0;
         }
       }
 
@@ -63,7 +91,7 @@
         height: 100%;
         width: 100%;
         opacity: 0;
-        transition: opacity 0.18s ease-out;
+        transition: opacity 0.3s ease-out;
       }
 
       #app-root.is-visible {
@@ -107,6 +135,13 @@
       }
     </style>
     %sveltekit.head%
+    <style>
+      @media (hover: none) and (pointer: coarse) {
+        html, body {
+          touch-action: manipulation;
+        }
+      }
+    </style>
   </head>
   <body data-sveltekit-preload-data="hover" style="background: transparent; margin: 0; padding: 0; overflow: hidden; height: 100%; width: 100%;">
     <div id="splash-screen">
@@ -115,6 +150,7 @@
         <path fill-rule="evenodd" clip-rule="evenodd" d="M300.29 223.05L612.418 0L844 298.937L799.054 760.396L472.441 1024L158 592.095L300.29 223.05ZM754.854 722.285C700.283 629.788 671.5 524.355 671.5 416.959V323.5L464.5 633.5L754.854 722.285Z" fill="url(#splash_g1)"/>
         <path fill-rule="evenodd" clip-rule="evenodd" d="M300.29 223.05L612.418 0L844 298.937L799.054 760.396L472.441 1024L158 592.095L300.29 223.05ZM754.854 722.285C700.283 629.788 671.5 524.355 671.5 416.959V323.5L464.5 633.5L754.854 722.285Z" fill="url(#splash_g2)"/>
         <path fill-rule="evenodd" clip-rule="evenodd" d="M300.29 223.05L612.418 0L844 298.937L799.054 760.396L472.441 1024L158 592.095L300.29 223.05ZM754.854 722.285C700.283 629.788 671.5 524.355 671.5 416.959V323.5L464.5 633.5L754.854 722.285Z" fill="url(#splash_g3)"/>
+        <path id="splash-white" fill-rule="evenodd" clip-rule="evenodd" d="M300.29 223.05L612.418 0L844 298.937L799.054 760.396L472.441 1024L158 592.095L300.29 223.05ZM754.854 722.285C700.283 629.788 671.5 524.355 671.5 416.959V323.5L464.5 633.5L754.854 722.285Z" fill="white"/>
         <defs>
           <linearGradient id="splash_g0" x1="512" y1="0" x2="512" y2="1024" gradientUnits="userSpaceOnUse">
             <stop stop-color="#B499D5"/><stop offset="1" stop-color="#0EA5E9"/>
@@ -166,6 +202,17 @@
             const appRoot = document.getElementById('app-root');
             if (appRoot) appRoot.classList.add('is-visible');
           }
+
+          // Safety net: if Svelte fails to mount (e.g. WebView2 stalls offline),
+          // auto-remove splash and show app root after 8 seconds.
+          setTimeout(function () {
+            var s = document.getElementById('splash-screen');
+            if (s) {
+              s.remove();
+            }
+            var a = document.getElementById('app-root');
+            if (a) a.classList.add('is-visible');
+          }, 8000);
         } catch (e) {}
       })();
     </script>

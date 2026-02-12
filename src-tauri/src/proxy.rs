@@ -1,6 +1,6 @@
-use log::{debug, info, warn};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use tracing::{debug, info, warn};
 
 struct ProxyCache {
     result: Option<ResolvedProxy>,
@@ -38,6 +38,8 @@ impl Default for ProxyConfig {
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedProxy {
     pub url: String,
@@ -193,17 +195,13 @@ fn detect_env_proxy() -> Option<ResolvedProxy> {
 
 #[cfg(target_os = "windows")]
 fn detect_windows_proxy() -> Option<ResolvedProxy> {
-    use crate::utils::StdCommandHideConsole;
-    use std::process::Command;
-
-    let enable_output = Command::new("reg")
+    let enable_output = crate::utils::new_std_command("reg")
         .args([
             "query",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
             "/v",
             "ProxyEnable",
         ])
-        .hide_console()
         .output();
 
     if let Ok(output) = enable_output {
@@ -215,14 +213,13 @@ fn detect_windows_proxy() -> Option<ResolvedProxy> {
         return None;
     }
 
-    let server_output = Command::new("reg")
+    let server_output = crate::utils::new_std_command("reg")
         .args([
             "query",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
             "/v",
             "ProxyServer",
         ])
-        .hide_console()
         .output();
 
     if let Ok(output) = server_output {

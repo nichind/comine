@@ -25,14 +25,15 @@ function getVersion() {
 // https://vite.dev/config/
 export default defineConfig(async () => {
   const host = process.env.TAURI_DEV_HOST;
+  const gitInfo = getGitInfo();
 
   return {
     plugins: [sveltekit()],
 
     define: {
       __DEV__: JSON.stringify(process.env.NODE_ENV !== 'production'),
-      __COMMIT_HASH__: JSON.stringify(getGitInfo().hash),
-      __GIT_BRANCH__: JSON.stringify(getGitInfo().branch),
+      __COMMIT_HASH__: JSON.stringify(gitInfo.hash),
+      __GIT_BRANCH__: JSON.stringify(gitInfo.branch),
       __APP_VERSION__: JSON.stringify(getVersion()),
       __BUILD_DATE__: JSON.stringify(new Date().toISOString().split('T')[0]),
     },

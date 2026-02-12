@@ -13,7 +13,7 @@ export interface LogEntry {
   message: string;
 }
 
-export interface LogFilters {
+interface LogFilters {
   levels: Set<LogLevel>;
   search: string;
 }
@@ -47,7 +47,6 @@ const initialState: LogsState = {
 
 let isInitializing = false;
 
-// [2024-12-29T15:30:45.123Z] [INFO] source: message
 function parseLogLine(line: string, index: number): LogEntry | null {
   const match = line.match(/^\[([^\]]+)\]\s*\[(\w+)\]\s*([^:]+):\s*(.*)$/);
   if (!match || match.length < 5) {
@@ -95,11 +94,11 @@ function createLogsStore() {
     try {
       const sessionFile = await invoke<string>('get_log_file_path');
       update((s) => ({ ...s, sessionFile }));
-      console.log('Log file initialized:', sessionFile);
+      console.debug('Log file initialized:', sessionFile);
 
       const deleted = await invoke<number>('cleanup_old_logs', { keepSessions: 10 });
       if (deleted > 0) {
-        console.log(`Cleaned up ${deleted} old log files`);
+        console.debug(`Cleaned up ${deleted} old log files`);
       }
     } catch (e) {
       console.warn('Failed to initialize file logging:', e);
@@ -146,9 +145,6 @@ function createLogsStore() {
       writeToFile(entry);
     },
 
-    trace(source: string, message: string) {
-      this.log('trace', source, message);
-    },
     debug(source: string, message: string) {
       this.log('debug', source, message);
     },
@@ -190,7 +186,7 @@ function createLogsStore() {
           diskCount: lines.length,
         }));
 
-        console.log(`Loaded ${diskEntries.length} log entries from disk`);
+        console.debug(`Loaded ${diskEntries.length} log entries from disk`);
       } catch (e) {
         console.error('Failed to load logs from disk:', e);
       }
@@ -226,33 +222,6 @@ function createLogsStore() {
 
     clear() {
       update((state) => ({ ...state, liveBuffer: [], diskEntries: [], diskLoaded: false }));
-    },
-
-    getFiltered(): LogEntry[] {
-      const state = get({ subscribe });
-
-      let entries: LogEntry[];
-      if (state.diskLoaded) {
-        const liveMessages = new Set(state.liveBuffer.map((e) => `${e.source}:${e.message}`));
-        entries = [
-          ...state.liveBuffer,
-          ...state.diskEntries.filter((de) => !liveMessages.has(`${de.source}:${de.message}`)),
-        ];
-      } else {
-        entries = state.liveBuffer;
-      }
-
-      return entries.filter((entry) => {
-        if (!state.filters.levels.has(entry.level)) return false;
-        if (state.filters.search) {
-          const search = state.filters.search.toLowerCase();
-          return (
-            entry.message.toLowerCase().includes(search) ||
-            entry.source.toLowerCase().includes(search)
-          );
-        }
-        return true;
-      });
     },
 
     async exportAsText(): Promise<string> {
@@ -292,78 +261,44 @@ function createLogsStore() {
         console.error('Failed to open logs folder:', e);
       }
     },
-
-    async getLogsPath(): Promise<string | null> {
-      try {
-        return await invoke<string>('get_logs_folder_path');
-      } catch (e) {
-        console.error('Failed to get logs path:', e);
-        return null;
-      }
-    },
-
-    getSessionFile(): string | null {
-      return get({ subscribe }).sessionFile;
-    },
-
-    isDiskLoaded(): boolean {
-      return get({ subscribe }).diskLoaded;
-    },
   };
 }
 
 export const logs = createLogsStore();
 
-export const filteredLogs = derived(logs, ($logs) => {
-  let entries: LogEntry[];
+const mergedEntries = derived(logs, ($logs): LogEntry[] => {
+  if (!$logs.diskLoaded) return $logs.liveBuffer;
+  const liveMessages = new Set($logs.liveBuffer.map((e) => `${e.source}:${e.message}`));
+  return [
+    ...$logs.liveBuffer,
+    ...$logs.diskEntries.filter((de) => !liveMessages.has(`${de.source}:${de.message}`)),
+  ];
+});
 
-  if ($logs.diskLoaded) {
-    const liveMessages = new Set($logs.liveBuffer.map((e) => `${e.source}:${e.message}`));
-    entries = [
-      ...$logs.liveBuffer,
-      ...$logs.diskEntries.filter((de) => !liveMessages.has(`${de.source}:${de.message}`)),
-    ];
-  } else {
-    entries = $logs.liveBuffer;
-  }
-
-  return entries.filter((entry) => {
+export const filteredLogs = derived([mergedEntries, logs], ([$entries, $logs]) => {
+  return $entries.filter((entry) => {
     if (!$logs.filters.levels.has(entry.level)) return false;
-
     if ($logs.filters.search) {
       const search = $logs.filters.search.toLowerCase();
       return (
         entry.message.toLowerCase().includes(search) || entry.source.toLowerCase().includes(search)
       );
     }
-
     return true;
   });
 });
 
-export const logStats = derived(logs, ($logs) => {
-  let entries: LogEntry[];
-
-  if ($logs.diskLoaded) {
-    const liveMessages = new Set($logs.liveBuffer.map((e) => `${e.source}:${e.message}`));
-    entries = [
-      ...$logs.liveBuffer,
-      ...$logs.diskEntries.filter((de) => !liveMessages.has(`${de.source}:${de.message}`)),
-    ];
-  } else {
-    entries = $logs.liveBuffer;
-  }
-
+export const logStats = derived(mergedEntries, ($entries) => {
   const counts = {
     trace: 0,
     debug: 0,
     info: 0,
     warn: 0,
     error: 0,
-    total: entries.length,
+    total: $entries.length,
   };
 
-  for (const entry of entries) {
+  for (const entry of $entries) {
     counts[entry.level]++;
   }
 

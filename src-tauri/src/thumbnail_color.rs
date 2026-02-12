@@ -1,6 +1,5 @@
 use crate::utils::lock_or_recover;
 
-use log::{debug, warn};
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
@@ -9,9 +8,10 @@ use std::sync::Mutex;
 use tauri::AppHandle;
 use tauri::Manager;
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
+use tracing::{debug, warn};
 
 const THUMBNAIL_COLOR_CACHE_SIZE: std::num::NonZeroUsize =
-    unsafe { std::num::NonZeroUsize::new_unchecked(500) };
+    std::num::NonZeroUsize::new(500).unwrap();
 
 static THUMBNAIL_COLOR_CACHE: std::sync::LazyLock<Mutex<lru::LruCache<String, [u8; 3]>>> =
     std::sync::LazyLock::new(|| Mutex::new(lru::LruCache::new(THUMBNAIL_COLOR_CACHE_SIZE)));
@@ -34,6 +34,23 @@ static THUMBNAIL_COLOR_INFLIGHT: std::sync::LazyLock<
 
 static THUMBNAIL_COLOR_FLUSH_SCHEDULED: AtomicBool = AtomicBool::new(false);
 
+pub fn memory_cache() -> &'static Mutex<lru::LruCache<String, [u8; 3]>> {
+    &THUMBNAIL_COLOR_CACHE
+}
+
+pub async fn clear_disk_cache(app: &AppHandle) {
+    {
+        let mut disk = lock_or_recover(&THUMBNAIL_COLOR_DISK_CACHE);
+        disk.map.clear();
+        disk.dirty = false;
+    }
+    if let Some(cache_dir) = app.path().app_cache_dir().ok() {
+        let cache_path = cache_dir.join(THUMBNAIL_COLOR_DISK_CACHE_FILE);
+        let _ = std::fs::remove_file(cache_path);
+    }
+    tracing::info!("Thumbnail color disk cache cleared");
+}
+
 fn extract_yt_video_id(url: &str) -> Option<&str> {
     let markers = ["i.ytimg.com/vi/", "i.ytimg.com/vi_webp/"];
     for marker in markers {
@@ -51,7 +68,6 @@ fn extract_yt_video_id(url: &str) -> Option<&str> {
 }
 
 fn make_cache_key(url: &str) -> String {
-    // Treat absolute filesystem paths as local-file cache entries.
     let path = Path::new(url);
     if path.is_absolute() {
         return format!("file:{}", path.to_string_lossy());
@@ -93,7 +109,7 @@ fn compute_dominant_color(img: image::DynamicImage) -> [u8; 3] {
             };
 
             let lightness_score = 1.0 - (lightness - 0.5).abs() * 2.0;
-            let score = saturation * lightness_score * (1.0 - (lightness - 0.4).abs());
+            let score = saturation * lightness_score * (1.0 - (lightness - 0.5).abs());
 
             if score > best_score && saturation > 0.2 {
                 best_score = score;
@@ -102,7 +118,6 @@ fn compute_dominant_color(img: image::DynamicImage) -> [u8; 3] {
         }
     }
 
-    // Boost saturation slightly (keeps existing UI look).
     let boost_factor = 1.2f32;
     let r = best_color[0] as f32 / 255.0;
     let g = best_color[1] as f32 / 255.0;
@@ -129,6 +144,9 @@ fn compute_dominant_color(img: image::DynamicImage) -> [u8; 3] {
         };
 
         s = (s * boost_factor).min(1.0);
+
+        // Clamp lightness to avoid colors too dark or washed out in the UI
+        let l = l.max(0.35).min(0.75);
 
         let q = if l < 0.5 {
             l * (1.0 + s)
@@ -187,8 +205,6 @@ fn cache_color(app: &AppHandle, cache_key: String, color: [u8; 3]) {
     schedule_thumbnail_color_disk_flush(app.clone());
 }
 
-/// Computes a dominant color for a *local* image file.
-/// This is used for locally generated thumbnails (e.g. extracted from the downloaded file).
 #[tauri::command]
 pub async fn extract_local_thumbnail_color(
     app: AppHandle,
@@ -311,8 +327,6 @@ fn schedule_thumbnail_color_disk_flush(app: AppHandle) {
     });
 }
 
-/// Fast path used by the frontend before doing any network fetch.
-/// Returns `None` if we don't have it cached (in-memory or on-disk).
 #[tauri::command]
 pub async fn get_cached_thumbnail_color(
     app: AppHandle,

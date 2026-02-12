@@ -1,6 +1,7 @@
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "ts-export")]
+use ts_rs::TS;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -61,6 +62,8 @@ pub enum NotificationMonitor {
 }
 
 #[derive(Serialize, Clone, Default)]
+#[cfg_attr(feature = "ts-export", derive(TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct ReleaseInfo {
     pub tag: String,
@@ -69,6 +72,8 @@ pub struct ReleaseInfo {
 }
 
 #[derive(Serialize, Clone, Default)]
+#[cfg_attr(feature = "ts-export", derive(TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct DependencyStatus {
     pub installed: bool,
@@ -83,6 +88,7 @@ impl DependencyStatus {
         Self::default()
     }
 
+    #[allow(dead_code)]
     pub fn embedded(description: &str) -> Self {
         Self {
             installed: true,
@@ -115,6 +121,8 @@ impl DependencyStatus {
 }
 
 #[derive(Serialize, Clone, Default)]
+#[cfg_attr(feature = "ts-export", derive(TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
 pub struct InstallProgress {
     pub stage: String,
     pub progress: u8,

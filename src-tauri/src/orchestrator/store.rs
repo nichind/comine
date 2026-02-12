@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
 
@@ -72,71 +71,97 @@ impl PersistedJob {
             last_error: self.last_error,
             title: self.title,
             thumbnail: self.thumbnail,
-            post_process_index: 0,
+            author: None,
+            author_url: None,
+            duration: None,
+            playlist_id: None,
+            playlist_title: None,
+            playlist_index: None,
         }
     }
 }
 
 pub struct JobStore {
     path: PathBuf,
-    cache: RwLock<Vec<PersistedJob>>,
 }
 
 impl JobStore {
     pub fn new(app_data_dir: PathBuf) -> Self {
         let path = app_data_dir.join("jobs.json");
-
-        let cache = if path.exists() {
-            match std::fs::read_to_string(&path) {
-                Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to read queue.json");
-                    Vec::new()
-                }
-            }
-        } else {
-            Vec::new()
-        };
-
-        Self {
-            path,
-            cache: RwLock::new(cache),
-        }
+        Self { path }
     }
 
     pub fn load_jobs(&self) -> Result<Vec<Job>, BackendError> {
-        let cache = self
-            .cache
-            .read()
-            .map_err(|e| BackendError::Other(e.to_string()))?;
-        Ok(cache.iter().cloned().map(|p| p.into_job()).collect())
+        if !self.path.exists() {
+            tracing::info!("No jobs.json found at {:?}, starting fresh", self.path);
+            return Ok(Vec::new());
+        }
+        let contents = std::fs::read_to_string(&self.path)
+            .map_err(|e| BackendError::IoError(e.to_string()))?;
+        let persisted: Vec<PersistedJob> = match serde_json::from_str(&contents) {
+            Ok(jobs) => jobs,
+            Err(e) => {
+                tracing::warn!("Failed to deserialize jobs.json, starting fresh: {}", e);
+                Vec::new()
+            }
+        };
+        tracing::info!(
+            "Loaded {} persisted jobs from {:?}",
+            persisted.len(),
+            self.path
+        );
+        Ok(persisted.into_iter().map(|p| p.into_job()).collect())
     }
 
     pub fn save_jobs(&self, jobs: &[Job]) -> Result<(), BackendError> {
+        let json = Self::serialize_jobs(jobs)?;
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || Self::write_atomic(&path, &json));
+        Ok(())
+    }
+
+    pub fn save_jobs_sync(&self, jobs: &[Job]) -> Result<(), BackendError> {
+        let json = Self::serialize_jobs(jobs)?;
+        Self::write_atomic(&self.path, &json);
+        Ok(())
+    }
+
+    fn serialize_jobs(jobs: &[Job]) -> Result<String, BackendError> {
         let persisted: Vec<PersistedJob> = jobs
             .iter()
             .filter(|j| !j.status.is_terminal())
             .map(PersistedJob::from)
             .collect();
+        serde_json::to_string_pretty(&persisted).map_err(|e| BackendError::IoError(e.to_string()))
+    }
 
-        {
-            let mut cache = self
-                .cache
-                .write()
-                .map_err(|e| BackendError::Other(e.to_string()))?;
-            *cache = persisted.clone();
+    fn write_atomic(path: &std::path::Path, json: &str) {
+        use std::io::Write;
+
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let tmp_path = path.with_extension("json.tmp");
+
+        let result = (|| -> std::io::Result<()> {
+            let mut file = std::fs::File::create(&tmp_path)?;
+            file.write_all(json.as_bytes())?;
+            file.sync_all()?; // fsync before rename to ensure durability
+            Ok(())
+        })();
+
+        if let Err(e) = result {
+            tracing::error!(error = %e, "Failed to write jobs.json.tmp");
+            return;
         }
 
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| BackendError::IoError(e.to_string()))?;
+        if let Err(e) = std::fs::rename(&tmp_path, path) {
+            tracing::error!(error = %e, "Failed to rename jobs.json.tmp -> jobs.json");
+            if let Err(e2) = std::fs::write(path, json) {
+                tracing::error!(error = %e2, "Fallback direct write also failed");
+            }
+        } else {
+            tracing::debug!("Persisted jobs to jobs.json");
         }
-
-        let json = serde_json::to_string_pretty(&persisted)
-            .map_err(|e| BackendError::IoError(e.to_string()))?;
-
-        std::fs::write(&self.path, json).map_err(|e| BackendError::IoError(e.to_string()))?;
-
-        tracing::debug!(count = persisted.len(), "Persisted jobs to queue.json");
-        Ok(())
     }
 }

@@ -1,7 +1,4 @@
-use std::path::Path;
-
-#[cfg(target_os = "windows")]
-use crate::utils::CommandHideConsole;
+use std::path::{Path, PathBuf};
 
 pub struct CmdOutputAsync {
     pub status_code: Option<i32>,
@@ -10,11 +7,8 @@ pub struct CmdOutputAsync {
 }
 
 pub async fn run_capture_async(exe: &Path, args: &[&str]) -> Result<CmdOutputAsync, String> {
-    let mut cmd = tokio::process::Command::new(exe);
+    let mut cmd = crate::utils::new_command(exe);
     cmd.args(args);
-
-    #[cfg(target_os = "windows")]
-    cmd.hide_console();
 
     let output = cmd.output().await.map_err(|e| e.to_string())?;
 
@@ -23,4 +17,8 @@ pub async fn run_capture_async(exe: &Path, args: &[&str]) -> Result<CmdOutputAsy
         stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
     })
+}
+
+pub fn find_in_system_path(binary_name: &str) -> Option<PathBuf> {
+    which::which(binary_name).ok()
 }

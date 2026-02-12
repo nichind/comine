@@ -1,395 +1,31 @@
+mod clipboard;
 mod deps;
 mod logs;
+mod media_info;
 mod notifications;
 mod orchestrator;
 mod proxy;
-// #[cfg(not(target_os = "android"))]
-// mod relay;
 mod server;
+mod store_utils;
 mod thumbnail_color;
 #[cfg(not(target_os = "android"))]
 mod tray;
-mod types;
-mod utils;
-
-#[cfg(target_os = "android")]
-use log::info;
 #[cfg(not(target_os = "android"))]
-use log::{error, info};
+mod tray_icon;
+mod types;
+mod updater;
+mod url_utils;
+mod utils;
+mod window_effects;
+#[cfg(not(target_os = "android"))]
+pub(crate) mod window_manager;
+
+use tracing::info;
 
 use tauri::AppHandle;
 use tauri::Emitter;
 use tauri::Listener;
 use tauri::Manager;
-
-#[cfg(target_os = "windows")]
-use utils::CommandHideConsole;
-
-#[tauri::command]
-#[allow(unused_variables)]
-async fn get_media_duration(app: AppHandle, file_path: String) -> Result<f64, String> {
-    #[cfg(target_os = "android")]
-    {
-        return Err("get_media_duration not supported on Android".to_string());
-    }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        use std::process::Stdio;
-
-        if !std::path::Path::new(&file_path).exists() {
-            return Err(format!("File not found: {}", file_path));
-        }
-
-        let deps_dir = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?
-            .join("deps");
-
-        let ffprobe_path = if cfg!(target_os = "windows") {
-            deps_dir.join("ffprobe.exe")
-        } else {
-            deps_dir.join("ffprobe")
-        };
-
-        let ffprobe_cmd = if ffprobe_path.exists() {
-            ffprobe_path.to_string_lossy().to_string()
-        } else {
-            "ffprobe".to_string()
-        };
-
-        let mut cmd = tokio::process::Command::new(&ffprobe_cmd);
-        cmd.args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            &file_path,
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-        #[cfg(target_os = "windows")]
-        cmd.hide_console();
-
-        let output = cmd
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run ffprobe: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("ffprobe failed: {}", stderr));
-        }
-
-        let duration_str = String::from_utf8_lossy(&output.stdout);
-        duration_str
-            .trim()
-            .parse::<f64>()
-            .map_err(|_| format!("Failed to parse duration: {}", duration_str))
-    }
-}
-
-#[derive(serde::Serialize, Clone, Debug)]
-pub struct MediaFormatInfo {
-    pub format_name: Option<String>,
-    pub format_long_name: Option<String>,
-    pub duration: Option<f64>,
-    pub size: Option<u64>,
-    pub bit_rate: Option<u64>,
-}
-
-#[derive(serde::Serialize, Clone, Debug)]
-pub struct MediaStreamInfo {
-    pub index: Option<u64>,
-    pub codec_type: Option<String>,
-    pub codec_name: Option<String>,
-    pub codec_long_name: Option<String>,
-    pub profile: Option<String>,
-
-    pub sample_rate: Option<u32>,
-    pub channels: Option<u32>,
-    pub channel_layout: Option<String>,
-
-    pub width: Option<u32>,
-    pub height: Option<u32>,
-    pub r_frame_rate: Option<String>,
-    pub avg_frame_rate: Option<String>,
-
-    pub bit_rate: Option<u64>,
-}
-
-#[derive(serde::Serialize, Clone, Debug)]
-pub struct MediaTechnicalInfo {
-    pub format: Option<MediaFormatInfo>,
-    pub streams: Vec<MediaStreamInfo>,
-}
-
-#[tauri::command]
-#[allow(unused_variables)]
-async fn get_media_technical_info(
-    app: AppHandle,
-    file_path: String,
-) -> Result<MediaTechnicalInfo, String> {
-    #[cfg(target_os = "android")]
-    {
-        return Err("get_media_technical_info not supported on Android".to_string());
-    }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        use std::process::Stdio;
-
-        if !std::path::Path::new(&file_path).exists() {
-            return Err(format!("File not found: {}", file_path));
-        }
-
-        let deps_dir = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?
-            .join("deps");
-
-        let ffprobe_path = if cfg!(target_os = "windows") {
-            deps_dir.join("ffprobe.exe")
-        } else {
-            deps_dir.join("ffprobe")
-        };
-
-        let ffprobe_cmd = if ffprobe_path.exists() {
-            ffprobe_path.to_string_lossy().to_string()
-        } else {
-            "ffprobe".to_string()
-        };
-
-        let mut cmd = tokio::process::Command::new(&ffprobe_cmd);
-        cmd.args([
-            "-v",
-            "error",
-            "-print_format",
-            "json",
-            "-show_format",
-            "-show_streams",
-            &file_path,
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-        #[cfg(target_os = "windows")]
-        cmd.hide_console();
-
-        let output = cmd
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run ffprobe: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("ffprobe failed: {}", stderr));
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let value: serde_json::Value = serde_json::from_str(&stdout)
-            .map_err(|e| format!("Failed to parse ffprobe JSON: {}", e))?;
-
-        fn parse_u64(v: &serde_json::Value) -> Option<u64> {
-            v.as_u64()
-                .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-        }
-        fn parse_u32(v: &serde_json::Value) -> Option<u32> {
-            v.as_u64()
-                .and_then(|n| u32::try_from(n).ok())
-                .or_else(|| v.as_str().and_then(|s| s.parse::<u32>().ok()))
-        }
-        fn parse_f64(v: &serde_json::Value) -> Option<f64> {
-            v.as_f64()
-                .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
-        }
-
-        let format = value.get("format").and_then(|f| {
-            Some(MediaFormatInfo {
-                format_name: f
-                    .get("format_name")
-                    .and_then(|x| x.as_str())
-                    .map(|s| s.to_string()),
-                format_long_name: f
-                    .get("format_long_name")
-                    .and_then(|x| x.as_str())
-                    .map(|s| s.to_string()),
-                duration: f.get("duration").and_then(parse_f64),
-                size: f.get("size").and_then(parse_u64),
-                bit_rate: f.get("bit_rate").and_then(parse_u64),
-            })
-        });
-
-        let mut streams: Vec<MediaStreamInfo> = Vec::new();
-        if let Some(arr) = value.get("streams").and_then(|s| s.as_array()) {
-            for s in arr {
-                streams.push(MediaStreamInfo {
-                    index: s.get("index").and_then(parse_u64),
-                    codec_type: s
-                        .get("codec_type")
-                        .and_then(|x| x.as_str())
-                        .map(|x| x.to_string()),
-                    codec_name: s
-                        .get("codec_name")
-                        .and_then(|x| x.as_str())
-                        .map(|x| x.to_string()),
-                    codec_long_name: s
-                        .get("codec_long_name")
-                        .and_then(|x| x.as_str())
-                        .map(|x| x.to_string()),
-                    profile: s
-                        .get("profile")
-                        .and_then(|x| x.as_str())
-                        .map(|x| x.to_string()),
-                    sample_rate: s.get("sample_rate").and_then(parse_u32),
-                    channels: s.get("channels").and_then(parse_u32),
-                    channel_layout: s
-                        .get("channel_layout")
-                        .and_then(|x| x.as_str())
-                        .map(|x| x.to_string()),
-                    width: s.get("width").and_then(parse_u32),
-                    height: s.get("height").and_then(parse_u32),
-                    r_frame_rate: s
-                        .get("r_frame_rate")
-                        .and_then(|x| x.as_str())
-                        .map(|x| x.to_string()),
-                    avg_frame_rate: s
-                        .get("avg_frame_rate")
-                        .and_then(|x| x.as_str())
-                        .map(|x| x.to_string()),
-                    bit_rate: s.get("bit_rate").and_then(parse_u64),
-                });
-            }
-        }
-
-        Ok(MediaTechnicalInfo { format, streams })
-    }
-}
-
-#[tauri::command]
-#[allow(unused_variables)]
-async fn generate_local_thumbnail(
-    app: AppHandle,
-    file_path: String,
-    item_id: String,
-) -> Result<String, String> {
-    orchestrator::thumbnail::generate_local_thumbnail(&app, &file_path, &item_id).await
-}
-
-#[tauri::command]
-#[allow(unused_variables)]
-async fn set_window_effect(app: AppHandle, effect_type: String) -> Result<(), String> {
-    info!("Setting window effect: {}", effect_type);
-
-    #[cfg(target_os = "windows")]
-    {
-        use tauri::utils::config::{Color, WindowEffectsConfig};
-        use tauri_utils::WindowEffect;
-
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.set_effects(None::<WindowEffectsConfig>);
-
-            if effect_type != "none" && !effect_type.starts_with("vibrancy-") {
-                let effect = match effect_type.as_str() {
-                    "blur" => WindowEffect::Blur,
-                    "mica" => WindowEffect::Mica,
-                    "mica-dark" => WindowEffect::MicaDark,
-                    "mica-light" => WindowEffect::MicaLight,
-                    "tabbed" => WindowEffect::Tabbed,
-                    "tabbed-dark" => WindowEffect::TabbedDark,
-                    "tabbed-light" => WindowEffect::TabbedLight,
-                    _ => WindowEffect::Acrylic,
-                };
-
-                // Only Acrylic supports color tinting
-                let color = if effect_type == "acrylic" {
-                    Some(Color(19, 19, 19, 163))
-                } else {
-                    None
-                };
-
-                let effects_config = WindowEffectsConfig {
-                    effects: vec![effect],
-                    state: None,
-                    radius: None,
-                    color,
-                };
-
-                // Force redraw when switching between effect APIs
-                let _ = window.set_decorations(true);
-                let _ = window.set_decorations(false);
-
-                if let Err(e) = window.set_effects(Some(effects_config)) {
-                    error!("Failed to set window effect: {:?}", e);
-                    return Err(format!("Failed to set window effect: {:?}", e));
-                }
-            }
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        use tauri::utils::config::WindowEffectsConfig;
-        use tauri_utils::{WindowEffect, WindowEffectState};
-
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.set_effects(None::<WindowEffectsConfig>);
-
-            if effect_type != "none" && effect_type.starts_with("vibrancy-") {
-                let effect = match effect_type.as_str() {
-                    "vibrancy-titlebar" => WindowEffect::Titlebar,
-                    "vibrancy-selection" => WindowEffect::Selection,
-                    "vibrancy-menu" => WindowEffect::Menu,
-                    "vibrancy-popover" => WindowEffect::Popover,
-                    "vibrancy-sidebar" => WindowEffect::Sidebar,
-                    "vibrancy-header" => WindowEffect::HeaderView,
-                    "vibrancy-sheet" => WindowEffect::Sheet,
-                    "vibrancy-window" => WindowEffect::WindowBackground,
-                    "vibrancy-hud" => WindowEffect::HudWindow,
-                    "vibrancy-fullscreen" => WindowEffect::FullScreenUI,
-                    "vibrancy-tooltip" => WindowEffect::Tooltip,
-                    "vibrancy-content" => WindowEffect::ContentBackground,
-                    "vibrancy-under-window" => WindowEffect::UnderWindowBackground,
-                    "vibrancy-under-page" => WindowEffect::UnderPageBackground,
-                    _ => WindowEffect::WindowBackground,
-                };
-
-                let effects_config = WindowEffectsConfig {
-                    effects: vec![effect],
-                    state: Some(WindowEffectState::FollowsWindowActiveState),
-                    radius: Some(12.0),
-                    color: None,
-                };
-
-                if let Err(e) = window.set_effects(Some(effects_config)) {
-                    error!("Failed to set window effect: {:?}", e);
-                    return Err(format!("Failed to set window effect: {:?}", e));
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-#[allow(unused_variables)]
-async fn set_acrylic(app: AppHandle, enable: bool) -> Result<(), String> {
-    set_window_effect(
-        app,
-        if enable {
-            "acrylic".to_string()
-        } else {
-            "none".to_string()
-        },
-    )
-    .await
-}
 
 #[tauri::command]
 async fn resolve_proxy_config(config: proxy::ProxyConfig) -> Result<proxy::ResolvedProxy, String> {
@@ -411,24 +47,25 @@ async fn detect_system_proxy() -> Result<proxy::ResolvedProxy, String> {
 }
 
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
 async fn get_disk_space(path: String) -> Result<utils::DiskSpaceInfo, String> {
     let actual_path = if path.is_empty() {
-        dirs::download_dir()
-            .ok_or("Could not find Downloads folder")?
-            .to_string_lossy()
-            .to_string()
+        #[cfg(not(target_os = "android"))]
+        {
+            dirs::download_dir()
+                .ok_or("Could not find Downloads folder")?
+                .to_string_lossy()
+                .to_string()
+        }
+        #[cfg(target_os = "android")]
+        {
+            "/storage/emulated/0/Download/Comine".to_string()
+        }
     } else {
         path
     };
-    utils::get_disk_space_for_path(&actual_path)
-        .ok_or_else(|| "Could not determine disk space".to_string())
-}
-
-#[tauri::command]
-#[cfg(target_os = "android")]
-async fn get_disk_space(_path: String) -> Result<utils::DiskSpaceInfo, String> {
-    Err("Not supported on Android".to_string())
+    utils::get_disk_space_for_path(&actual_path).ok_or_else(|| {
+        "Could not determine disk space. Check permissions or path validity.".to_string()
+    })
 }
 
 #[tauri::command]
@@ -451,17 +88,17 @@ async fn get_default_download_dir() -> Result<String, String> {
 async fn open_file(path: String) -> Result<bool, String> {
     use jni::objects::JValue;
 
-    log::info!("open_file called with path: {}", path);
+    tracing::info!("open_file called with path: {}", path);
 
     let result = std::thread::spawn(move || {
-        let mut env = crate::orchestrator::backends::ytdlp::get_jni_env()?;
-        let activity = crate::orchestrator::backends::ytdlp::get_activity()?;
+        let mut env = crate::orchestrator::backends::android_jni::get_jni_env()?;
+        let activity = crate::orchestrator::backends::android_jni::get_activity()?;
 
         let j_path = env
             .new_string(&path)
             .map_err(|e| format!("Failed to create path string: {}", e))?;
 
-        log::info!("Calling MainActivity.openFile via JNI");
+        tracing::info!("Calling MainActivity.openFile via JNI");
 
         let result = env
             .call_method(
@@ -475,7 +112,7 @@ async fn open_file(path: String) -> Result<bool, String> {
         let success = result
             .z()
             .map_err(|e| format!("Failed to get boolean result: {}", e))?;
-        log::info!("MainActivity.openFile returned: {}", success);
+        tracing::info!("MainActivity.openFile returned: {}", success);
         Ok::<bool, String>(success)
     })
     .join()
@@ -486,8 +123,11 @@ async fn open_file(path: String) -> Result<bool, String> {
 
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
-async fn open_file(_path: String) -> Result<bool, String> {
-    Err("Use shell-open plugin on desktop".to_string())
+async fn open_file(path: String) -> Result<bool, String> {
+    tracing::info!("open_file called with path: {}", path);
+    opener::open(std::path::Path::new(&path))
+        .map(|_| true)
+        .map_err(|e| format!("Failed to open file: {}", e))
 }
 
 #[tauri::command]
@@ -496,8 +136,8 @@ async fn open_folder(path: String) -> Result<bool, String> {
     use jni::objects::JValue;
 
     let result = std::thread::spawn(move || {
-        let mut env = crate::orchestrator::backends::ytdlp::get_jni_env()?;
-        let activity = crate::orchestrator::backends::ytdlp::get_activity()?;
+        let mut env = crate::orchestrator::backends::android_jni::get_jni_env()?;
+        let activity = crate::orchestrator::backends::android_jni::get_activity()?;
 
         let j_path = env
             .new_string(&path)
@@ -524,8 +164,203 @@ async fn open_folder(path: String) -> Result<bool, String> {
 
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
-async fn open_folder(_path: String) -> Result<bool, String> {
-    Err("Use shell-open plugin on desktop".to_string())
+async fn open_folder(path: String) -> Result<bool, String> {
+    tracing::info!("open_folder called with path: {}", path);
+    opener::open(std::path::Path::new(&path))
+        .map(|_| true)
+        .map_err(|e| format!("Failed to open folder: {}", e))
+}
+
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn reveal_file(path: String) -> Result<bool, String> {
+    tracing::info!("reveal_file called with path: {}", path);
+    let p = std::path::PathBuf::from(&path);
+    #[allow(unused_variables)]
+    if let Some(parent) = p.parent() {
+        #[cfg(target_os = "windows")]
+        {
+            let status = crate::utils::new_std_command("explorer")
+                .arg("/select,")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| format!("Failed to reveal file: {}", e))?;
+            drop(status);
+            Ok(true)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            crate::utils::new_std_command("open")
+                .arg("-R")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| format!("Failed to reveal file: {}", e))?;
+            Ok(true)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            crate::utils::new_std_command("xdg-open")
+                .arg(parent)
+                .spawn()
+                .map_err(|e| format!("Failed to reveal file: {}", e))?;
+            Ok(true)
+        }
+    } else {
+        Err("Could not determine parent directory".to_string())
+    }
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn reveal_file(_path: String) -> Result<bool, String> {
+    Ok(false)
+}
+
+#[cfg(not(target_os = "android"))]
+pub(crate) async fn reveal_file_internal(path: String) -> Result<bool, String> {
+    reveal_file(path).await
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct FileUrlInfo {
+    is_file: bool,
+    filename: String,
+    size: u64,
+    mime_type: String,
+    supports_resume: bool,
+}
+
+#[tauri::command]
+async fn check_file_url(
+    url: String,
+    proxy_config: Option<proxy::ProxyConfig>,
+) -> Result<FileUrlInfo, String> {
+    let resolved = proxy_config
+        .map(|c| proxy::resolve_proxy(&c))
+        .unwrap_or_default();
+    let proxy_url = if resolved.url.is_empty() {
+        None
+    } else {
+        Some(resolved.url.as_str())
+    };
+    let client = utils::http_client_with_proxy(proxy_url)?;
+
+    let response = client
+        .head(&url)
+        .send()
+        .await
+        .map_err(|e| format!("HEAD request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP error: {}", response.status()));
+    }
+
+    let headers = response.headers();
+
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    let content_length = headers
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+
+    let content_disposition = headers
+        .get("content-disposition")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    let supports_resume = headers
+        .get("accept-ranges")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.contains("bytes"))
+        .unwrap_or(false);
+
+    let filename = if content_disposition.contains("filename=") {
+        content_disposition
+            .split("filename=")
+            .nth(1)
+            .map(|s| s.trim_matches('"').trim_matches('\'').to_string())
+            .unwrap_or_default()
+    } else {
+        url.split('/')
+            .last()
+            .and_then(|s| s.split('?').next())
+            .unwrap_or("")
+            .to_string()
+    };
+
+    let is_file = content_disposition.contains("attachment")
+        || (!content_type.starts_with("text/html")
+            && !content_type.starts_with("application/json")
+            && content_length > 0)
+        || !filename.is_empty() && filename.contains('.');
+
+    Ok(FileUrlInfo {
+        is_file,
+        filename,
+        size: content_length,
+        mime_type: content_type,
+        supports_resume,
+    })
+}
+
+#[tauri::command]
+async fn clear_cookies(
+    state: tauri::State<'_, std::sync::Arc<orchestrator::manager::JobManager>>,
+) -> Result<(), String> {
+    tracing::info!("Clearing cookies");
+    state.clear_cookies().await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn clear_memory_caches() -> Result<(), String> {
+    tracing::info!("Clearing in-memory caches");
+    if let Ok(mut cache) = thumbnail_color::memory_cache().lock() {
+        cache.clear();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn clear_cache(app: AppHandle) -> Result<(), String> {
+    tracing::info!("Clearing disk caches");
+    thumbnail_color::clear_disk_cache(&app).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn extension_update_status(
+    id: String,
+    state: String,
+    progress: Option<f64>,
+    speed: Option<String>,
+    eta: Option<String>,
+    error: Option<String>,
+    file_path: Option<String>,
+    duration: Option<f64>,
+) -> Result<(), String> {
+    // Forward this status to the local HTTP server for the browser extension to poll.
+    // The extension polls /status which reads live from JobManager — the data is already
+    // up-to-date. This command exists so the frontend can fire-and-forget status updates
+    // without errors. In the future this could push to WebSocket-connected extensions.
+    tracing::debug!(
+        "Extension status update: id={}, state={}, progress={:?}",
+        id,
+        state,
+        progress
+    );
+    let _ = (speed, eta, error, file_path, duration); // acknowledged
+    Ok(())
 }
 
 #[tauri::command]
@@ -533,21 +368,12 @@ async fn check_ip(proxy_config: Option<proxy::ProxyConfig>) -> Result<IpCheckRes
     let config = proxy_config.unwrap_or_default();
     let resolved = proxy::resolve_proxy(&config);
 
-    let mut builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .connect_timeout(std::time::Duration::from_secs(5));
-
-    if !resolved.url.is_empty() {
-        let proxy =
-            reqwest::Proxy::all(&resolved.url).map_err(|e| format!("Invalid proxy: {}", e))?;
-        builder = builder.proxy(proxy);
+    let proxy_url = if resolved.url.is_empty() {
+        None
     } else {
-        builder = builder.no_proxy();
-    }
-
-    let client = builder
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+        Some(resolved.url.as_str())
+    };
+    let client = utils::http_client_with_proxy(proxy_url)?;
 
     let response = client
         .get("https://api.ipify.org?format=json")
@@ -574,6 +400,8 @@ async fn check_ip(proxy_config: Option<proxy::ProxyConfig>) -> Result<IpCheckRes
 }
 
 #[derive(serde::Serialize)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
 #[serde(rename_all = "camelCase")]
 struct IpCheckResult {
     ip: String,
@@ -626,240 +454,14 @@ async fn autostart_is_enabled(_app: AppHandle) -> Result<bool, String> {
     Ok(false)
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct UpdateCheckResult {
-    pub available: bool,
-    pub version: Option<String>,
-    pub body: Option<String>,
-    pub date: Option<String>,
-}
-
-#[cfg(not(target_os = "android"))]
 #[tauri::command]
-async fn check_for_update(
+fn server_start(
     app: AppHandle,
-    allow_prerelease: bool,
-) -> Result<UpdateCheckResult, String> {
-    use tauri_plugin_updater::UpdaterExt;
-
-    info!(
-        "Checking for updates with allow_prerelease={}",
-        allow_prerelease
-    );
-
-    let endpoint_url = if allow_prerelease {
-        let client = reqwest::Client::new();
-        let response = client
-            .get("https://api.github.com/repos/nichind/comine/releases")
-            .header("Accept", "application/vnd.github.v3+json")
-            .header("User-Agent", "comine-updater")
-            .send()
-            .await
-            .map_err(|e| format!("Failed to fetch releases: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err(format!("GitHub API error: {}", response.status()));
-        }
-
-        let releases: Vec<serde_json::Value> = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse releases: {}", e))?;
-
-        let latest = releases.first().ok_or("No releases found")?;
-        let tag = latest["tag_name"]
-            .as_str()
-            .ok_or("No tag_name in release")?;
-
-        format!(
-            "https://github.com/nichind/comine/releases/download/{}/latest.json",
-            tag
-        )
-    } else {
-        "https://github.com/nichind/comine/releases/latest/download/latest.json".to_string()
-    };
-
-    info!("Using update endpoint: {}", endpoint_url);
-
-    let updater = app
-        .updater_builder()
-        .endpoints(vec![endpoint_url
-            .parse()
-            .map_err(|e| format!("Invalid URL: {}", e))?])
-        .map_err(|e| format!("Failed to set endpoints: {}", e))?
-        .build()
-        .map_err(|e| format!("Failed to build updater: {}", e))?;
-
-    let update = updater
-        .check()
-        .await
-        .map_err(|e| format!("Update check failed: {}", e))?;
-
-    match update {
-        Some(update) => {
-            info!(
-                "Update available: {} (current: {})",
-                update.version, update.current_version
-            );
-            let date_str = update.date.map(|d| d.to_string());
-            Ok(UpdateCheckResult {
-                available: true,
-                version: Some(update.version.clone()),
-                body: Some(update.body.clone().unwrap_or_default()),
-                date: date_str,
-            })
-        }
-        None => {
-            info!("No update available");
-            Ok(UpdateCheckResult {
-                available: false,
-                version: None,
-                body: None,
-                date: None,
-            })
-        }
-    }
-}
-
-#[cfg(not(target_os = "android"))]
-#[tauri::command]
-async fn download_and_install_update(
-    app: AppHandle,
-    window: tauri::Window,
-    allow_prerelease: bool,
-) -> Result<(), String> {
-    use tauri_plugin_updater::UpdaterExt;
-
-    info!(
-        "Starting update download with allow_prerelease={}",
-        allow_prerelease
-    );
-
-    let endpoint_url = if allow_prerelease {
-        let client = reqwest::Client::new();
-        let response = client
-            .get("https://api.github.com/repos/nichind/comine/releases")
-            .header("Accept", "application/vnd.github.v3+json")
-            .header("User-Agent", "comine-updater")
-            .send()
-            .await
-            .map_err(|e| format!("Failed to fetch releases: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err(format!("GitHub API error: {}", response.status()));
-        }
-
-        let releases: Vec<serde_json::Value> = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse releases: {}", e))?;
-
-        let latest = releases.first().ok_or("No releases found")?;
-        let tag = latest["tag_name"]
-            .as_str()
-            .ok_or("No tag_name in release")?;
-
-        format!(
-            "https://github.com/nichind/comine/releases/download/{}/latest.json",
-            tag
-        )
-    } else {
-        "https://github.com/nichind/comine/releases/latest/download/latest.json".to_string()
-    };
-
-    info!("Using update endpoint: {}", endpoint_url);
-
-    let updater = app
-        .updater_builder()
-        .endpoints(vec![endpoint_url
-            .parse()
-            .map_err(|e| format!("Invalid URL: {}", e))?])
-        .map_err(|e| format!("Failed to set endpoints: {}", e))?
-        .build()
-        .map_err(|e| format!("Failed to build updater: {}", e))?;
-
-    let update = updater
-        .check()
-        .await
-        .map_err(|e| format!("Update check failed: {}", e))?
-        .ok_or("No update available")?;
-
-    info!("Downloading update version {}", update.version);
-
-    let window_for_progress = window.clone();
-    let window_for_finish = window.clone();
-    let mut started = false;
-
-    update
-        .download_and_install(
-            move |chunk_length, content_length| {
-                if !started {
-                    started = true;
-                    let _ = window_for_progress.emit(
-                        "update-download-progress",
-                        serde_json::json!({
-                            "event": "started",
-                            "contentLength": content_length
-                        }),
-                    );
-                }
-
-                let _ = window_for_progress.emit(
-                    "update-download-progress",
-                    serde_json::json!({
-                        "event": "progress",
-                        "chunkLength": chunk_length
-                    }),
-                );
-            },
-            move || {
-                info!("Download finished, verifying and installing...");
-                let _ = window_for_finish.emit(
-                    "update-download-progress",
-                    serde_json::json!({
-                        "event": "finished"
-                    }),
-                );
-            },
-        )
-        .await
-        .map_err(|e| {
-            let err_str = e.to_string();
-            error!("Update install failed: {}", err_str);
-            if err_str.contains("signature") || err_str.contains("Signature") {
-                "Update signature verification failed. The release may not be properly signed."
-                    .to_string()
-            } else {
-                format!("Update failed: {}", err_str)
-            }
-        })?;
-
-    info!("Update installed successfully, restarting app...");
-    app.restart();
-}
-
-#[cfg(target_os = "android")]
-#[tauri::command]
-async fn check_for_update(
-    _app: AppHandle,
-    _allow_prerelease: bool,
-) -> Result<UpdateCheckResult, String> {
-    Err("Use Android update mechanism".to_string())
-}
-
-#[cfg(target_os = "android")]
-#[tauri::command]
-async fn download_and_install_update(
-    _app: AppHandle,
-    _window: tauri::Window,
-    _allow_prerelease: bool,
-) -> Result<(), String> {
-    Err("Use Android update mechanism".to_string())
-}
-
-#[tauri::command]
-fn server_start(app: AppHandle, port: u16, token: String) {
-    server::start_server(app, port, token);
+    port: u16,
+    token: String,
+    manager: tauri::State<'_, std::sync::Arc<crate::orchestrator::manager::JobManager>>,
+) {
+    server::start_server(app, port, token, manager.inner().clone());
 }
 
 #[tauri::command]
@@ -870,16 +472,6 @@ fn server_stop() {
 #[tauri::command]
 fn server_is_running() -> bool {
     server::is_running()
-}
-
-#[tauri::command]
-fn push_queue_status(items: Vec<server::QueueItem>) {
-    server::update_queue(items);
-}
-
-#[tauri::command]
-fn push_history_status(items: Vec<server::HistoryItem>) {
-    server::update_history(items);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -911,13 +503,15 @@ pub fn run() {
     );
 
     let builder = builder.invoke_handler(tauri::generate_handler![
-        get_media_duration,
-        get_media_technical_info,
+        media_info::get_media_duration,
+        media_info::get_media_technical_info,
+        media_info::generate_local_thumbnail,
+        orchestrator::thumbnail::get_or_cache_thumbnail,
         thumbnail_color::get_cached_thumbnail_color,
         thumbnail_color::extract_thumbnail_color,
         thumbnail_color::extract_local_thumbnail_color,
-        set_window_effect,
-        set_acrylic,
+        window_effects::set_window_effect,
+        window_effects::set_acrylic,
         open_file,
         open_folder,
         notifications::show_notification_window,
@@ -938,8 +532,8 @@ pub fn run() {
         get_disk_space,
         get_default_download_dir,
         check_ip,
-        check_for_update,
-        download_and_install_update,
+        updater::check_for_update,
+        updater::download_and_install_update,
         deps::check_ytdlp,
         deps::install_ytdlp,
         deps::uninstall_ytdlp,
@@ -960,102 +554,79 @@ pub fn run() {
         deps::check_lux,
         deps::install_lux,
         deps::uninstall_lux,
+        deps::check_gallery_dl,
+        deps::install_gallery_dl,
+        deps::uninstall_gallery_dl,
+        deps::get_gallery_dl_releases,
         deps::cancel_dep_install,
         autostart_enable,
         autostart_disable,
         autostart_is_enabled,
+        reveal_file,
+        check_file_url,
+        clear_cookies,
+        clear_memory_caches,
+        clear_cache,
+        extension_update_status,
         server_start,
         server_stop,
         server_is_running,
-        push_queue_status,
-        push_history_status,
         orchestrator::resolve_url,
+        orchestrator::resolve_url_stream,
+        orchestrator::cancel_resolve_stream,
         orchestrator::start_job,
         orchestrator::get_jobs,
         orchestrator::control_job,
         orchestrator::update_job_settings,
+        orchestrator::move_job_to_top,
+        orchestrator::get_backend_capabilities,
+        orchestrator::sync_download_settings,
+        orchestrator::enqueue_url,
+        orchestrator::enqueue_playlist,
+        orchestrator::pause_all_jobs,
+        orchestrator::resume_all_jobs,
+        orchestrator::cancel_all_jobs,
+        orchestrator::retry_all_failed,
+        orchestrator::clear_terminal_jobs,
+        orchestrator::get_history,
+        orchestrator::remove_history_item,
+        orchestrator::clear_history,
+        orchestrator::toggle_history_favourite,
+        orchestrator::set_history_favourite,
+        orchestrator::update_history_duration,
+        orchestrator::export_history,
+        orchestrator::import_history,
+        orchestrator::restore_history_from_frontend,
         orchestrator::convert::convert_local_file,
-        orchestrator::convert::cancel_conversion
-    ]);
-
-    #[cfg(not(target_os = "android"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![
-        get_media_duration,
-        get_media_technical_info,
-        generate_local_thumbnail,
-        thumbnail_color::get_cached_thumbnail_color,
-        thumbnail_color::extract_thumbnail_color,
-        thumbnail_color::extract_local_thumbnail_color,
-        set_window_effect,
-        set_acrylic,
-        open_file,
-        open_folder,
-        notifications::show_notification_window,
-        notifications::reveal_notification_window,
-        notifications::close_notification_window,
-        notifications::close_all_notifications,
-        notifications::notification_action,
-        logs::get_log_file_path,
-        logs::append_log,
-        logs::cleanup_old_logs,
-        logs::open_logs_folder,
-        logs::get_logs_folder_path,
-        logs::read_session_logs,
-        logs::get_session_log_count,
-        resolve_proxy_config,
-        validate_proxy_url,
-        detect_system_proxy,
-        get_disk_space,
-        get_default_download_dir,
-        check_ip,
-        check_for_update,
-        download_and_install_update,
-        deps::check_ytdlp,
-        deps::install_ytdlp,
-        deps::uninstall_ytdlp,
-        deps::get_ytdlp_releases,
-        deps::update_ytdlp_channel,
-        deps::check_ffmpeg,
-        deps::install_ffmpeg,
-        deps::uninstall_ffmpeg,
-        deps::check_aria2,
-        deps::install_aria2,
-        deps::uninstall_aria2,
-        deps::check_deno,
-        deps::install_deno,
-        deps::uninstall_deno,
-        deps::check_quickjs,
-        deps::install_quickjs,
-        deps::uninstall_quickjs,
-        deps::check_lux,
-        deps::install_lux,
-        deps::uninstall_lux,
-        deps::cancel_dep_install,
-        autostart_enable,
-        autostart_disable,
-        autostart_is_enabled,
-        server_start,
-        server_stop,
-        server_is_running,
-        push_queue_status,
-        push_history_status,
-        orchestrator::resolve_url,
-        orchestrator::start_job,
-        orchestrator::get_jobs,
-        orchestrator::control_job,
-        orchestrator::update_job_settings,
-        orchestrator::convert::convert_local_file,
-        orchestrator::convert::cancel_conversion
+        orchestrator::convert::cancel_conversion,
+        clipboard::start_clipboard_watcher,
+        clipboard::stop_clipboard_watcher,
+        clipboard::set_url_input_focused,
+        #[cfg(not(target_os = "android"))]
+        tray::rebuild_tray_menu
     ]);
 
     let builder = builder
         .setup(|app| {
             let manager = orchestrator::init(app.handle());
             app.manage(manager);
+            app.manage(std::sync::Arc::new(clipboard::ClipboardWatcherState::new()));
+            app.manage(std::sync::Arc::new(clipboard::InputFocusState::new()));
+
+            #[cfg(not(target_os = "android"))]
+            app.manage(std::sync::Arc::new(window_manager::WindowState::new()));
+
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    orchestrator::thumbnail::prune_thumbnail_cache(&app_handle).await;
+                });
+            }
 
             #[cfg(not(target_os = "android"))]
             {
                 tray::setup(app.handle())?;
+                tray_icon::start_polling(app.handle());
 
                 let start_minimized_arg = std::env::args().any(|arg| arg == "--minimized");
                 use tauri_plugin_store::StoreExt;
@@ -1085,27 +656,27 @@ pub fn run() {
                             _ => "none".to_string(),
                         };
 
-                        let _ = set_window_effect(app_handle, effect_type).await;
+                        let _ = window_effects::set_window_effect(app_handle, effect_type).await;
                     });
                 }
 
                 {
-                    use std::sync::atomic::{AtomicBool, Ordering};
+                    use std::sync::atomic::Ordering;
                     use std::sync::Arc;
                     use std::time::Duration;
                     use tokio::time::sleep;
 
-                    let was_shown = Arc::new(AtomicBool::new(false));
+                    let window_state = app.state::<Arc<window_manager::WindowState>>();
 
                     let app_handle = app.handle().clone();
                     let app_handle_for_listener = app_handle.clone();
                     let app_handle_for_event = app_handle.clone();
-                    let was_shown_for_event = Arc::clone(&was_shown);
+                    let ws_for_event = window_state.inner().clone();
                     app_handle_for_listener.listen("frontend-ready", move |_| {
                         if !should_show_on_ready {
                             return;
                         }
-                        if was_shown_for_event.swap(true, Ordering::SeqCst) {
+                        if ws_for_event.was_shown.swap(true, Ordering::SeqCst) {
                             return;
                         }
 
@@ -1117,13 +688,13 @@ pub fn run() {
                     });
 
                     let app_handle = app.handle().clone();
-                    let was_shown_for_timeout = Arc::clone(&was_shown);
+                    let ws_for_timeout = window_state.inner().clone();
                     tauri::async_runtime::spawn(async move {
-                        sleep(Duration::from_millis(3500)).await;
+                        sleep(Duration::from_millis(6000)).await;
                         if !should_show_on_ready {
                             return;
                         }
-                        if was_shown_for_timeout.swap(true, Ordering::SeqCst) {
+                        if ws_for_timeout.was_shown.swap(true, Ordering::SeqCst) {
                             return;
                         }
 
@@ -1168,8 +739,31 @@ pub fn run() {
         });
 
     builder
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Prevent the app from exiting when the last window is destroyed
+            // (close-to-tray). The tray "Quit" button calls app.exit(0) which
+            // sets a non-None code and bypasses this guard.
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
+                if code.is_none() {
+                    // Only keep the process alive if the user chose tray behavior
+                    use tauri_plugin_store::StoreExt;
+                    let close_behavior: String = app
+                        .store("settings.json")
+                        .ok()
+                        .and_then(|s| {
+                            let v = s.get("closeBehavior")?;
+                            Some(v.as_str()?.to_string())
+                        })
+                        .unwrap_or_else(|| "tray".to_string());
+
+                    if close_behavior == "tray" {
+                        api.prevent_exit();
+                    }
+                }
+            }
+        });
 }
 
 #[cfg(test)]

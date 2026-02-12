@@ -4,4 +4,4 @@ import type { OutputSettings } from "./OutputSettings";
 import type { PostProcessStep } from "./PostProcessStep";
 import type { QualitySettings } from "./QualitySettings";
 
-export type DownloadRequest = { url: string, backend: string | null, quality: QualitySettings, output: OutputSettings, options: DownloadOptions, postProcess: Array<PostProcessStep>, };
+export type DownloadRequest = { url: string, backend: string | null, id: string | null, quality: QualitySettings, output: OutputSettings, options: DownloadOptions, postProcess: Array<PostProcessStep>, };

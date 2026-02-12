@@ -2,40 +2,20 @@ import { writable, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { logs } from './logs';
-import { getProxyConfig } from './settings';
-import { toast, updateToast, dismissToast } from '$lib/components/Toast.svelte';
-import { isAndroid, callAndroidWithCallback } from '$lib/utils/android';
+import { settings, getProxyConfig } from './settings';
+import { toast, updateToast, dismissToast } from '$lib/components/ui/Toast.svelte';
+import { formatSize, formatSpeed } from '$lib/utils/format';
+import { translate } from '$lib/i18n';
+import type { DependencyStatus, InstallProgress } from '$lib/bindings';
 
-interface AndroidWindow extends Window {
-  AndroidYtDlp?: {
-    updateChannel(channel: string, callbackName: string): void;
-  };
-}
-
-export interface DependencyStatus {
-  installed: boolean;
-  version: string | null;
-  path: string | null;
-  updateAvailable: string | null;
-  diskSize?: number | null;
-}
-
-export interface InstallProgress {
-  stage: string;
-  progress: number;
-  downloaded: number;
-  total: number;
-  speed: number;
-  message: string;
-}
-
-export interface ReleaseInfo {
-  tag: string;
-  name: string;
-  publishedAt: string;
-}
-
-export type DependencyName = 'ytdlp' | 'ffmpeg' | 'aria2' | 'deno' | 'quickjs' | 'lux';
+export type DependencyName =
+  | 'ytdlp'
+  | 'ffmpeg'
+  | 'aria2'
+  | 'deno'
+  | 'quickjs'
+  | 'lux'
+  | 'gallery_dl';
 
 export interface DepsState {
   ytdlp: DependencyStatus | null;
@@ -44,13 +24,13 @@ export interface DepsState {
   deno: DependencyStatus | null;
   quickjs: DependencyStatus | null;
   lux: DependencyStatus | null;
+  gallery_dl: DependencyStatus | null;
   checking: DependencyName | null;
   installingDeps: Set<DependencyName>;
   installProgressMap: Map<DependencyName, InstallProgress>;
   installing: DependencyName | null;
   installProgress: InstallProgress | null;
   error: string | null;
-  releases: ReleaseInfo[];
   hasCheckedAll: boolean;
 }
 
@@ -61,74 +41,86 @@ const initialState: DepsState = {
   deno: null,
   quickjs: null,
   lux: null,
+  gallery_dl: null,
   checking: null,
   installingDeps: new Set(),
   installProgressMap: new Map(),
   installing: null,
   installProgress: null,
   error: null,
-  releases: [],
   hasCheckedAll: false,
 };
 
-const DEP_CONFIG: Record<
-  DependencyName,
-  { checkCommand: string; installCommand: string; uninstallCommand: string; progressEvent: string }
-> = {
+export interface DepConfigEntry {
+  label: string;
+  required: boolean;
+  checkCommand: string;
+  installCommand: string;
+  uninstallCommand: string;
+  progressEvent: string;
+}
+
+export const DEP_CONFIG: Record<DependencyName, DepConfigEntry> = {
   ytdlp: {
+    label: 'yt-dlp',
+    required: true,
     checkCommand: 'check_ytdlp',
     installCommand: 'install_ytdlp',
     uninstallCommand: 'uninstall_ytdlp',
     progressEvent: 'ytdlp-install-progress',
   },
   ffmpeg: {
+    label: 'FFmpeg',
+    required: true,
     checkCommand: 'check_ffmpeg',
     installCommand: 'install_ffmpeg',
     uninstallCommand: 'uninstall_ffmpeg',
     progressEvent: 'ffmpeg-install-progress',
   },
   aria2: {
+    label: 'aria2',
+    required: true,
     checkCommand: 'check_aria2',
     installCommand: 'install_aria2',
     uninstallCommand: 'uninstall_aria2',
     progressEvent: 'aria2-install-progress',
   },
   deno: {
+    label: 'deno',
+    required: true,
     checkCommand: 'check_deno',
     installCommand: 'install_deno',
     uninstallCommand: 'uninstall_deno',
     progressEvent: 'deno-install-progress',
   },
   quickjs: {
+    label: 'QuickJS',
+    required: true,
     checkCommand: 'check_quickjs',
     installCommand: 'install_quickjs',
     uninstallCommand: 'uninstall_quickjs',
     progressEvent: 'quickjs-install-progress',
   },
   lux: {
+    label: 'lux',
+    required: false,
     checkCommand: 'check_lux',
     installCommand: 'install_lux',
     uninstallCommand: 'uninstall_lux',
     progressEvent: 'lux-install-progress',
   },
+  gallery_dl: {
+    label: 'gallery-dl',
+    required: true,
+    checkCommand: 'check_gallery_dl',
+    installCommand: 'install_gallery_dl',
+    uninstallCommand: 'uninstall_gallery_dl',
+    progressEvent: 'gallery-dl-install-progress',
+  },
 };
 
 const installToastIds = new Map<DependencyName, number>();
 const lastToastUpdateAt = new Map<DependencyName, number>();
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const exp = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  const value = bytes / Math.pow(1024, exp);
-  const decimals = value >= 100 ? 0 : value >= 10 ? 1 : 2;
-  return `${value.toFixed(decimals)} ${units[exp]}`;
-}
-
-function formatSpeed(bytesPerSec: number): string {
-  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return '0 B/s';
-  return `${formatBytes(bytesPerSec)}/s`;
-}
 
 function createDepsStore() {
   const { subscribe, set, update } = writable<DepsState>(initialState);
@@ -214,8 +206,8 @@ function createDepsStore() {
       const subParts: string[] = [];
       if (event.payload.stage) subParts.push(event.payload.stage);
       if (speed > 0) subParts.push(formatSpeed(speed));
-      if (total > 0) subParts.push(`${formatBytes(downloaded)} / ${formatBytes(total)}`);
-      else if (downloaded > 0) subParts.push(formatBytes(downloaded));
+      if (total > 0) subParts.push(`${formatSize(downloaded)} / ${formatSize(total)}`);
+      else if (downloaded > 0) subParts.push(formatSize(downloaded));
 
       updateToast(id, {
         message: event.payload.message || `Installing ${dep}...`,
@@ -322,30 +314,7 @@ function createDepsStore() {
     check: checkDep,
     install: installDep,
     uninstall: uninstallDep,
-
     cancelInstall,
-
-    async checkYtdlp(checkUpdates: boolean = false) {
-      return checkDep('ytdlp', checkUpdates);
-    },
-
-    async checkYtdlpUpdates() {
-      logs.debug('deps', 'Checking for yt-dlp updates...');
-      try {
-        const status = await invoke<DependencyStatus>('check_ytdlp', { checkUpdates: true });
-        if (status.updateAvailable) {
-          logs.info('deps', `yt-dlp update available: ${status.updateAvailable}`);
-          update((s) => ({
-            ...s,
-            ytdlp: s.ytdlp ? { ...s.ytdlp, updateAvailable: status.updateAvailable } : status,
-          }));
-        }
-        return status.updateAvailable;
-      } catch (err) {
-        logs.error('deps', `Failed to check for updates: ${err}`);
-        return null;
-      }
-    },
 
     async installYtdlp(version?: string) {
       const success = await installDep('ytdlp', version);
@@ -365,21 +334,7 @@ function createDepsStore() {
     async updateYtdlpChannel(channel: 'stable' | 'master') {
       logs.info('deps', `Updating yt-dlp to ${channel} channel...`);
       try {
-        let newVersion: string;
-
-        if (isAndroid()) {
-          const android = (window as unknown as AndroidWindow).AndroidYtDlp;
-          if (!android?.updateChannel) {
-            throw new Error('Android yt-dlp bridge not available');
-          }
-          const result = await callAndroidWithCallback<{ version?: string }>((cb) =>
-            android.updateChannel(channel, cb)
-          );
-          newVersion = result.version ?? 'unknown';
-        } else {
-          newVersion = await invoke<string>('update_ytdlp_channel', { channel });
-        }
-
+        const newVersion = await invoke<string>('update_ytdlp_channel', { channel });
         logs.info('deps', `yt-dlp updated to ${newVersion}`);
         await checkDep('ytdlp');
         return newVersion;
@@ -389,80 +344,21 @@ function createDepsStore() {
       }
     },
 
-    async fetchReleases() {
-      try {
-        const proxyConfig = getProxyConfig();
-        const releases = await invoke<ReleaseInfo[]>('get_ytdlp_releases', { proxyConfig });
-        update((s) => ({ ...s, releases }));
-        return releases;
-      } catch (err) {
-        logs.error('deps', `Failed to fetch releases: ${err}`);
-        return [];
+    async forceUpdateYtdlp(): Promise<void> {
+      const state = get({ subscribe });
+      if (!state.ytdlp?.installed) {
+        logs.debug('deps', 'Skipping yt-dlp force update: not installed');
+        return;
       }
-    },
 
-    async uninstallYtdlp() {
-      return uninstallDep('ytdlp');
-    },
-
-    async checkFfmpeg() {
-      return checkDep('ffmpeg');
-    },
-
-    async installFfmpeg() {
-      return installDep('ffmpeg');
-    },
-
-    async uninstallFfmpeg() {
-      return uninstallDep('ffmpeg');
-    },
-
-    async checkAria2() {
-      return checkDep('aria2');
-    },
-
-    async installAria2() {
-      return installDep('aria2');
-    },
-
-    async uninstallAria2() {
-      return uninstallDep('aria2');
-    },
-
-    async checkDeno() {
-      return checkDep('deno');
-    },
-
-    async installDeno() {
-      return installDep('deno');
-    },
-
-    async uninstallDeno() {
-      return uninstallDep('deno');
-    },
-
-    async checkQuickjs() {
-      return checkDep('quickjs');
-    },
-
-    async installQuickjs() {
-      return installDep('quickjs');
-    },
-
-    async uninstallQuickjs() {
-      return uninstallDep('quickjs');
-    },
-
-    async checkLux() {
-      return checkDep('lux');
-    },
-
-    async installLux() {
-      return installDep('lux');
-    },
-
-    async uninstallLux() {
-      return uninstallDep('lux');
+      try {
+        logs.info('deps', 'Force-updating yt-dlp to master channel...');
+        const newVersion = await invoke<string>('update_ytdlp_channel', { channel: 'master' });
+        logs.info('deps', `yt-dlp updated to: ${newVersion}`);
+        await checkDep('ytdlp');
+      } catch (err) {
+        logs.warn('deps', `yt-dlp force update failed: ${err}`);
+      }
     },
 
     async checkAll(force: boolean = false) {
@@ -479,6 +375,7 @@ function createDepsStore() {
         checkDep('deno'),
         checkDep('quickjs'),
         checkDep('lux'),
+        checkDep('gallery_dl'),
       ]);
       update((s) => ({ ...s, hasCheckedAll: true }));
       logs.debug('deps', 'All dependency checks complete');
@@ -488,20 +385,199 @@ function createDepsStore() {
       update((s) => ({ ...s, error: null }));
     },
 
-    isReady(): boolean {
-      const state = get({ subscribe });
-      return state.ytdlp?.installed ?? false;
-    },
+    async autoInstallBundle(): Promise<void> {
+      await new Promise((r) => setTimeout(r, 1000));
 
-    allInstalled(): boolean {
       const state = get({ subscribe });
-      return (
-        (state.ytdlp?.installed ?? false) &&
-        (state.ffmpeg?.installed ?? false) &&
-        (state.aria2?.installed ?? false)
+      const BUNDLE = (Object.entries(DEP_CONFIG) as [DependencyName, DepConfigEntry][])
+        .filter(([, cfg]) => cfg.required)
+        .map(([key, cfg]) => ({ name: cfg.label, key }));
+      const missing = BUNDLE.filter((d) => !state[d.key]?.installed);
+      if (missing.length === 0) return;
+
+      const $t = translate;
+      logs.info('deps', `Auto-installing ${missing.length} missing dependencies...`);
+
+      const toastId = toast.progress(
+        $t('deps.installing') || 'Installing components...',
+        0,
+        `0/${missing.length} ${$t('deps.components') || 'components'}`
       );
+
+      let installed = 0;
+      const total = missing.length;
+
+      // Install aria2 first (download accelerator used by others)
+      const aria2Idx = missing.findIndex((d) => d.key === 'aria2');
+      if (aria2Idx !== -1) {
+        const aria2 = missing.splice(aria2Idx, 1)[0];
+        updateToast(toastId, {
+          message: `${$t('deps.installing') || 'Installing'} ${aria2.name}...`,
+          subMessage: `${installed}/${total} ${$t('deps.components') || 'components'}`,
+        });
+        if (await installDep('aria2')) installed++;
+        updateToast(toastId, {
+          progress: (installed / total) * 100,
+          subMessage: `${installed}/${total} ${$t('deps.components') || 'components'}`,
+        });
+      }
+
+      const results = await Promise.all(
+        missing.map(async (dep) => {
+          updateToast(toastId, {
+            message: `${$t('deps.installing') || 'Installing'} ${dep.name}...`,
+          });
+          let success = false;
+          if (dep.key === 'ytdlp') {
+            success = await installDep('ytdlp');
+            if (success) {
+              try {
+                await invoke<string>('update_ytdlp_channel', { channel: 'master' });
+                await checkDep('ytdlp');
+              } catch {}
+            }
+          } else {
+            success = await installDep(dep.key);
+          }
+          if (success) {
+            installed++;
+            updateToast(toastId, {
+              progress: (installed / total) * 100,
+              subMessage: `${installed}/${total} ${$t('deps.components') || 'components'}`,
+            });
+          }
+          return success;
+        })
+      );
+
+      const allSuccess = results.every(Boolean) && (aria2Idx === -1 || installed > 0);
+      if (allSuccess) {
+        updateToast(toastId, {
+          type: 'success',
+          message: $t('deps.ready') || 'Components ready!',
+          progress: 100,
+        });
+        setTimeout(() => dismissToast(toastId), 3000);
+      } else {
+        updateToast(toastId, {
+          type: 'warning',
+          message: $t('deps.someError') || 'Some components failed to install',
+          subMessage: $t('deps.checkSettings') || 'Check Settings → Dependencies',
+        });
+        setTimeout(() => dismissToast(toastId), 5000);
+      }
     },
   };
 }
 
 export const deps = createDepsStore();
+
+let depCheckInterval: ReturnType<typeof setInterval> | null = null;
+let depCheckTimeout: ReturnType<typeof setTimeout> | null = null;
+
+async function checkAllDepUpdates(): Promise<Array<{ dep: DependencyName; version: string }>> {
+  const state = get(deps);
+  const installed = (Object.keys(DEP_CONFIG) as DependencyName[]).filter(
+    (d) => d !== 'ytdlp' && state[d]?.installed
+  );
+
+  const results: Array<{ dep: DependencyName; version: string }> = [];
+  await Promise.all(
+    installed.map(async (dep) => {
+      const status = await deps.check(dep, true);
+      if (status?.updateAvailable) {
+        results.push({ dep, version: status.updateAvailable });
+      }
+    })
+  );
+  return results;
+}
+
+export function startDepUpdateChecker(): void {
+  if (depCheckInterval) return;
+
+  const check = async () => {
+    const s = get(settings);
+    if (!s.checkDepUpdates) return;
+
+    logs.debug('deps', 'Checking for dependency updates...');
+    const updates = await checkAllDepUpdates();
+    if (updates.length === 0) {
+      logs.debug('deps', 'All dependencies are up to date');
+      return;
+    }
+
+    logs.info('deps', `Updates available for: ${updates.map((u) => u.dep).join(', ')}`);
+    const $t = translate;
+    const autoUpdate = s.autoUpdateDeps;
+
+    if (autoUpdate) {
+      const toastId = toast.info(
+        $t('deps.updatesAvailable') || `Updates available for ${updates.length} component(s)`,
+        15000
+      );
+      updateToast(toastId, {
+        actionLabel: $t('common.dismiss') || 'Dismiss',
+        action: () => {
+          dismissToast(toastId);
+          dismissed = true;
+        },
+      });
+
+      let dismissed = false;
+      await new Promise((r) => setTimeout(r, 15000));
+
+      if (!dismissed) {
+        dismissToast(toastId);
+        for (const { dep } of updates) {
+          await deps.install(dep);
+        }
+      }
+    } else {
+      if (updates.length === 1) {
+        const { dep, version } = updates[0];
+        const label = DEP_CONFIG[dep].label;
+        const id = toast.info(
+          `${$t('deps.updateAvailableFor') || 'Update available for'} ${label}: v${version}`,
+          0
+        );
+        updateToast(id, {
+          actionLabel: $t('deps.updateNow') || 'Update',
+          action: () => {
+            dismissToast(id);
+            deps.install(dep);
+          },
+        });
+      } else {
+        const names = updates.map((u) => DEP_CONFIG[u.dep].label).join(', ');
+        const id = toast.info(
+          `${$t('deps.updatesAvailable') || 'Updates available for'}: ${names}`,
+          0
+        );
+        updateToast(id, {
+          actionLabel: $t('deps.updateAll') || 'Update All',
+          action: async () => {
+            dismissToast(id);
+            for (const { dep } of updates) {
+              await deps.install(dep);
+            }
+          },
+        });
+      }
+    }
+  };
+
+  depCheckTimeout = setTimeout(check, 10_000);
+  depCheckInterval = setInterval(check, 60 * 60 * 1000);
+}
+
+export function stopDepUpdateChecker(): void {
+  if (depCheckTimeout) {
+    clearTimeout(depCheckTimeout);
+    depCheckTimeout = null;
+  }
+  if (depCheckInterval) {
+    clearInterval(depCheckInterval);
+    depCheckInterval = null;
+  }
+}

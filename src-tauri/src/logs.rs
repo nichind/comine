@@ -1,7 +1,7 @@
-use log::info;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
+use tracing::info;
 
 fn get_logs_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let app_data_dir = app
@@ -114,17 +114,15 @@ pub async fn open_logs_folder(app: AppHandle) -> Result<(), String> {
 
         #[cfg(target_os = "windows")]
         {
-            use crate::utils::StdCommandHideConsole;
-            std::process::Command::new("explorer")
+            crate::utils::new_std_command("explorer")
                 .arg(&logs_dir)
-                .hide_console()
                 .spawn()
                 .map_err(|e| format!("Failed to open folder: {}", e))?;
         }
 
         #[cfg(target_os = "macos")]
         {
-            std::process::Command::new("open")
+            crate::utils::new_std_command("open")
                 .arg(&logs_dir)
                 .spawn()
                 .map_err(|e| format!("Failed to open folder: {}", e))?;
@@ -132,7 +130,7 @@ pub async fn open_logs_folder(app: AppHandle) -> Result<(), String> {
 
         #[cfg(target_os = "linux")]
         {
-            std::process::Command::new("xdg-open")
+            crate::utils::new_std_command("xdg-open")
                 .arg(&logs_dir)
                 .spawn()
                 .map_err(|e| format!("Failed to open folder: {}", e))?;

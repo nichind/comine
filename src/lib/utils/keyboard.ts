@@ -13,7 +13,6 @@ export function isTypingTarget(el: Element | null): boolean {
 export function isPrintableKey(
   e: KeyboardEvent,
   opts?: {
-    /** Treat space as non-printable (useful for avoiding scroll/pause conflicts). */
     excludeSpace?: boolean;
   }
 ): boolean {
@@ -22,7 +21,6 @@ export function isPrintableKey(
 
   if (opts?.excludeSpace && e.key === ' ') return false;
 
-  // Filter out other control-ish characters.
   if (e.key === '\n' || e.key === '\r' || e.key === '\t') return false;
 
   return true;
@@ -32,8 +30,7 @@ export function matchesShortcut(
   e: KeyboardEvent,
   shortcut: {
     key: string;
-    /** Matches Ctrl on Windows/Linux and ⌘ on macOS. */
-    mod?: boolean;
+    mod?: boolean; // Ctrl | ⌘
     ctrl?: boolean;
     meta?: boolean;
     shift?: boolean;
@@ -58,6 +55,5 @@ export function hasOpenAriaModal(): boolean {
 }
 
 export function hasOpenAriaMenu(): boolean {
-  // Used to avoid capture-phase page shortcuts stealing Escape/typing from open menus.
   return Boolean(document.querySelector('[role="menu"]'));
 }

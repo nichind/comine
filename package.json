@@ -1,6 +1,6 @@
 {
   "name": "comine",
-  "version": "1.1.0-11",
+  "version": "1.1.0-12",
   "description": "A cross-platform media downloader",
   "author": "nichind",
   "homepage": "https://comine.app",
@@ -33,6 +33,7 @@
   },
   "license": "GPL-3.0-only",
   "dependencies": {
+    "@floating-ui/dom": "^1.7.5",
     "@tanstack/svelte-virtual": "^3.13.18",
     "@tauri-apps/api": "^2.9.1",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",

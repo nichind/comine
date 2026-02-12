@@ -1,8 +1,8 @@
 import { writable, derived } from 'svelte/store';
 import { mediaCache, type MediaPreview } from './mediaCache';
-import { getQuickThumbnail } from '$lib/utils/format';
+import { getQuickThumbnail } from '$lib/utils/thumbnailUtils';
 
-export type ViewType = 'home' | 'video' | 'playlist' | 'channel';
+type ViewType = 'home' | 'video' | 'playlist' | 'channel';
 
 export interface ViewState {
   type: ViewType;
@@ -32,10 +32,6 @@ function createNavigationStore() {
 
     getStack(): ViewState[] {
       return currentState.stack;
-    },
-
-    getCachedPreview(url: string): MediaPreview | null {
-      return mediaCache.getBestPreview(url);
     },
 
     push(view: ViewState) {
@@ -79,57 +75,21 @@ function createNavigationStore() {
       set({ stack: [{ type: 'home' }] });
     },
 
-    goHome() {
-      set({ stack: [{ type: 'home' }] });
-    },
-
     openVideo(url: string, previewData?: MediaPreview) {
-      if (previewData) {
-        mediaCache.setPreview(url, { ...previewData, isPlaylist: false });
-      }
-
-      update((state) => {
-        let cachedData = mediaCache.getBestPreview(url) ?? undefined;
-        if (!cachedData) {
-          const quickThumb = getQuickThumbnail(url);
-          if (quickThumb) {
-            cachedData = { thumbnail: quickThumb, isPlaylist: false };
-          }
-        }
-
-        let newStack = [...state.stack, { type: 'video' as ViewType, url, cachedData }];
-        if (newStack.length > MAX_STACK_DEPTH) {
-          newStack = [newStack[0], ...newStack.slice(-(MAX_STACK_DEPTH - 1))];
-        }
-        return { ...state, stack: newStack };
-      });
+      this._openView('video', url, false, previewData);
     },
 
     openPlaylist(url: string, previewData?: MediaPreview) {
-      if (previewData) {
-        mediaCache.setPreview(url, { ...previewData, isPlaylist: true });
-      }
-
-      update((state) => {
-        let cachedData = mediaCache.getBestPreview(url) ?? undefined;
-        if (!cachedData) {
-          const quickThumb = getQuickThumbnail(url);
-          if (quickThumb) {
-            cachedData = { thumbnail: quickThumb, isPlaylist: true };
-          }
-        }
-
-        let newStack = [...state.stack, { type: 'playlist' as ViewType, url, cachedData }];
-        if (newStack.length > MAX_STACK_DEPTH) {
-          newStack = [newStack[0], ...newStack.slice(-(MAX_STACK_DEPTH - 1))];
-        }
-        return { ...state, stack: newStack };
-      });
+      this._openView('playlist', url, true, previewData);
     },
 
     openChannel(url: string, previewData?: MediaPreview) {
+      this._openView('channel', url, false, previewData);
+    },
+
+    _openView(type: ViewType, url: string, isPlaylist: boolean, previewData?: MediaPreview) {
       if (previewData) {
-        mediaCache.setPreview(url, { ...previewData, isPlaylist: false });
+        mediaCache.setPreview(url, { ...previewData, isPlaylist });
       }
 
       update((state) => {
@@ -137,20 +97,16 @@ function createNavigationStore() {
         if (!cachedData) {
           const quickThumb = getQuickThumbnail(url);
           if (quickThumb) {
-            cachedData = { thumbnail: quickThumb, isPlaylist: false };
+            cachedData = { thumbnail: quickThumb, isPlaylist };
           }
         }
 
-        let newStack = [...state.stack, { type: 'channel' as ViewType, url, cachedData }];
+        let newStack = [...state.stack, { type, url, cachedData }];
         if (newStack.length > MAX_STACK_DEPTH) {
           newStack = [newStack[0], ...newStack.slice(-(MAX_STACK_DEPTH - 1))];
         }
         return { ...state, stack: newStack };
       });
-    },
-
-    clearCachedData() {
-      mediaCache.clearStale();
     },
   };
 }
@@ -168,8 +124,4 @@ export const previousView = derived(navigation, ($nav) => {
 
 export const canGoBack = derived(navigation, ($nav) => {
   return $nav.stack.length > 1;
-});
-
-export const stackDepth = derived(navigation, ($nav) => {
-  return $nav.stack.length;
 });

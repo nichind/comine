@@ -1,10 +1,8 @@
 use dashmap::DashMap;
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 use tokio_util::sync::CancellationToken;
 
-lazy_static! {
-    static ref TOKENS: DashMap<&'static str, CancellationToken> = DashMap::new();
-}
+static TOKENS: LazyLock<DashMap<&'static str, CancellationToken>> = LazyLock::new(DashMap::new);
 
 pub fn reset_token(dep: &'static str) -> CancellationToken {
     let token = CancellationToken::new();
@@ -12,7 +10,7 @@ pub fn reset_token(dep: &'static str) -> CancellationToken {
     token
 }
 
-pub fn cancel(dep: &'static str) -> bool {
+pub fn cancel(dep: &str) -> bool {
     if let Some(entry) = TOKENS.get(dep) {
         entry.cancel();
         true

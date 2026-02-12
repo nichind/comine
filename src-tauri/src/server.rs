@@ -3,76 +3,131 @@ use std::io::Write;
 use std::net::TcpStream;
 use std::sync::atomic::AtomicU16;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 use tiny_http::{Header, Method, Request, Response, Server};
 
+use crate::orchestrator::manager::JobManager;
+use crate::orchestrator::types::{Job, JobStatus};
+
 static SERVER_RUNNING: AtomicBool = AtomicBool::new(false);
 static SERVER_PORT: AtomicU16 = AtomicU16::new(0);
 static SERVER_TOKEN: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::new()));
 
-static QUEUE_ITEMS: LazyLock<Mutex<Vec<QueueItem>>> = LazyLock::new(|| Mutex::new(Vec::new()));
-static HISTORY_ITEMS: LazyLock<Mutex<Vec<HistoryItem>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+static JOB_MANAGER: LazyLock<Mutex<Option<Arc<JobManager>>>> = LazyLock::new(|| Mutex::new(None));
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct QueueItem {
-    pub id: String,
-    pub url: String,
-    pub status: String,
-    #[serde(default)]
-    pub status_message: String,
-    #[serde(default)]
-    pub title: String,
-    #[serde(default)]
-    pub author: String,
-    #[serde(default)]
-    pub thumbnail: String,
-    #[serde(default)]
-    pub duration: f64,
-    #[serde(default)]
-    pub progress: f64,
-    #[serde(default)]
-    pub speed: String,
-    #[serde(default)]
-    pub eta: String,
-    #[serde(default)]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub file_path: String,
-    #[serde(default)]
-    pub added_at: f64,
+struct QueueItemDto {
+    id: String,
+    url: String,
+    status: String,
+    status_message: String,
+    title: String,
+    author: String,
+    thumbnail: String,
+    duration: f64,
+    progress: f64,
+    speed: String,
+    eta: String,
+    error: Option<String>,
+    file_path: String,
+    added_at: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct HistoryItem {
-    pub id: String,
-    pub url: String,
-    pub title: String,
-    #[serde(default)]
-    pub author: String,
-    #[serde(default)]
-    pub thumbnail: String,
-    #[serde(default)]
-    pub duration: f64,
-    #[serde(default)]
-    pub file_path: String,
-    #[serde(default)]
-    pub completed_at: f64,
+struct HistoryItemDto {
+    id: String,
+    url: String,
+    title: String,
+    author: String,
+    thumbnail: String,
+    duration: f64,
+    file_path: String,
+    completed_at: f64,
 }
 
-pub fn update_queue(items: Vec<QueueItem>) {
-    if let Ok(mut queue) = QUEUE_ITEMS.lock() {
-        *queue = items;
+impl QueueItemDto {
+    fn from_job(job: &Job) -> Self {
+        let (status, status_message, error, file_path) = match &job.status {
+            JobStatus::Queued => ("queued".to_string(), String::new(), None, String::new()),
+            JobStatus::Resolving => ("resolving".to_string(), String::new(), None, String::new()),
+            JobStatus::Downloading => (
+                "downloading".to_string(),
+                String::new(),
+                None,
+                String::new(),
+            ),
+            JobStatus::PostProcessing => (
+                "postprocessing".to_string(),
+                String::new(),
+                None,
+                String::new(),
+            ),
+            JobStatus::Paused => ("paused".to_string(), String::new(), None, String::new()),
+            JobStatus::Completed { output_path } => (
+                "completed".to_string(),
+                String::new(),
+                None,
+                output_path.clone(),
+            ),
+            JobStatus::Failed { error, .. } => (
+                "failed".to_string(),
+                error.clone(),
+                Some(error.clone()),
+                String::new(),
+            ),
+            JobStatus::Cancelled => ("cancelled".to_string(), String::new(), None, String::new()),
+        };
+
+        let speed = job.speed.map(format_speed).unwrap_or_default();
+
+        let eta = job.eta.map(|e| format!("{}s", e)).unwrap_or_default();
+
+        Self {
+            id: job.id.clone(),
+            url: job.request.url.clone(),
+            status,
+            status_message,
+            title: job.title.clone().unwrap_or_default(),
+            author: job.author.clone().unwrap_or_default(),
+            thumbnail: job.thumbnail.clone().unwrap_or_default(),
+            duration: job.duration.unwrap_or(0.0),
+            progress: job.progress,
+            speed,
+            eta,
+            error,
+            file_path,
+            added_at: job.created_at as f64,
+        }
     }
 }
 
-pub fn update_history(items: Vec<HistoryItem>) {
-    if let Ok(mut history) = HISTORY_ITEMS.lock() {
-        *history = items;
+fn format_speed(bytes_per_sec: u64) -> String {
+    if bytes_per_sec >= 1_048_576 {
+        format!("{:.1} MB/s", bytes_per_sec as f64 / 1_048_576.0)
+    } else if bytes_per_sec >= 1_024 {
+        format!("{:.0} KB/s", bytes_per_sec as f64 / 1_024.0)
+    } else {
+        format!("{} B/s", bytes_per_sec)
+    }
+}
+
+impl HistoryItemDto {
+    fn from_history_item(item: &crate::orchestrator::types::HistoryItem) -> Self {
+        Self {
+            id: item.id.clone(),
+            url: item.url.clone(),
+            title: item.title.clone(),
+            author: item.author.clone(),
+            thumbnail: item.thumbnail.clone(),
+            duration: item.duration,
+            file_path: item.file_path.clone(),
+            completed_at: item.downloaded_at as f64,
+        }
     }
 }
 
@@ -143,14 +198,14 @@ struct Cookie {
     expiration_date: Option<f64>,
 }
 
-pub fn start_server(app: AppHandle, port: u16, token: String) {
+pub fn start_server(app: AppHandle, port: u16, token: String, manager: Arc<JobManager>) {
     if token.trim().is_empty() {
-        log::error!("[Server] Refusing to start without auth token");
+        tracing::error!("[Server] Refusing to start without auth token");
         return;
     }
 
     if SERVER_RUNNING.swap(true, Ordering::SeqCst) {
-        log::warn!("[Server] Already running");
+        tracing::warn!("[Server] Already running");
         return;
     }
 
@@ -160,14 +215,18 @@ pub fn start_server(app: AppHandle, port: u16, token: String) {
         *t = token;
     }
 
+    if let Ok(mut m) = JOB_MANAGER.lock() {
+        *m = Some(manager);
+    }
+
     let addr = format!("127.0.0.1:{}", port);
-    log::info!("[Server] Starting on {}", addr);
+    tracing::info!("[Server] Starting on {}", addr);
 
     thread::spawn(move || {
         let server = match Server::http(&addr) {
             Ok(s) => s,
             Err(e) => {
-                log::error!("[Server] Failed to start: {}", e);
+                tracing::error!("[Server] Failed to start: {}", e);
                 SERVER_RUNNING.store(false, Ordering::SeqCst);
                 SERVER_PORT.store(0, Ordering::SeqCst);
                 return;
@@ -183,12 +242,16 @@ pub fn start_server(app: AppHandle, port: u16, token: String) {
 
         SERVER_RUNNING.store(false, Ordering::SeqCst);
         SERVER_PORT.store(0, Ordering::SeqCst);
-        log::info!("[Server] Stopped");
+        tracing::info!("[Server] Stopped");
     });
 }
 
 pub fn stop_server() {
     SERVER_RUNNING.store(false, Ordering::SeqCst);
+
+    if let Ok(mut m) = JOB_MANAGER.lock() {
+        *m = None;
+    }
 
     // Unblock the accept loop promptly by poking the current port.
     let port = SERVER_PORT.load(Ordering::SeqCst);
@@ -315,11 +378,16 @@ fn handle_ping() -> (u16, String) {
 }
 
 fn handle_status(_app: &AppHandle) -> (u16, String) {
-    // Read queue items from shared state
-    let items = match QUEUE_ITEMS.lock() {
-        Ok(queue) => queue.clone(),
-        Err(_) => Vec::new(),
+    let manager = match JOB_MANAGER.lock().ok().and_then(|m| m.clone()) {
+        Some(m) => m,
+        None => return (200, r#"{"queue":[],"count":0}"#.to_string()),
     };
+
+    let items: Vec<QueueItemDto> = manager
+        .get_all_jobs()
+        .iter()
+        .map(QueueItemDto::from_job)
+        .collect();
 
     let json = serde_json::json!({
         "queue": items,
@@ -333,14 +401,16 @@ fn handle_status(_app: &AppHandle) -> (u16, String) {
 }
 
 fn handle_status_single(_app: &AppHandle, url: &str) -> (u16, String) {
-    let items = match QUEUE_ITEMS.lock() {
-        Ok(queue) => queue.clone(),
-        Err(_) => Vec::new(),
+    let manager = match JOB_MANAGER.lock().ok().and_then(|m| m.clone()) {
+        Some(m) => m,
+        None => return (200, r#"{"state":"not_found"}"#.to_string()),
     };
 
-    if let Some(item) = items.iter().find(|i| i.url == url) {
+    let jobs = manager.get_all_jobs();
+    if let Some(job) = jobs.iter().find(|j| j.request.url == url) {
+        let item = QueueItemDto::from_job(job);
         let json =
-            serde_json::to_string(item).unwrap_or_else(|_| r#"{"state":"unknown"}"#.to_string());
+            serde_json::to_string(&item).unwrap_or_else(|_| r#"{"state":"unknown"}"#.to_string());
         (200, json)
     } else {
         (200, r#"{"state":"not_found"}"#.to_string())
@@ -348,10 +418,17 @@ fn handle_status_single(_app: &AppHandle, url: &str) -> (u16, String) {
 }
 
 fn handle_history(_app: &AppHandle) -> (u16, String) {
-    let items = match HISTORY_ITEMS.lock() {
-        Ok(history) => history.clone(),
-        Err(_) => Vec::new(),
+    let manager = match JOB_MANAGER.lock().ok().and_then(|m| m.clone()) {
+        Some(m) => m,
+        None => return (200, "[]".to_string()),
     };
+
+    let history_items = manager.history.get_all_blocking();
+    let items: Vec<HistoryItemDto> = history_items
+        .iter()
+        .take(50) // Match previous behaviour: only send recent 50
+        .map(HistoryItemDto::from_history_item)
+        .collect();
 
     (
         200,
@@ -359,13 +436,18 @@ fn handle_history(_app: &AppHandle) -> (u16, String) {
     )
 }
 
+fn json_error(status: u16, msg: &str) -> (u16, String) {
+    let body = serde_json::json!({ "error": msg });
+    (status, body.to_string())
+}
+
 fn handle_download(app: &AppHandle, body: &str) -> (u16, String) {
     let req: DownloadRequest = match serde_json::from_str(body) {
         Ok(r) => r,
-        Err(e) => return (400, format!(r#"{{"error":"{}"}}"#, e)),
+        Err(e) => return json_error(400, &e.to_string()),
     };
 
-    log::info!("[Server] Download request: {}", req.url);
+    tracing::info!("[Server] Download request: {}", req.url);
 
     let id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -379,7 +461,6 @@ fn handle_download(app: &AppHandle, body: &str) -> (u16, String) {
         Some(_) => false,
     };
 
-    // Emit to frontend using the existing extension event contract
     if app
         .emit(
             "extension-download",
@@ -404,10 +485,10 @@ fn handle_download(app: &AppHandle, body: &str) -> (u16, String) {
 fn handle_cancel(app: &AppHandle, body: &str) -> (u16, String) {
     let req: CancelRequest = match serde_json::from_str(body) {
         Ok(r) => r,
-        Err(e) => return (400, format!(r#"{{"error":"{}"}}"#, e)),
+        Err(e) => return json_error(400, &e.to_string()),
     };
 
-    log::info!("[Server] Cancel request: {}", req.url);
+    tracing::info!("[Server] Cancel request: {}", req.url);
 
     let id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -434,10 +515,10 @@ fn handle_cancel(app: &AppHandle, body: &str) -> (u16, String) {
 fn handle_open(app: &AppHandle, body: &str) -> (u16, String) {
     let req: OpenRequest = match serde_json::from_str(body) {
         Ok(r) => r,
-        Err(e) => return (400, format!(r#"{{"error":"{}"}}"#, e)),
+        Err(e) => return json_error(400, &e.to_string()),
     };
 
-    log::info!("[Server] Open request: {}", req.file_path);
+    tracing::info!("[Server] Open request: {}", req.file_path);
 
     if app.emit("server-open", &req.file_path).is_err() {
         return (500, r#"{"error":"Failed to emit"}"#.to_string());
@@ -449,10 +530,10 @@ fn handle_open(app: &AppHandle, body: &str) -> (u16, String) {
 fn handle_reveal(app: &AppHandle, body: &str) -> (u16, String) {
     let req: OpenRequest = match serde_json::from_str(body) {
         Ok(r) => r,
-        Err(e) => return (400, format!(r#"{{"error":"{}"}}"#, e)),
+        Err(e) => return json_error(400, &e.to_string()),
     };
 
-    log::info!("[Server] Reveal request: {}", req.file_path);
+    tracing::info!("[Server] Reveal request: {}", req.file_path);
 
     if app.emit("server-reveal", &req.file_path).is_err() {
         return (500, r#"{"error":"Failed to emit"}"#.to_string());
@@ -464,16 +545,15 @@ fn handle_reveal(app: &AppHandle, body: &str) -> (u16, String) {
 fn handle_cookies(app: &AppHandle, body: &str) -> (u16, String) {
     let req: CookiesRequest = match serde_json::from_str(body) {
         Ok(r) => r,
-        Err(e) => return (400, format!(r#"{{"error":"{}"}}"#, e)),
+        Err(e) => return json_error(400, &e.to_string()),
     };
 
-    log::info!(
+    tracing::info!(
         "[Server] Cookies received for domain: {} ({} cookies)",
         req.domain,
         req.cookies.len()
     );
 
-    // Convert to Netscape cookie file format (used by yt-dlp)
     let mut lines = vec!["# Netscape HTTP Cookie File".to_string()];
 
     // Some sites (e.g. Vimeo) rely on session cookies for auth. If we write an expiry of 0,
@@ -511,9 +591,8 @@ fn handle_cookies(app: &AppHandle, body: &str) -> (u16, String) {
 
     let content = lines.join("\n");
 
-    log::info!("[Server] Cookies formatted ({} lines)", lines.len());
+    tracing::info!("[Server] Cookies formatted ({} lines)", lines.len());
 
-    // Emit event so frontend can update the customCookies setting
     let _ = app.emit(
         "extension-cookies",
         serde_json::json!({
