@@ -932,8 +932,9 @@ mod tests {
 
     #[test]
     fn test_builder_with_js_runtime() {
-        let builder = YtDlpArgsBuilder::new("https://youtube.com/watch?v=test")
-            .with_js_runtime(Some(("deno".to_string(), "/usr/local/bin/deno".to_string())));
+        let builder = YtDlpArgsBuilder::new("https://youtube.com/watch?v=test").with_js_runtime(
+            Some(("deno".to_string(), "/usr/local/bin/deno".to_string())),
+        );
 
         assert_eq!(
             opts_get_pair(&builder.opts, "--js-runtime"),
