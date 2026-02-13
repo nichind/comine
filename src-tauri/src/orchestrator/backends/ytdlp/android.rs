@@ -68,12 +68,16 @@ impl YtdlpBackend {
         let normalized_url = normalize_url_for_ytdlp(url);
         let proxy_url = resolve_effective_proxy(&settings.proxy);
 
+        let runtime = crate::deps::specs::js_runtime::resolve_preferred_js_runtime(&self.app)
+            .map(|(n, p)| (n, p.to_string_lossy().to_string()));
+
         let option_groups = YtDlpArgsBuilder::new(&normalized_url)
             .with_proxy(proxy_url)
             .with_cookies(
                 settings.cookies_from_browser.clone(),
                 settings.custom_cookies.clone(),
             )
+            .with_js_runtime(runtime)
             .build_resolve(settings);
 
         let args_json = match serde_json::to_string(&option_groups) {
@@ -186,12 +190,16 @@ impl YtdlpBackend {
         let normalized_url = normalize_url_for_ytdlp(url);
         let proxy_url = resolve_effective_proxy(&settings.proxy);
 
+        let runtime = crate::deps::specs::js_runtime::resolve_preferred_js_runtime(&self.app)
+            .map(|(n, p)| (n, p.to_string_lossy().to_string()));
+
         let option_groups = YtDlpArgsBuilder::new(&normalized_url)
             .with_proxy(proxy_url)
             .with_cookies(
                 settings.cookies_from_browser.clone(),
                 settings.custom_cookies.clone(),
             )
+            .with_js_runtime(runtime)
             .build_resolve(settings);
 
         let args_json = serde_json::to_string(&option_groups)
@@ -270,9 +278,13 @@ impl YtdlpBackend {
                 .clone()
                 .and_then(|c| if c.is_empty() { None } else { Some(c) });
 
+        let runtime = crate::deps::specs::js_runtime::resolve_preferred_js_runtime(&self.app)
+            .map(|(n, p)| (n, p.to_string_lossy().to_string()));
+
         let option_groups = YtDlpArgsBuilder::new(&url)
             .with_proxy(proxy_url)
             .with_cookies(cookies_from_browser, cookie_arg)
+            .with_js_runtime(runtime)
             .build_download(req, ctx.effective_speed_limit, None);
 
         let args_json = serde_json::to_string(&option_groups)

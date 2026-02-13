@@ -46,9 +46,13 @@ impl YtdlpBackend {
         #[cfg(target_os = "windows")]
         cmd.env("PYTHONIOENCODING", "utf-8");
 
+        let runtime = crate::deps::specs::js_runtime::resolve_preferred_js_runtime(&self.app)
+            .map(|(n, p)| (n, p.to_string_lossy().to_string()));
+
         let option_groups = YtDlpArgsBuilder::new(url)
             .with_proxy(prepared.proxy_url)
             .with_cookies(prepared.cookies_from_browser, prepared.cookie_arg)
+            .with_js_runtime(runtime)
             .build_resolve(settings);
 
         apply_args_to_command(&mut cmd, option_groups);
@@ -87,9 +91,13 @@ impl YtdlpBackend {
         #[cfg(target_os = "windows")]
         cmd.env("PYTHONIOENCODING", "utf-8");
 
+        let runtime = crate::deps::specs::js_runtime::resolve_preferred_js_runtime(&self.app)
+            .map(|(n, p)| (n, p.to_string_lossy().to_string()));
+
         let option_groups = YtDlpArgsBuilder::new(url)
             .with_proxy(prepared.proxy_url)
             .with_cookies(prepared.cookies_from_browser, prepared.cookie_arg)
+            .with_js_runtime(runtime)
             .build_resolve(settings);
 
         apply_args_to_command(&mut cmd, option_groups);
@@ -231,9 +239,13 @@ impl YtdlpBackend {
                 .unwrap_or_else(|| p.to_string_lossy().to_string())
         });
 
+        let runtime = crate::deps::specs::js_runtime::resolve_preferred_js_runtime(&self.app)
+            .map(|(n, p)| (n, p.to_string_lossy().to_string()));
+
         let option_groups = YtDlpArgsBuilder::new(&req.url)
             .with_proxy(prepared.proxy_url)
             .with_cookies(prepared.cookies_from_browser, prepared.cookie_arg)
+            .with_js_runtime(runtime)
             .build_download(req, ctx.effective_speed_limit, ffmpeg_location);
 
         let all_args: Vec<String> = option_groups.iter().flatten().cloned().collect();

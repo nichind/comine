@@ -193,6 +193,15 @@ impl YtDlpArgsBuilder {
         self
     }
 
+    pub fn with_js_runtime(mut self, runtime: Option<(String, String)>) -> Self {
+        if let Some((name, path)) = runtime {
+            if !path.is_empty() {
+                self = self.add_pair("--js-runtime", format!("{}:{}", name, path));
+            }
+        }
+        self
+    }
+
     pub fn apply_common_headers(mut self) -> Self {
         self = self.add_pair("--user-agent", constants::USER_AGENT.to_string());
 
@@ -918,6 +927,17 @@ mod tests {
         assert_eq!(
             opts_get_pair(&builder.opts, "--cookies"),
             Some("/tmp/cookies.txt".to_string())
+        );
+    }
+
+    #[test]
+    fn test_builder_with_js_runtime() {
+        let builder = YtDlpArgsBuilder::new("https://youtube.com/watch?v=test")
+            .with_js_runtime(Some(("deno".to_string(), "/usr/local/bin/deno".to_string())));
+
+        assert_eq!(
+            opts_get_pair(&builder.opts, "--js-runtime"),
+            Some("deno:/usr/local/bin/deno".to_string())
         );
     }
 }

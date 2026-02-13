@@ -5,3 +5,4 @@ pub mod gallery_dl;
 pub mod lux;
 pub mod quickjs;
 pub mod ytdlp;
+pub mod js_runtime;
