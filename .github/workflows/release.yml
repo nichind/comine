@@ -504,7 +504,7 @@ jobs:
       - name: Build Universal Android APK
         run: |
           cd src-tauri
-          cargo tauri android build --apk true
+          cargo tauri android build --apk
 
       - name: Rename Universal APK
         run: |
