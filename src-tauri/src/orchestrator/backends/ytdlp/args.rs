@@ -193,10 +193,10 @@ impl YtDlpArgsBuilder {
         self
     }
 
-    pub fn with_js_runtime(mut self, runtime: Option<(String, String)>) -> Self {
-        if let Some((name, path)) = runtime {
+    pub fn with_js_runtimes(mut self, runtimes: Vec<(String, String)>) -> Self {
+        for (name, path) in runtimes {
             if !path.is_empty() {
-                self = self.add_pair("--js-runtime", format!("{}:{}", name, path));
+                self = self.add_pair("--js-runtimes", format!("{}:{}", name, path));
             }
         }
         self
@@ -931,14 +931,25 @@ mod tests {
     }
 
     #[test]
-    fn test_builder_with_js_runtime() {
-        let builder = YtDlpArgsBuilder::new("https://youtube.com/watch?v=test").with_js_runtime(
-            Some(("deno".to_string(), "/usr/local/bin/deno".to_string())),
+    fn test_builder_with_js_runtimes() {
+        let builder = YtDlpArgsBuilder::new("https://youtube.com/watch?v=test").with_js_runtimes(
+            vec![
+                ("deno".to_string(), "/usr/local/bin/deno".to_string()),
+                ("quickjs".to_string(), "/usr/local/bin/qjs".to_string()),
+            ],
         );
 
-        assert_eq!(
-            opts_get_pair(&builder.opts, "--js-runtime"),
-            Some("deno:/usr/local/bin/deno".to_string())
-        );
+        let runtimes = opts_get_all_pairs(&builder.opts, "--js-runtimes");
+        assert_eq!(runtimes.len(), 2);
+        assert_eq!(runtimes[0], "deno:/usr/local/bin/deno");
+        assert_eq!(runtimes[1], "quickjs:/usr/local/bin/qjs");
+    }
+
+    #[test]
+    fn test_builder_with_js_runtimes_empty() {
+        let builder = YtDlpArgsBuilder::new("https://youtube.com/watch?v=test")
+            .with_js_runtimes(vec![]);
+
+        assert!(opts_get_all_pairs(&builder.opts, "--js-runtimes").is_empty());
     }
 }
