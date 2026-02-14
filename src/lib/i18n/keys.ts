@@ -897,6 +897,8 @@ export type TranslationKeys =
   | 'settings.general.title'
   | 'settings.general.watchClipboard'
   | 'settings.general.watchClipboardTooltip'
+  | 'settings.integration.discordRpc'
+  | 'settings.integration.discordRpcDescription'
   | 'settings.integration.hint'
   | 'settings.integration.installDescription'
   | 'settings.integration.installExtension'

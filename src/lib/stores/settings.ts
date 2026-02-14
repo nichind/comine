@@ -313,6 +313,8 @@ export interface AppSettings {
 
   navigationStyle: 'auto' | 'navbar' | 'sidebar';
 
+  discordRpc: boolean;
+
   customPresets: CustomPreset[];
 
   ffmpeg: FFmpegSettings;
@@ -505,6 +507,8 @@ export const defaultSettings: AppSettings = {
   showMobileNavLabels: true,
 
   navigationStyle: 'auto',
+
+  discordRpc: false,
 
   customPresets: [],
 

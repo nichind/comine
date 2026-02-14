@@ -10,6 +10,8 @@ mod server;
 mod store_utils;
 mod thumbnail_color;
 #[cfg(not(target_os = "android"))]
+mod discord;
+#[cfg(not(target_os = "android"))]
 mod tray;
 #[cfg(not(target_os = "android"))]
 mod tray_icon;
@@ -490,6 +492,26 @@ async fn autostart_is_enabled(_app: AppHandle) -> Result<bool, String> {
     Ok(false)
 }
 
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+async fn discord_rpc_set_enabled(
+    enabled: bool,
+    state: tauri::State<'_, std::sync::Arc<discord::DiscordRpcState>>,
+) -> Result<(), String> {
+    if enabled {
+        state.enable();
+    } else {
+        state.disable();
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn discord_rpc_set_enabled(_enabled: bool) -> Result<(), String> {
+    Ok(())
+}
+
 #[tauri::command]
 fn server_start(
     app: AppHandle,
@@ -608,6 +630,7 @@ pub fn run() {
         server_start,
         server_stop,
         server_is_running,
+        discord_rpc_set_enabled,
         orchestrator::resolve_url,
         orchestrator::resolve_url_stream,
         orchestrator::cancel_resolve_stream,
@@ -667,6 +690,7 @@ pub fn run() {
             {
                 tray::setup(app.handle())?;
                 tray_icon::start_polling(app.handle());
+                discord::start_polling(app.handle());
 
                 let start_minimized_arg = std::env::args().any(|arg| arg == "--minimized");
                 use tauri_plugin_store::StoreExt;

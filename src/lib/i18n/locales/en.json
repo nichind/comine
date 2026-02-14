@@ -555,7 +555,9 @@
       "installStepsTitle": "Installation steps:",
       "installStep1": "Download the extension for your browser (Chrome/Firefox/Edge)",
       "installStep2": "Unpack the archive and load as unpacked extension (or install from store)",
-      "installStep3": "Make sure the port in extension settings matches the local server port"
+      "installStep3": "Make sure the port in extension settings matches the local server port",
+      "discordRpc": "Discord Rich Presence",
+      "discordRpcDescription": "Show download activity status in Discord (no private data is shared)"
     },
     "downloads": {
       "title": "Downloads",

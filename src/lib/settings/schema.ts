@@ -835,6 +835,19 @@ export const SETTINGS: SettingDef[] = [
   },
 
   {
+    type: 'toggle',
+    key: 'discordRpc',
+    section: 'integration',
+    icon: 'discord',
+    titleKey: 'settings.integration.discordRpc',
+    descriptionKey: 'settings.integration.discordRpcDescription',
+    platforms: ['desktop'],
+    onSet: (val) => {
+      invoke('discord_rpc_set_enabled', { enabled: val as boolean });
+    },
+  },
+
+  {
     type: 'custom',
     key: 'integration-settings',
     section: 'integration',
