@@ -51,12 +51,15 @@
   const showProgress = params.get('show_progress') !== '0';
   const thumbnailTheming = params.get('thumb_theming') !== '0';
   const downloadPath = p('dl_path');
+  const windowTint = parseInt(p('w_tint', '32')) / 100;
+  const completionTimeout = parseInt(p('comp_timeout', '0')) * 1000;
 
   let isReady = $state(false);
   let isHovered = $state(false);
   let isDownloading = $state(false);
   let autoCloseTimer: ReturnType<typeof setTimeout> | null = null;
   let thumbnailError = $state(false);
+  let thumbBgError = $state(false);
 
   let isRgbMode = accentParam === 'rgb';
   let accentColor = $state(isRgbMode ? hslToHex(0, 0.75, 0.5) : accentParam);
@@ -222,6 +225,18 @@
           downloadFilePath = (data.output_path as string) || '';
           downloadSpeed = '';
           downloadEta = '';
+          if (completionTimeout > 0) {
+            autoCloseTimer = setTimeout(() => {
+              if (!isHovered) closeNotification();
+              else {
+                const waitForLeave = () => {
+                  if (!isHovered) closeNotification();
+                  else setTimeout(waitForLeave, 500);
+                };
+                waitForLeave();
+              }
+            }, completionTimeout);
+          }
           break;
         case 'failed':
           downloadState = 'failed';
@@ -379,6 +394,15 @@
     <circle cx="18" cy="16" r="3" stroke="currentColor" stroke-width="2" />
   </svg>
 {/snippet}
+
+<div class="notification-thumb-bg">
+  {#if thumbnail && !thumbBgError}
+    <img src={thumbnail} alt="" class="thumb-bg-img" onerror={() => (thumbBgError = true)} />
+  {:else}
+    <div class="thumb-bg-accent" style="background: radial-gradient(ellipse at 30% 50%, {accentColor}50 0%, transparent 70%), radial-gradient(ellipse at 70% 60%, {accentColor}30 0%, transparent 60%);"></div>
+  {/if}
+  <div class="thumb-bg-tint" style="background: rgba(19, 19, 19, {Math.max(windowTint, 0.4)});"></div>
+</div>
 
 {#if fancyBackground}
   <div class="notification-background" style="--accent: {accentColor};">
@@ -759,6 +783,35 @@
     padding: 0;
   }
 
+  .notification-thumb-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+    border-radius: var(--radius-lg, 12px);
+  }
+
+  .thumb-bg-img {
+    position: absolute;
+    inset: -24px;
+    width: calc(100% + 48px);
+    height: calc(100% + 48px);
+    object-fit: cover;
+    filter: blur(20px) brightness(0.5) saturate(1.3);
+  }
+
+  .thumb-bg-accent {
+    position: absolute;
+    inset: 0;
+    filter: blur(12px);
+  }
+
+  .thumb-bg-tint {
+    position: absolute;
+    inset: 0;
+  }
+
   .notification-background {
     position: fixed;
     inset: 0;
@@ -799,7 +852,7 @@
   }
 
   .notification {
-    background: #1a1a1e;
+    background: transparent;
     padding: 7px;
     display: flex;
     flex-direction: column;

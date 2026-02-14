@@ -844,6 +844,8 @@
       "offsetDescription": "Distance from the screen edge (taskbar height)",
       "duration": "Auto-dismiss delay",
       "durationDescription": "Time before the notification automatically closes",
+      "completionTimeout": "Auto-close after download",
+      "completionTimeoutDescription": "Time before the notification closes after download completes (0 = stay open)",
       "showProgress": "Show download progress",
       "showProgressTooltip": "Keep notification open to show download progress and completion actions"
     },

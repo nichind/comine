@@ -952,6 +952,8 @@ export type TranslationKeys =
   | 'settings.noResults'
   | 'settings.notifications.compact'
   | 'settings.notifications.compactTooltip'
+  | 'settings.notifications.completionTimeout'
+  | 'settings.notifications.completionTimeoutDescription'
   | 'settings.notifications.cornerDismiss'
   | 'settings.notifications.cornerDismissTooltip'
   | 'settings.notifications.duration'

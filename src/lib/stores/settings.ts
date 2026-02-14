@@ -191,6 +191,7 @@ export interface AppSettings {
   notificationOffset: number;
   notificationCornerDismiss: boolean;
   notificationDuration: number;
+  notificationCompletionTimeout: number;
   notificationShowProgress: boolean;
 
   toastPosition: ToastPosition;
@@ -389,6 +390,7 @@ export const defaultSettings: AppSettings = {
   notificationOffset: 24,
   notificationCornerDismiss: false,
   notificationDuration: 12,
+  notificationCompletionTimeout: 0,
   notificationShowProgress: true,
 
   toastPosition: 'bottom-right',
@@ -411,7 +413,7 @@ export const defaultSettings: AppSettings = {
   backgroundVideo: 'https://nichind.dev/assets/video/atri.mp4',
   backgroundBlur: 20,
   backgroundOpacity: 100,
-  windowTint: 32,
+  windowTint: 48,
 
   accentColor: '#0EA5E9',
   accentStyle: 'gradient',

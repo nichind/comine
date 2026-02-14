@@ -783,6 +783,22 @@ export const SETTINGS: SettingDef[] = [
     suffix: 's',
     debounce: 150,
   },
+  {
+    type: 'slider',
+    key: 'notificationCompletionTimeout',
+    section: 'notifications',
+    subsection: 'timing',
+    icon: 'hourglass',
+    titleKey: 'settings.notifications.completionTimeout',
+    descriptionKey: 'settings.notifications.completionTimeoutDescription',
+    platforms: ['desktop'],
+    min: 0,
+    max: 360,
+    step: 1,
+    suffix: 's',
+    debounce: 150,
+    visible: (s) => s.notificationShowProgress,
+  },
 
   {
     type: 'select',

@@ -274,6 +274,8 @@ pub async fn show_notification_window(
             show_progress,
             thumb_theming,
             download_path,
+            window_tint,
+            completion_timeout,
         ) = {
             let store = app.store("settings.json").ok();
             let get_str = |key: &str, default: &str| -> String {
@@ -311,13 +313,15 @@ pub async fn show_notification_window(
                 get_bool("notificationShowProgress", true),
                 get_bool("notificationThumbnailTheming", true),
                 get_str("downloadPath", ""),
+                get_f64("windowTint", 32.0) as u32,
+                get_f64("notificationCompletionTimeout", 0.0) as u32,
             )
         };
 
         let notification_url = format!(
             "/notification?title={}&body={}&thumbnail={}&url={}&window_id={}&compact={}&dl={}&dm={}&is_playlist={}&is_channel={}&is_file={}&file_info={}\
              &accent={}&fancy_bg={}&bg_type={}&bg_color={}&bg_image={}&bg_video={}&bg_blur={}\
-             &corner_dismiss={}&duration={}&show_progress={}&thumb_theming={}&dl_path={}",
+             &corner_dismiss={}&duration={}&show_progress={}&thumb_theming={}&dl_path={}&w_tint={}&comp_timeout={}",
             title_encoded, body_encoded, thumbnail_encoded, url_encoded, window_label, compact,
             download_label, dismiss_label, is_playlist, is_channel, is_file, file_info_encoded,
             urlencoding::encode(&accent),
@@ -332,6 +336,8 @@ pub async fn show_notification_window(
             if show_progress { "1" } else { "0" },
             if thumb_theming { "1" } else { "0" },
             urlencoding::encode(&download_path),
+            window_tint,
+            completion_timeout,
         );
 
         info!(
