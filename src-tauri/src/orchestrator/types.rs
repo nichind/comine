@@ -381,6 +381,7 @@ pub struct UrlInfoPatch {
     pub extractor: Option<String>,
     pub webpage_url: Option<String>,
     pub is_playlist: Option<bool>,
+    pub content_type: Option<ContentType>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -670,6 +671,8 @@ pub struct Job {
     pub playlist_title: Option<String>,
     #[serde(default)]
     pub playlist_index: Option<u32>,
+    #[serde(default)]
+    pub content_type: Option<ContentType>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1022,6 +1025,10 @@ pub struct HistoryItem {
     pub download_source: Option<String>,
     #[serde(default)]
     pub is_favourite: bool,
+    #[serde(default)]
+    pub is_directory: bool,
+    #[serde(default)]
+    pub file_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1056,4 +1063,36 @@ pub struct AppStats {
     pub successful_downloads: u64,
     pub failed_downloads: u64,
     pub first_launch: String,
+    pub installation_id: String,
+    pub last_sync_time: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryStats {
+    pub total_downloads: u64,
+    pub total_size: u64,
+    pub total_duration: f64,
+    pub format_counts: std::collections::HashMap<String, u64>,
+    pub favourites_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct Broadcast {
+    pub id: i64,
+    pub message: String,
+    #[serde(rename = "type")]
+    pub broadcast_type: String,
+    pub title: Option<String>,
+    pub icon: Option<String>,
+    pub url: Option<String>,
+    pub button_text: Option<String>,
+    pub platforms: Option<String>,
+    pub min_version: Option<String>,
+    pub max_version: Option<String>,
 }

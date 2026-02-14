@@ -1,4 +1,5 @@
 mod clipboard;
+mod database;
 mod deps;
 mod logs;
 mod media_info;
@@ -219,6 +220,41 @@ async fn reveal_file(_path: String) -> Result<bool, String> {
 #[cfg(not(target_os = "android"))]
 pub(crate) async fn reveal_file_internal(path: String) -> Result<bool, String> {
     reveal_file(path).await
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryEntry {
+    pub name: String,
+    pub path: String,
+    pub size: u64,
+    pub is_directory: bool,
+}
+
+#[tauri::command]
+async fn list_directory_contents(path: String) -> Result<Vec<DirectoryEntry>, String> {
+    let dir = std::path::Path::new(&path);
+    if !dir.is_dir() {
+        return Err("Path is not a directory".to_string());
+    }
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("Failed to read directory: {}", e))?;
+    let mut result = Vec::new();
+    for entry in entries.flatten() {
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        result.push(DirectoryEntry {
+            name: entry.file_name().to_string_lossy().to_string(),
+            path: entry.path().to_string_lossy().to_string(),
+            size: if meta.is_file() { meta.len() } else { 0 },
+            is_directory: meta.is_dir(),
+        });
+    }
+    result.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(result)
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -514,6 +550,7 @@ pub fn run() {
         window_effects::set_acrylic,
         open_file,
         open_folder,
+        list_directory_contents,
         notifications::show_notification_window,
         notifications::reveal_notification_window,
         notifications::close_notification_window,
@@ -597,6 +634,9 @@ pub fn run() {
         orchestrator::export_history,
         orchestrator::import_history,
         orchestrator::restore_history_from_frontend,
+        orchestrator::get_app_stats,
+        orchestrator::get_history_stats,
+        orchestrator::fetch_broadcasts,
         orchestrator::convert::convert_local_file,
         orchestrator::convert::cancel_conversion,
         clipboard::start_clipboard_watcher,

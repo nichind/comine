@@ -39,7 +39,8 @@ export interface UnifiedDownloadItem {
   duration: number;
   filePath?: string;
   addedAt: number;
-  type: 'video' | 'audio' | 'image' | 'file';
+  type: 'video' | 'audio' | 'image' | 'file' | 'gallery' | 'torrent';
+  isDirectory?: boolean;
   playlistId?: string;
   playlistTitle?: string;
   playlistIndex?: number;
@@ -133,6 +134,7 @@ function historyToUnified(item: HistoryItem): UnifiedDownloadItem {
     filePath: item.filePath,
     addedAt: item.downloadedAt,
     type: item.type,
+    isDirectory: item.isDirectory,
     playlistId: item.playlistId,
     playlistTitle: item.playlistTitle,
     playlistIndex: item.playlistIndex,

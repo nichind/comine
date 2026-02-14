@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { translate, locale } from '$lib/i18n';
 import { safeDuration } from '$lib/utils/duration';
 import { logs } from './logs';
-import type { HistoryItem as BindingHistoryItem } from '$lib/bindings';
+import type { HistoryItem as BindingHistoryItem, HistoryStats } from '$lib/bindings';
 
 export type HistoryItem = Omit<
   BindingHistoryItem,
@@ -16,8 +16,10 @@ export type HistoryItem = Omit<
   | 'convertedFormat'
   | 'downloadSource'
   | 'isFavourite'
+  | 'isDirectory'
+  | 'fileCount'
 > & {
-  type: 'video' | 'audio' | 'image' | 'file';
+  type: 'video' | 'audio' | 'image' | 'file' | 'gallery' | 'torrent';
   authorUrl?: string;
   playlistId?: string;
   playlistTitle?: string;
@@ -25,9 +27,11 @@ export type HistoryItem = Omit<
   convertedFormat?: string;
   downloadSource?: string;
   isFavourite?: boolean;
+  isDirectory?: boolean;
+  fileCount?: number;
 };
 
-export type FilterType = 'all' | 'video' | 'audio' | 'image' | 'file' | 'favourites';
+export type FilterType = 'all' | 'video' | 'audio' | 'image' | 'file' | 'gallery' | 'torrent' | 'favourites';
 export type SortType = 'date' | 'name' | 'size' | 'duration' | 'format';
 
 interface HistoryState {
@@ -62,6 +66,8 @@ function normalizeItem(raw: BindingHistoryItem): HistoryItem {
     convertedFormat: raw.convertedFormat ?? undefined,
     downloadSource: raw.downloadSource ?? undefined,
     isFavourite: raw.isFavourite ?? false,
+    isDirectory: raw.isDirectory ?? false,
+    fileCount: raw.fileCount ?? undefined,
   };
 }
 
@@ -85,10 +91,10 @@ function toBackendItem(item: HistoryItem): BindingHistoryItem {
     convertedFormat: item.convertedFormat ?? null,
     downloadSource: item.downloadSource ?? null,
     isFavourite: item.isFavourite ?? false,
+    isDirectory: item.isDirectory ?? false,
+    fileCount: item.fileCount ?? null,
   };
 }
-
-const MAX_HISTORY_ITEMS = 5000;
 
 function createHistoryStore() {
   const { subscribe, set, update } = writable<HistoryState>({
@@ -124,13 +130,11 @@ function createHistoryStore() {
 
       try {
         const rawItems = await invoke<BindingHistoryItem[]>('get_history');
-        const allItems = rawItems.map(normalizeItem);
-        const items =
-          allItems.length > MAX_HISTORY_ITEMS ? allItems.slice(0, MAX_HISTORY_ITEMS) : allItems;
+        const items = rawItems.map(normalizeItem);
         update((state) => ({ ...state, items }));
         logs.info(
           'history',
-          `Loaded ${items.length} items from backend (total: ${allItems.length})`
+          `Loaded ${items.length} items from backend`
         );
 
         if (items.length === 0) {
@@ -143,13 +147,10 @@ function createHistoryStore() {
 
       const unlisten = await listen<BindingHistoryItem>('history-item-added', (event) => {
         const item = normalizeItem(event.payload);
-        update((state) => {
-          const items = [item, ...state.items];
-          return {
-            ...state,
-            items: items.length > MAX_HISTORY_ITEMS ? items.slice(0, MAX_HISTORY_ITEMS) : items,
-          };
-        });
+        update((state) => ({
+          ...state,
+          items: [item, ...state.items],
+        }));
       });
       unlistenHistoryItem = unlisten;
     },
@@ -449,31 +450,34 @@ export function isPlaylistGroup(
   );
 }
 
-export const historyStats = derived(history, ($history) => {
-  const items = $history.items;
-  const totalDownloads = items.length;
-  const totalSize = items.reduce((sum: number, item: HistoryItem) => sum + (item.size || 0), 0);
-  const totalDuration = items.reduce(
-    (sum: number, item: HistoryItem) => sum + (item.duration || 0),
-    0
-  );
-  const favouritesCount = items.filter((item: HistoryItem) => item.isFavourite).length;
+export const historyStats = writable<{
+  totalDownloads: number;
+  totalSize: number;
+  totalDuration: number;
+  formatCounts: Record<string, number>;
+  favouritesCount: number;
+}>({
+  totalDownloads: 0,
+  totalSize: 0,
+  totalDuration: 0,
+  formatCounts: {},
+  favouritesCount: 0,
+});
 
-  const formatCounts: Record<string, number> = {};
-  for (const item of items) {
-    const ext = item.extension || 'unknown';
-    formatCounts[ext] = (formatCounts[ext] || 0) + 1;
-  }
+function applyHistoryStats(stats: HistoryStats) {
+  historyStats.set({
+    totalDownloads: stats.totalDownloads,
+    totalSize: Number(stats.totalSize),
+    totalDuration: stats.totalDuration,
+    formatCounts: stats.formatCounts,
+    favouritesCount: stats.favouritesCount,
+  });
+}
 
-  const mostCommonFormat =
-    Object.entries(formatCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A';
+invoke<HistoryStats>('get_history_stats')
+  .then(applyHistoryStats)
+  .catch((e) => logs.error('history', `Failed to load history stats: ${e}`));
 
-  return {
-    totalDownloads,
-    totalSize,
-    totalDuration,
-    formatCounts,
-    mostCommonFormat,
-    favouritesCount,
-  };
+listen<HistoryStats>('history-stats-changed', (event) => {
+  applyHistoryStats(event.payload);
 });

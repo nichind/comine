@@ -1,183 +1,270 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
-use tracing::{error, info};
+use rusqlite::params;
+use tracing::{error, warn};
 
-use crate::orchestrator::types::HistoryItem;
-
-const MAX_HISTORY_ITEMS: usize = 1000;
+use crate::database::Database;
+use crate::orchestrator::types::{HistoryItem, HistoryStats};
 
 pub struct HistoryStore {
-    items: RwLock<Vec<HistoryItem>>,
-    path: PathBuf,
-    save_notify: tokio::sync::Notify,
+    db: Arc<Database>,
 }
 
 impl HistoryStore {
-    pub fn new(data_dir: PathBuf) -> Arc<Self> {
-        let path = data_dir.join("history_backend.json");
-        let items = match std::fs::read_to_string(&path) {
-            Ok(json) => serde_json::from_str::<Vec<HistoryItem>>(&json).unwrap_or_default(),
-            Err(_) => Vec::new(),
-        };
-        info!("History store loaded {} items from {:?}", items.len(), path);
-
-        Arc::new(Self {
-            items: RwLock::new(items),
-            path,
-            save_notify: tokio::sync::Notify::new(),
-        })
-    }
-
-    pub fn start(self: &Arc<Self>) {
-        let store_clone = Arc::clone(self);
-        tokio::spawn(async move {
-            loop {
-                store_clone.save_notify.notified().await;
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                store_clone.persist().await;
-            }
-        });
+    pub fn new(db: Arc<Database>) -> Arc<Self> {
+        Arc::new(Self { db })
     }
 
     pub async fn add(&self, item: HistoryItem) -> HistoryItem {
-        let mut items = self.items.write().await;
-        items.insert(0, item.clone());
-        if items.len() > MAX_HISTORY_ITEMS {
-            items.truncate(MAX_HISTORY_ITEMS);
-        }
-        self.save_notify.notify_one();
+        let db = self.db.clone();
+        let item_clone = item.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db.conn();
+            if let Err(e) = conn.execute(
+                "INSERT OR REPLACE INTO history (id, url, title, author, author_url, thumbnail, extension, size, duration, file_path, downloaded_at, item_type, playlist_id, playlist_title, playlist_index, converted_format, download_source, is_favourite, is_directory, file_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                params![
+                    item_clone.id, item_clone.url, item_clone.title, item_clone.author,
+                    item_clone.author_url, item_clone.thumbnail, item_clone.extension,
+                    item_clone.size as i64, item_clone.duration, item_clone.file_path,
+                    item_clone.downloaded_at as i64, item_clone.item_type,
+                    item_clone.playlist_id, item_clone.playlist_title,
+                    item_clone.playlist_index.map(|v| v as i64),
+                    item_clone.converted_format, item_clone.download_source,
+                    item_clone.is_favourite as i32,
+                    item_clone.is_directory as i32,
+                    item_clone.file_count.map(|v| v as i64),
+                ],
+            ) {
+                error!("Failed to insert history item: {}", e);
+            }
+        })
+        .await
+        .ok();
         item
     }
 
     pub async fn get_all(&self) -> Vec<HistoryItem> {
-        self.items.read().await.clone()
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || Self::get_all_sync(&db))
+            .await
+            .unwrap_or_default()
     }
 
     pub fn get_all_blocking(&self) -> Vec<HistoryItem> {
-        self.items.blocking_read().clone()
+        Self::get_all_sync(&self.db)
+    }
+
+    fn get_all_sync(db: &Database) -> Vec<HistoryItem> {
+        let conn = db.conn();
+        let mut stmt = match conn.prepare(
+            "SELECT id, url, title, author, author_url, thumbnail, extension, size, duration, file_path, downloaded_at, item_type, playlist_id, playlist_title, playlist_index, converted_format, download_source, is_favourite, is_directory, file_count
+             FROM history ORDER BY downloaded_at DESC",
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("Failed to prepare history query: {}", e);
+                return Vec::new();
+            }
+        };
+
+        let rows = stmt.query_map([], |row| {
+            Ok(HistoryItem {
+                id: row.get(0)?,
+                url: row.get(1)?,
+                title: row.get(2)?,
+                author: row.get(3)?,
+                author_url: row.get(4)?,
+                thumbnail: row.get(5)?,
+                extension: row.get(6)?,
+                size: row.get::<_, i64>(7)? as u64,
+                duration: row.get(8)?,
+                file_path: row.get(9)?,
+                downloaded_at: row.get::<_, i64>(10)? as u64,
+                item_type: row.get(11)?,
+                playlist_id: row.get(12)?,
+                playlist_title: row.get(13)?,
+                playlist_index: row.get::<_, Option<i64>>(14)?.map(|v| v as u32),
+                converted_format: row.get(15)?,
+                download_source: row.get(16)?,
+                is_favourite: row.get::<_, i32>(17)? != 0,
+                is_directory: row.get::<_, i32>(18)? != 0,
+                file_count: row.get::<_, Option<i64>>(19)?.map(|v| v as u32),
+            })
+        });
+
+        match rows {
+            Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
+            Err(e) => {
+                error!("Failed to query history: {}", e);
+                Vec::new()
+            }
+        }
     }
 
     pub async fn remove(&self, id: &str) -> bool {
-        let mut items = self.items.write().await;
-        let before = items.len();
-        items.retain(|i| i.id != id);
-        let removed = items.len() < before;
-        if removed {
-            self.save_notify.notify_one();
-        }
-        removed
+        let db = self.db.clone();
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = db.conn();
+            conn.execute("DELETE FROM history WHERE id = ?1", params![id])
+                .map(|n| n > 0)
+                .unwrap_or(false)
+        })
+        .await
+        .unwrap_or(false)
     }
 
     pub async fn clear(&self) {
-        let mut items = self.items.write().await;
-        items.clear();
-        self.save_notify.notify_one();
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db.conn();
+            if let Err(e) = conn.execute("DELETE FROM history", []) {
+                error!("Failed to clear history: {}", e);
+            }
+        })
+        .await
+        .ok();
     }
 
     pub async fn toggle_favourite(&self, id: &str) -> Option<bool> {
-        let mut items = self.items.write().await;
-        let item = items.iter_mut().find(|i| i.id == id)?;
-        item.is_favourite = !item.is_favourite;
-        let new_value = item.is_favourite;
-        self.save_notify.notify_one();
-        Some(new_value)
+        let db = self.db.clone();
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = db.conn();
+            // Toggle and return new value
+            conn.execute(
+                "UPDATE history SET is_favourite = CASE WHEN is_favourite = 0 THEN 1 ELSE 0 END WHERE id = ?1",
+                params![id],
+            ).ok()?;
+            conn.query_row(
+                "SELECT is_favourite FROM history WHERE id = ?1",
+                params![id],
+                |row| row.get::<_, i32>(0).map(|v| v != 0),
+            ).ok()
+        })
+        .await
+        .ok()
+        .flatten()
     }
 
     pub async fn set_favourite(&self, ids: &[String], value: bool) {
-        let mut items = self.items.write().await;
-        let id_set: std::collections::HashSet<&str> = ids.iter().map(|s| s.as_str()).collect();
-        for item in items.iter_mut() {
-            if id_set.contains(item.id.as_str()) {
-                item.is_favourite = value;
+        let db = self.db.clone();
+        let ids = ids.to_vec();
+        let val = value as i32;
+        tokio::task::spawn_blocking(move || {
+            let conn = db.conn();
+            for id in &ids {
+                if let Err(e) = conn.execute(
+                    "UPDATE history SET is_favourite = ?1 WHERE id = ?2",
+                    params![val, id],
+                ) {
+                    warn!("Failed to set favourite for {}: {}", id, e);
+                }
             }
-        }
-        self.save_notify.notify_one();
+        })
+        .await
+        .ok();
     }
 
     pub async fn update_duration(&self, id: &str, duration: f64) {
-        let mut items = self.items.write().await;
-        if let Some(item) = items.iter_mut().find(|i| i.id == id) {
-            item.duration = duration;
-            self.save_notify.notify_one();
-        }
+        let db = self.db.clone();
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = db.conn();
+            if let Err(e) = conn.execute(
+                "UPDATE history SET duration = ?1 WHERE id = ?2",
+                params![duration, id],
+            ) {
+                warn!("Failed to update duration for {}: {}", id, e);
+            }
+        })
+        .await
+        .ok();
     }
 
     pub async fn import(&self, new_items: Vec<HistoryItem>) -> usize {
-        let mut items = self.items.write().await;
-        let existing_ids: std::collections::HashSet<String> =
-            items.iter().map(|i| i.id.clone()).collect();
-        let mut added = 0;
-        for item in new_items {
-            if !existing_ids.contains(&item.id) {
-                items.push(item);
-                added += 1;
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db.conn();
+            let mut added = 0usize;
+            for item in &new_items {
+                match conn.execute(
+                    "INSERT OR IGNORE INTO history (id, url, title, author, author_url, thumbnail, extension, size, duration, file_path, downloaded_at, item_type, playlist_id, playlist_title, playlist_index, converted_format, download_source, is_favourite, is_directory, file_count)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                    params![
+                        item.id, item.url, item.title, item.author,
+                        item.author_url, item.thumbnail, item.extension,
+                        item.size as i64, item.duration, item.file_path,
+                        item.downloaded_at as i64, item.item_type,
+                        item.playlist_id, item.playlist_title,
+                        item.playlist_index.map(|v| v as i64),
+                        item.converted_format, item.download_source,
+                        item.is_favourite as i32,
+                        item.is_directory as i32,
+                        item.file_count.map(|v| v as i64),
+                    ],
+                ) {
+                    Ok(n) => added += n,
+                    Err(e) => warn!("Failed to import history item {}: {}", item.id, e),
+                }
             }
-        }
-        items.sort_by(|a, b| {
-            b.downloaded_at
-                .partial_cmp(&a.downloaded_at)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        items.truncate(MAX_HISTORY_ITEMS);
-        self.save_notify.notify_one();
-        added
+            added
+        })
+        .await
+        .unwrap_or(0)
     }
 
     pub async fn export(&self) -> String {
-        let items = self.items.read().await;
-        serde_json::to_string_pretty(&*items).unwrap_or_else(|_| "[]".to_string())
+        let items = self.get_all().await;
+        serde_json::to_string_pretty(&items).unwrap_or_else(|_| "[]".to_string())
     }
 
     pub async fn restore_from_frontend(&self, new_items: Vec<HistoryItem>) {
-        let mut items = self.items.write().await;
-        if !items.is_empty() {
-            let existing_ids: std::collections::HashSet<String> =
-                items.iter().map(|i| i.id.clone()).collect();
-            for item in new_items {
-                if !existing_ids.contains(&item.id) {
-                    items.push(item);
-                }
-            }
-        } else {
-            *items = new_items;
-        }
-        items.sort_by(|a, b| {
-            b.downloaded_at
-                .partial_cmp(&a.downloaded_at)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        items.truncate(MAX_HISTORY_ITEMS);
-        self.save_notify.notify_one();
+        self.import(new_items).await;
     }
 
-    async fn persist(&self) {
-        let items = self.items.read().await;
-        let json = match serde_json::to_string_pretty(&*items) {
-            Ok(j) => j,
-            Err(e) => {
-                error!("Failed to serialize history: {}", e);
-                return;
+    pub async fn compute_stats(&self) -> HistoryStats {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db.conn();
+            let mut stats = HistoryStats::default();
+
+            // Aggregate stats
+            if let Ok(row) = conn.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(size), 0), COALESCE(SUM(duration), 0.0), COALESCE(SUM(CASE WHEN is_favourite != 0 THEN 1 ELSE 0 END), 0) FROM history",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, f64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            ) {
+                stats.total_downloads = row.0 as u64;
+                stats.total_size = row.1 as u64;
+                stats.total_duration = row.2;
+                stats.favourites_count = row.3 as u64;
             }
-        };
-        drop(items); // Release lock before I/O
 
-        if let Some(parent) = self.path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-
-        let tmp = self.path.with_extension("json.tmp");
-        match std::fs::write(&tmp, &json) {
-            Ok(_) => {
-                if let Err(e) = std::fs::rename(&tmp, &self.path) {
-                    error!("Failed to rename history temp file: {}", e);
-                    let _ = std::fs::remove_file(&tmp);
+            // Format counts
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT CASE WHEN extension = '' THEN 'unknown' ELSE extension END, COUNT(*) FROM history GROUP BY 1",
+            ) {
+                if let Ok(rows) = stmt.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                }) {
+                    for row in rows.flatten() {
+                        stats.format_counts.insert(row.0, row.1 as u64);
+                    }
                 }
             }
-            Err(e) => {
-                error!("Failed to write history temp file: {}", e);
-            }
-        }
+
+            stats
+        })
+        .await
+        .unwrap_or_default()
     }
 }

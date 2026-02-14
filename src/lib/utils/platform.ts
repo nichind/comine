@@ -17,3 +17,12 @@ export async function revealFile(filePath: string): Promise<boolean> {
     return false;
   }
 }
+
+export async function openFolder(folderPath: string): Promise<boolean> {
+  try {
+    return await invoke<boolean>('open_folder', { path: folderPath });
+  } catch (e) {
+    console.error('Failed to open folder:', e);
+    return false;
+  }
+}

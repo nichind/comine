@@ -88,6 +88,10 @@
         return 'music';
       case 'image':
         return 'image';
+      case 'gallery':
+        return 'gallery';
+      case 'torrent':
+        return 'folder';
       default:
         return 'file_text';
     }

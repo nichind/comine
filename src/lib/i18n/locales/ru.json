@@ -353,6 +353,8 @@
       "audio": "Музыка",
       "image": "Изображения",
       "file": "Файлы",
+      "gallery": "Галерея",
+      "torrent": "Торрент",
       "favourites": "Избранное"
     },
     "dateRange": {

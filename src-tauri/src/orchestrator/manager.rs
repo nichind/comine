@@ -47,7 +47,7 @@ struct RunningJob {
 }
 
 pub struct JobManager {
-    app: AppHandle,
+    pub(crate) app: AppHandle,
     store: Arc<JobStore>,
 
     registry: RwLock<BackendRegistry>,
@@ -65,6 +65,7 @@ pub struct JobManager {
     settings_notify: tokio::sync::Notify,
 
     pub history: Arc<crate::orchestrator::history::HistoryStore>,
+    pub stats: Arc<crate::orchestrator::stats::StatsStore>,
 
     backends_ready: tokio::sync::watch::Receiver<bool>,
 
@@ -77,6 +78,7 @@ impl JobManager {
         app: AppHandle,
         store: Arc<JobStore>,
         history: Arc<crate::orchestrator::history::HistoryStore>,
+        stats: Arc<crate::orchestrator::stats::StatsStore>,
         backends_ready: tokio::sync::watch::Receiver<bool>,
     ) -> Arc<Self> {
         let persist_notify = Arc::new(tokio::sync::Notify::new());
@@ -96,6 +98,7 @@ impl JobManager {
             settings_synced: AtomicBool::new(false),
             settings_notify: tokio::sync::Notify::new(),
             history,
+            stats,
             backends_ready,
             persist_notify: persist_notify.clone(),
             persist_cancel: persist_cancel.clone(),
@@ -162,6 +165,7 @@ impl JobManager {
             extractor: patch.extractor,
             webpage_url: patch.webpage_url,
             is_playlist: patch.is_playlist,
+            content_type: patch.content_type,
         };
 
         let mut should_persist = false;
@@ -193,6 +197,9 @@ impl JobManager {
             if let Some(d) = emit_patch.duration {
                 job.duration = Some(d as f64);
             }
+            if let Some(ct) = emit_patch.content_type {
+                job.content_type = Some(ct);
+            }
         } else {
             // Job might not be in memory yet (race with UI placeholder merge); still forward.
             emit_patch.title = patch.title;
@@ -207,7 +214,8 @@ impl JobManager {
             || emit_patch.channel_url.is_some()
             || emit_patch.extractor.is_some()
             || emit_patch.webpage_url.is_some()
-            || emit_patch.is_playlist.is_some();
+            || emit_patch.is_playlist.is_some()
+            || emit_patch.content_type.is_some();
 
         if has_any {
             self.emit_event(JobEvent::UrlInfoPatched {
@@ -407,6 +415,7 @@ impl JobManager {
             playlist_id: None,
             playlist_title: None,
             playlist_index: None,
+            content_type: None,
         };
 
         self.jobs.insert(job_id.clone(), job.clone());
@@ -1033,12 +1042,36 @@ impl JobManager {
             .map(|s| s.to_string_lossy().to_string())
             .filter(|name| !name.starts_with("http") && !name.contains("%("));
 
-        let actual_filesize = std::fs::metadata(&output_path).ok().map(|m| m.len());
+        let path_meta = std::fs::metadata(&output_path).ok();
+        let is_directory = path_meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
 
-        let extension = std::path::Path::new(&output_path)
-            .extension()
-            .map(|e| e.to_string_lossy().to_string())
-            .unwrap_or_default();
+        let (actual_filesize, file_count) = if is_directory {
+            // Recursively compute total size and file count for directory downloads
+            let mut total_size: u64 = 0;
+            let mut count: u32 = 0;
+            if let Ok(entries) = std::fs::read_dir(&output_path) {
+                for entry in entries.flatten() {
+                    if let Ok(meta) = entry.metadata() {
+                        if meta.is_file() {
+                            total_size += meta.len();
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            (Some(total_size), Some(count))
+        } else {
+            (path_meta.as_ref().map(|m| m.len()), None)
+        };
+
+        let extension = if is_directory {
+            String::new()
+        } else {
+            std::path::Path::new(&output_path)
+                .extension()
+                .map(|e| e.to_string_lossy().to_string())
+                .unwrap_or_default()
+        };
 
         let (title, thumbnail, filesize, history_item) =
             if let Some(mut job) = self.jobs.get_mut(job_id) {
@@ -1057,11 +1090,7 @@ impl JobManager {
                     job.title = title_from_filename;
                 }
 
-                let item_type = if job.request.quality.audio_only {
-                    "audio"
-                } else {
-                    "video"
-                };
+                let item_type = Self::resolve_item_type(&job);
 
                 let history = HistoryItem {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -1082,6 +1111,8 @@ impl JobManager {
                     converted_format: job.request.quality.audio_format.clone(),
                     download_source: Some(job.backend.clone()),
                     is_favourite: false,
+                    is_directory,
+                    file_count,
                 };
 
                 (
@@ -1096,10 +1127,15 @@ impl JobManager {
 
         if let Some(item) = history_item {
             let history = self.history.clone();
+            let stats = self.stats.clone();
             let app = self.app.clone();
+            let completion_size = filesize.unwrap_or(0);
             tauri::async_runtime::spawn(async move {
                 let added = history.add(item).await;
+                stats.record_completion(completion_size).await;
                 let _ = app.emit("history-item-added", &added);
+                let history_stats = history.compute_stats().await;
+                let _ = app.emit("history-stats-changed", &history_stats);
                 #[cfg(not(target_os = "android"))]
                 {
                     if let Err(e) = crate::tray::rebuild_menu_async(&app).await {
@@ -1127,6 +1163,51 @@ impl JobManager {
         self.last_progress_emit.remove(job_id);
         self.persist();
         self.schedule_try_start_next();
+    }
+
+    /// Map content_type + job metadata into the history item_type string.
+    fn resolve_item_type(job: &Job) -> &'static str {
+        // If we have an explicit content_type from resolve, use it
+        if let Some(ct) = &job.content_type {
+            return match ct {
+                ContentType::Audio => "audio",
+                ContentType::Image => "image",
+                ContentType::Gallery => "gallery",
+                ContentType::Torrent => "torrent",
+                ContentType::File => "file",
+                ContentType::Video => {
+                    if job.request.quality.audio_only {
+                        "audio"
+                    } else {
+                        "video"
+                    }
+                }
+                _ => "video",
+            };
+        }
+
+        // Infer from backend name for backends that don't send content_type patches
+        match job.backend.as_str() {
+            "gallery-dl" => "image",
+            "aria2" => {
+                let url = &job.request.url;
+                if url.starts_with("magnet:")
+                    || url.ends_with(".torrent")
+                    || url.contains(".torrent?")
+                {
+                    "torrent"
+                } else {
+                    "file"
+                }
+            }
+            _ => {
+                if job.request.quality.audio_only {
+                    "audio"
+                } else {
+                    "video"
+                }
+            }
+        }
     }
 
     fn handle_job_failure(self: &Arc<Self>, job_id: &str, error: BackendError) {
@@ -1201,6 +1282,8 @@ impl JobManager {
                     if let Some(mut job) = manager.jobs.get_mut(&job_id) {
                         job.completed_at = Some(now_ms());
                     }
+
+                    manager.stats.record_failure().await;
 
                     manager.emit_event(JobEvent::Failed {
                         job_id: job_id.clone(),

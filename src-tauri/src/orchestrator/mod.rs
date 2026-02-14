@@ -2,6 +2,7 @@ pub mod backends;
 pub mod convert;
 pub mod history;
 pub mod manager;
+pub mod stats;
 pub mod store;
 pub mod thumbnail;
 pub mod types;
@@ -13,7 +14,7 @@ use self::types::{
     EnqueueRequest, Job, JobControl, ResolveResult,
 };
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[tauri::command]
 pub async fn resolve_url(
@@ -163,12 +164,17 @@ pub async fn remove_history_item(
     state: State<'_, Arc<JobManager>>,
     id: String,
 ) -> Result<bool, String> {
-    Ok(state.history.remove(&id).await)
+    let removed = state.history.remove(&id).await;
+    if removed {
+        emit_history_stats(&state).await;
+    }
+    Ok(removed)
 }
 
 #[tauri::command]
 pub async fn clear_history(state: State<'_, Arc<JobManager>>) -> Result<(), String> {
     state.history.clear().await;
+    emit_history_stats(&state).await;
     Ok(())
 }
 
@@ -177,7 +183,9 @@ pub async fn toggle_history_favourite(
     state: State<'_, Arc<JobManager>>,
     id: String,
 ) -> Result<Option<bool>, String> {
-    Ok(state.history.toggle_favourite(&id).await)
+    let result = state.history.toggle_favourite(&id).await;
+    emit_history_stats(&state).await;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -187,6 +195,7 @@ pub async fn set_history_favourite(
     value: bool,
 ) -> Result<(), String> {
     state.history.set_favourite(&ids, value).await;
+    emit_history_stats(&state).await;
     Ok(())
 }
 
@@ -210,7 +219,9 @@ pub async fn import_history(
     state: State<'_, Arc<JobManager>>,
     items: Vec<types::HistoryItem>,
 ) -> Result<usize, String> {
-    Ok(state.history.import(items).await)
+    let count = state.history.import(items).await;
+    emit_history_stats(&state).await;
+    Ok(count)
 }
 
 #[tauri::command]
@@ -219,7 +230,34 @@ pub async fn restore_history_from_frontend(
     items: Vec<types::HistoryItem>,
 ) -> Result<(), String> {
     state.history.restore_from_frontend(items).await;
+    emit_history_stats(&state).await;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_app_stats(
+    state: State<'_, Arc<JobManager>>,
+) -> Result<types::AppStats, String> {
+    Ok(state.stats.get().await)
+}
+
+#[tauri::command]
+pub async fn get_history_stats(
+    state: State<'_, Arc<JobManager>>,
+) -> Result<types::HistoryStats, String> {
+    Ok(state.history.compute_stats().await)
+}
+
+#[tauri::command]
+pub async fn fetch_broadcasts(
+    state: State<'_, Arc<JobManager>>,
+) -> Result<Vec<types::Broadcast>, String> {
+    Ok(state.stats.fetch_broadcasts(&state.app).await)
+}
+
+async fn emit_history_stats(state: &JobManager) {
+    let stats = state.history.compute_stats().await;
+    let _ = state.app.emit("history-stats-changed", &stats);
 }
 
 pub fn init(app: &AppHandle) -> Arc<JobManager> {
@@ -228,10 +266,14 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
         .app_data_dir()
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-    let store = Arc::new(JobStore::new(app_data_dir.clone()));
-    let history_store = history::HistoryStore::new(app_data_dir);
+    let db = crate::database::Database::new(&app_data_dir)
+        .unwrap_or_else(|e| panic!("Failed to initialize database: {}", e));
+
+    let store = Arc::new(JobStore::new(db.clone()));
+    let history_store = history::HistoryStore::new(db.clone());
+    let stats_store = stats::StatsStore::new(db);
     let (ready_tx, ready_rx) = tokio::sync::watch::channel(false);
-    let manager = JobManager::new(app.clone(), store, history_store, ready_rx);
+    let manager = JobManager::new(app.clone(), store, history_store, stats_store, ready_rx);
 
     #[cfg(target_os = "android")]
     {
@@ -241,7 +283,8 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
     let manager_clone = Arc::clone(&manager);
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
-        manager_clone.history.start();
+        manager_clone.stats.backfill_from_history(&manager_clone.history).await;
+        manager_clone.stats.start(app_clone.clone());
         if let Some(aria2) = crate::orchestrator::backends::aria2::Aria2Backend::new(&app_clone) {
             manager_clone.register_backend(Arc::new(aria2)).await;
         } else {

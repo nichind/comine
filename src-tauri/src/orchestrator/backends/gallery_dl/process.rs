@@ -212,6 +212,7 @@ impl GalleryDlBackend {
         let mut reader = BufReader::new(stdout).lines();
         let mut downloaded_count: u64 = 0;
         let mut last_output_path: Option<String> = None;
+        let mut output_file_count: u32 = 0;
 
         loop {
             tokio::select! {
@@ -235,11 +236,13 @@ impl GalleryDlBackend {
 
                             if line.starts_with('/') || line.starts_with("\\\\") || (line.len() > 2 && line.as_bytes()[1] == b':') {
                                 last_output_path = Some(line.clone());
+                                output_file_count += 1;
                             } else if line.starts_with("# ") {
                             } else if !line.starts_with('[') && !line.starts_with('{') {
                                 let candidate = PathBuf::from(&req.output.directory).join(&line);
                                 if line.contains('.') {
                                     last_output_path = Some(candidate.to_string_lossy().to_string());
+                                    output_file_count += 1;
                                 }
                             }
                         }
@@ -279,7 +282,12 @@ impl GalleryDlBackend {
             )));
         }
 
-        let output = last_output_path.unwrap_or_else(|| req.output.directory.clone());
+        let output = if output_file_count > 1 {
+            // Multi-file download: return the directory, not the last individual file
+            req.output.directory.clone()
+        } else {
+            last_output_path.unwrap_or_else(|| req.output.directory.clone())
+        };
         Ok(output)
     }
 }

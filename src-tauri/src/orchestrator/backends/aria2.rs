@@ -265,17 +265,23 @@ impl Backend for Aria2Backend {
         _settings: &ResolveSettings,
     ) -> Result<UrlInfo, BackendError> {
         if url.starts_with("magnet:") {
-            return Ok(UrlInfo::simple(url, extract_magnet_name(url), "aria2"));
+            let mut info = UrlInfo::simple(url, extract_magnet_name(url), "aria2");
+            info.content_type = ContentType::Torrent;
+            return Ok(info);
         }
 
         if url.ends_with(".torrent") || url.starts_with("ftp://") || url.starts_with("sftp://") {
-            return Ok(UrlInfo::with_file_info(
+            let mut info = UrlInfo::with_file_info(
                 url,
                 Some(extract_filename_from_url(url)),
                 "aria2",
                 None,
                 guess_mime_type(url),
-            ));
+            );
+            if is_torrent_url(url) {
+                info.content_type = ContentType::Torrent;
+            }
+            return Ok(info);
         }
 
         // Use shared HTTP HEAD resolve; if it fails (non-200), fall back to
@@ -358,6 +364,7 @@ mod exec {
 
         let mut reader = BufReader::new(stdout).lines();
         let mut output_path: Option<String> = None;
+        let mut output_path_count: u32 = 0;
         let mut last_update = std::time::Instant::now();
         let job_id = ctx.job.id.clone();
 
@@ -384,6 +391,7 @@ mod exec {
 
                             if let Some(path) = extract_output_path(&line) {
                                 output_path = Some(path);
+                                output_path_count += 1;
                             }
                         }
                         Ok(None) => break,
@@ -408,18 +416,27 @@ mod exec {
             )));
         }
 
-        let final_path = output_path.unwrap_or_else(|| {
-            let dir = &ctx.job.request.output.directory;
-            let filename = ctx
-                .job
-                .request
-                .output
-                .filename
-                .as_deref()
-                .or(ctx.job.title.as_deref())
-                .unwrap_or("download");
-            format!("{}/{}", dir, filename)
-        });
+        let final_path = if output_path_count > 1 {
+            // Multi-file download (torrent): use parent directory
+            output_path
+                .as_ref()
+                .and_then(|p| std::path::Path::new(p).parent())
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| ctx.job.request.output.directory.clone())
+        } else {
+            output_path.unwrap_or_else(|| {
+                let dir = &ctx.job.request.output.directory;
+                let filename = ctx
+                    .job
+                    .request
+                    .output
+                    .filename
+                    .as_deref()
+                    .or(ctx.job.title.as_deref())
+                    .unwrap_or("download");
+                format!("{}/{}", dir, filename)
+            })
+        };
 
         Ok(final_path)
     }

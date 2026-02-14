@@ -17,7 +17,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { isAndroid } from '$lib/utils/android';
-  import { openFile, revealFile } from '$lib/utils/platform';
+  import { openFile, revealFile, openFolder } from '$lib/utils/platform';
   import {
     DownloadsState,
     VIRTUALIZATION_HEIGHTS,
@@ -124,7 +124,9 @@
           toast.error($t('downloads.noFilePath'));
           return;
         }
-        const success = await openFile(item.filePath);
+        const success = item.isDirectory
+          ? await openFolder(item.filePath)
+          : await openFile(item.filePath);
         if (!success) {
           toast.error($t('downloads.openError'));
         }
@@ -521,19 +523,23 @@
     { value: 'video', icon: 'video' },
     { value: 'audio', icon: 'music' },
     { value: 'image', icon: 'image' },
+    { value: 'gallery', icon: 'gallery' },
     { value: 'file', icon: 'file_text' },
+    { value: 'torrent', icon: 'folder' },
   ] as const;
 
   const TYPE_BREAKDOWN = [
     { key: 'video', icon: 'video' },
     { key: 'audio', icon: 'music' },
     { key: 'image', icon: 'image' },
+    { key: 'gallery', icon: 'gallery' },
     { key: 'file', icon: 'file_text' },
+    { key: 'torrent', icon: 'folder' },
   ] as const;
 
   let typeCounts = $derived.by(() => {
     const items = $history.items;
-    const counts = { video: 0, audio: 0, image: 0, file: 0 };
+    const counts = { video: 0, audio: 0, image: 0, gallery: 0, file: 0, torrent: 0 };
     for (const item of items) {
       if (item.type in counts) {
         counts[item.type as keyof typeof counts]++;

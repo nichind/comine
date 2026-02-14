@@ -668,7 +668,6 @@
     const { show } = await import('$lib/components/layout/NotificationPopup.svelte');
     const cleanup = await initRemoteSync({
       showNotification: show,
-      isSendStatsEnabled: () => $settings.sendStats,
     });
     if (cleanup) cleanups.push(cleanup);
   }

@@ -352,6 +352,8 @@
       "audio": "Music",
       "image": "Image",
       "file": "Files",
+      "gallery": "Gallery",
+      "torrent": "Torrent",
       "favourites": "Favourites"
     },
     "dateRange": {
