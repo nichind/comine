@@ -261,8 +261,6 @@ pub async fn show_notification_window(
             })
             .unwrap_or_default();
 
-        // Read settings from store and pass as URL params so the notification
-        // page doesn't need to load the store itself
         let (
             accent,
             fancy_bg,
@@ -568,7 +566,6 @@ pub async fn notification_action(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
-            // Playlists, channels, track builder — need the main window UI
             if is_playlist || is_channel || open_track_builder {
                 let payload = serde_json::json!({
                     "url": video_url,
@@ -598,7 +595,6 @@ pub async fn notification_action(
                     }
                 }
             } else if is_file {
-                // File downloads — enqueue directly if we have file info
                 let file_info = metadata.as_ref().and_then(|m| m.get("fileInfo"));
                 if let Some(manager) = app.try_state::<Arc<JobManager>>() {
                     let download_mode = metadata
@@ -633,7 +629,6 @@ pub async fn notification_action(
                     }
                 }
             } else {
-                // Regular video/audio — enqueue directly in Rust, no window needed
                 if let Some(manager) = app.try_state::<Arc<JobManager>>() {
                     let download_mode = metadata
                         .as_ref()
@@ -641,10 +636,9 @@ pub async fn notification_action(
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
 
-                    // Replicate YTM audio-only logic from frontend
                     let final_mode = if video_url.contains("music.youtube.com") {
                         let ytm_audio =
-                            crate::store_utils::get_bool(&app, "youtubeMusicAudioOnly", false);
+                            crate::store_utils::get_bool(&app, "youtubeMusicAudioOnly", true);
                         if ytm_audio
                             && (download_mode.is_none() || download_mode.as_deref() == Some("auto"))
                         {
