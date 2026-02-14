@@ -133,6 +133,23 @@ pub fn normalize_url_for_ytdlp(url: &str) -> String {
     url.to_string()
 }
 
+fn prefer_m3u8_format(original: &str) -> String {
+    if original.contains("m3u8") || original.chars().all(|c| c.is_ascii_digit() || c == '+') {
+        return original.to_string();
+    }
+
+    let is_audio_only = original.contains("bestaudio") && !original.contains("bestvideo");
+
+    if is_audio_only {
+        format!(
+            "bestaudio[protocol=m3u8_native]/best[protocol=m3u8_native]/{}",
+            original
+        )
+    } else {
+        format!("best[protocol=m3u8_native]/{}", original)
+    }
+}
+
 pub struct YtDlpArgsBuilder {
     pub url: String,
     pub opts: Vec<Vec<String>>,
@@ -302,14 +319,30 @@ impl YtDlpArgsBuilder {
         let output_path = format!("{}/{}", req.output.directory, template);
         self = self.add_pair("-o", output_path);
 
+        let has_sections = req
+            .options
+            .clip_ranges
+            .as_ref()
+            .is_some_and(|r| !r.is_empty());
+
         if req.quality.audio_only {
             self = self.add_arg("-x");
-            self = self.add_pair("-f", req.quality.format.clone());
+            let format = if has_sections {
+                prefer_m3u8_format(&req.quality.format)
+            } else {
+                req.quality.format.clone()
+            };
+            self = self.add_pair("-f", format);
             if let Some(ref fmt) = req.quality.audio_format {
                 self = self.add_pair("--audio-format", fmt.clone());
             }
         } else {
-            self = self.add_pair("-f", req.quality.format.clone());
+            let format = if has_sections {
+                prefer_m3u8_format(&req.quality.format)
+            } else {
+                req.quality.format.clone()
+            };
+            self = self.add_pair("-f", format);
             if let Some(height) = req.quality.max_height {
                 self = self.add_pair("-S", format!("res:{}", height));
             }
@@ -731,6 +764,57 @@ mod tests {
         assert_eq!(sections[0], "*10.00-30.00");
         assert_eq!(sections[1], "*60.00-90.00");
         assert!(opts_contain(&opts, "--force-keyframes-at-cuts"));
+
+        // With sections, format should prefer m3u8
+        let format = opts_get_pair(&opts, "-f").unwrap();
+        assert!(format.starts_with("best[protocol=m3u8_native]/"));
+    }
+
+    #[test]
+    fn test_build_download_sections_m3u8_preference() {
+        let mut req = test_request("https://youtube.com/watch?v=test");
+        req.options.clip_ranges = Some(vec![ClipRange {
+            id: "1".to_string(),
+            start: 10.0,
+            end: 30.0,
+        }]);
+
+        let builder = YtDlpArgsBuilder::new(&req.url);
+        let opts = builder.build_download(&req, None, None);
+
+        let format = opts_get_pair(&opts, "-f").unwrap();
+        assert_eq!(format, "best[protocol=m3u8_native]/bestvideo+bestaudio/best");
+    }
+
+    #[test]
+    fn test_build_download_sections_audio_only_m3u8() {
+        let mut req = test_request("https://youtube.com/watch?v=test");
+        req.quality.audio_only = true;
+        req.quality.format = "bestaudio".to_string();
+        req.options.clip_ranges = Some(vec![ClipRange {
+            id: "1".to_string(),
+            start: 10.0,
+            end: 30.0,
+        }]);
+
+        let builder = YtDlpArgsBuilder::new(&req.url);
+        let opts = builder.build_download(&req, None, None);
+
+        let format = opts_get_pair(&opts, "-f").unwrap();
+        assert_eq!(
+            format,
+            "bestaudio[protocol=m3u8_native]/best[protocol=m3u8_native]/bestaudio"
+        );
+    }
+
+    #[test]
+    fn test_build_download_no_sections_no_m3u8() {
+        let req = test_request("https://youtube.com/watch?v=test");
+        let builder = YtDlpArgsBuilder::new(&req.url);
+        let opts = builder.build_download(&req, None, None);
+
+        let format = opts_get_pair(&opts, "-f").unwrap();
+        assert_eq!(format, "bestvideo+bestaudio/best");
     }
 
     #[test]
