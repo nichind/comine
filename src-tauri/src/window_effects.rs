@@ -62,6 +62,12 @@ pub async fn set_window_effect(app: AppHandle, effect_type: String) -> Result<()
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.set_effects(None::<WindowEffectsConfig>);
 
+            let effect_type = match effect_type.as_str() {
+                "acrylic" | "blur" | "mica" | "mica-dark" | "tabbed" | "tabbed-dark" => "vibrancy-under-window".to_string(),
+                "mica-light" | "tabbed-light" => "vibrancy-under-window".to_string(),
+                other => other.to_string(),
+            };
+
             if effect_type != "none" && effect_type.starts_with("vibrancy-") {
                 let effect = match effect_type.as_str() {
                     "vibrancy-titlebar" => WindowEffect::Titlebar,

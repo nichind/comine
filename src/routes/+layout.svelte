@@ -869,6 +869,7 @@
   <div
     class="app"
     class:mobile={isMobile}
+    class:macos-window={resolvedControlsStyle === 'macos'}
     style="--window-tint: {$settings.backgroundType === 'oled' ? 0 : $settings.windowTint / 100};"
   >
     {#if !isMobile}
@@ -1152,6 +1153,10 @@
     flex-direction: column;
     position: relative;
     overflow: hidden;
+  }
+
+  .app.macos-window {
+    border-radius: 12px;
   }
 
   .app::before {

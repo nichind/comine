@@ -130,11 +130,37 @@ impl StdCommandHideConsole for std::process::Command {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn macos_augmented_path() -> std::ffi::OsString {
+    let mut path = std::env::var_os("PATH").unwrap_or_default();
+    for extra in &["/opt/homebrew/bin", "/usr/local/bin"] {
+        if !path.is_empty() {
+            path.push(":");
+        }
+        path.push(extra);
+    }
+    path
+}
+
+#[cfg(target_os = "macos")]
+fn augment_path_for_macos(cmd: &mut tokio::process::Command) {
+    cmd.env("PATH", macos_augmented_path());
+}
+
+#[cfg(target_os = "macos")]
+fn augment_path_for_macos_std(cmd: &mut std::process::Command) {
+    cmd.env("PATH", macos_augmented_path());
+}
+
 pub fn new_command<P: AsRef<std::ffi::OsStr>>(program: P) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(program);
     #[cfg(target_os = "windows")]
     {
         cmd.hide_console();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        augment_path_for_macos(&mut cmd);
     }
     cmd
 }
@@ -144,6 +170,10 @@ pub fn new_std_command<P: AsRef<std::ffi::OsStr>>(program: P) -> std::process::C
     #[cfg(target_os = "windows")]
     {
         cmd.hide_console();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        augment_path_for_macos_std(&mut cmd);
     }
     cmd
 }

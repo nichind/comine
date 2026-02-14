@@ -20,5 +20,23 @@ pub async fn run_capture_async(exe: &Path, args: &[&str]) -> Result<CmdOutputAsy
 }
 
 pub fn find_in_system_path(binary_name: &str) -> Option<PathBuf> {
-    which::which(binary_name).ok()
+    if let Ok(path) = which::which(binary_name) {
+        return Some(path);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let extra_dirs: &[&str] = &[
+            "/opt/homebrew/bin",  // Apple Silicon
+            "/usr/local/bin",    // Intel Macs
+        ];
+        for dir in extra_dirs {
+            let candidate = PathBuf::from(dir).join(binary_name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
 }
