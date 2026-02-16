@@ -262,6 +262,10 @@
     flex-shrink: 0;
   }
 
+  :global(.app.mobile) .virtual-list-scroll {
+    padding-bottom: var(--mobile-nav-clearance, 0px);
+  }
+
   @media (max-width: 700px) {
     .virtual-list-scroll.custom-scrollbar,
     .virtual-list-header.custom-scrollbar {

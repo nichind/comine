@@ -176,6 +176,50 @@ async fn open_folder(path: String) -> Result<bool, String> {
 
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
+async fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .pick_folder(move |folder| {
+            let _ = tx.send(folder.map(|p| p.to_string()));
+        });
+    rx.await.map_err(|_| "Dialog channel closed".to_string())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn pick_folder() -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut env = crate::orchestrator::backends::android_jni::get_jni_env()?;
+        let activity = crate::orchestrator::backends::android_jni::get_activity()?;
+
+        let result = env
+            .call_method(
+                activity.as_obj(),
+                "pickFolderFromRust",
+                "()Ljava/lang/String;",
+                &[],
+            )
+            .map_err(|e| format!("JNI call failed: {}", e))?;
+
+        let obj = result.l().map_err(|e| format!("JNI return error: {}", e))?;
+        if obj.is_null() {
+            return Ok(None);
+        }
+        let jstr: jni::objects::JString = obj.into();
+        let path: String = env
+            .get_string(&jstr)
+            .map_err(|e| format!("JNI string read error: {}", e))?
+            .into();
+        Ok(Some(path))
+    })
+    .await
+    .map_err(|e| format!("Task panicked: {}", e))?
+}
+
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
 async fn reveal_file(path: String) -> Result<bool, String> {
     tracing::info!("reveal_file called with path: {}", path);
     let p = std::path::PathBuf::from(&path);
@@ -572,6 +616,7 @@ pub fn run() {
         window_effects::set_acrylic,
         open_file,
         open_folder,
+        pick_folder,
         list_directory_contents,
         notifications::show_notification_window,
         notifications::reveal_notification_window,
@@ -598,6 +643,7 @@ pub fn run() {
         deps::uninstall_ytdlp,
         deps::get_ytdlp_releases,
         deps::update_ytdlp_channel,
+        deps::self_update_ytdlp,
         deps::check_ffmpeg,
         deps::install_ffmpeg,
         deps::uninstall_ffmpeg,
@@ -685,6 +731,8 @@ pub fn run() {
                     orchestrator::thumbnail::prune_thumbnail_cache(&app_handle).await;
                 });
             }
+
+            deps::updater::start(app.handle());
 
             #[cfg(not(target_os = "android"))]
             {

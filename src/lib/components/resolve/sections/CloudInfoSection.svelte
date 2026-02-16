@@ -1,6 +1,7 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
   import Icon from '$lib/components/ui/Icon.svelte';
+  import MetaRow from '$lib/components/ui/MetaRow.svelte';
   import type { CloudInfo } from '$lib/bindings/CloudInfo';
 
   interface Props {
@@ -20,7 +21,7 @@
 </script>
 
 {#if hasContent}
-  <div class="cloud-info">
+  <div class="cloud-info" style="--meta-label-width: 80px">
     {#if cloud.passwordProtected}
       <div class="warning-badge">
         <Icon name="lock" size={12} />
@@ -29,45 +30,33 @@
     {/if}
 
     {#if cloud.sharedBy}
-      <div class="meta-row">
-        <Icon name="user" size={14} />
-        <span class="meta-label">{$t('resolve.cloud.sharedBy')}</span>
-        <span class="meta-value">{cloud.sharedBy}</span>
-      </div>
+      <MetaRow icon="user" label={$t('resolve.cloud.sharedBy')}>
+        {cloud.sharedBy}
+      </MetaRow>
     {/if}
 
     {#if cloud.shareDate}
-      <div class="meta-row">
-        <Icon name="date" size={14} />
-        <span class="meta-label">{$t('resolve.cloud.shareDate')}</span>
-        <span class="meta-value">{cloud.shareDate}</span>
-      </div>
+      <MetaRow icon="date" label={$t('resolve.cloud.shareDate')}>
+        {cloud.shareDate}
+      </MetaRow>
     {/if}
 
     {#if cloud.expiryDate}
-      <div class="meta-row">
-        <Icon name="clock" size={14} />
-        <span class="meta-label">{$t('resolve.cloud.expires')}</span>
-        <span class="meta-value">{cloud.expiryDate}</span>
-      </div>
+      <MetaRow icon="clock" label={$t('resolve.cloud.expires')}>
+        {cloud.expiryDate}
+      </MetaRow>
     {/if}
 
     {#if cloud.downloadLimit != null}
-      <div class="meta-row">
-        <Icon name="download" size={14} />
-        <span class="meta-label">{$t('resolve.cloud.downloadLimit')}</span>
-        <span class="meta-value">
-          {cloud.downloadCount ?? 0} / {cloud.downloadLimit}
-        </span>
-      </div>
+      <MetaRow icon="download" label={$t('resolve.cloud.downloadLimit')}>
+        {cloud.downloadCount ?? 0} / {cloud.downloadLimit}
+      </MetaRow>
     {/if}
 
     {#if cloud.folderPath}
-      <div class="meta-row">
-        <Icon name="folder" size={14} />
-        <span class="meta-label">{$t('resolve.cloud.path')}</span>
-        <span class="meta-value">{cloud.folderPath}</span>
-      </div>
+      <MetaRow icon="folder" label={$t('resolve.cloud.path')}>
+        {cloud.folderPath}
+      </MetaRow>
     {/if}
   </div>
 {/if}
@@ -94,31 +83,5 @@
     font-weight: 500;
     color: #fbbf24;
     align-self: flex-start;
-  }
-
-  .meta-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.6);
-  }
-
-  .meta-row :global(svg) {
-    flex-shrink: 0;
-  }
-
-  .meta-label {
-    color: rgba(255, 255, 255, 0.4);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-    min-width: 80px;
-    flex-shrink: 0;
-  }
-
-  .meta-value {
-    color: var(--text-1, white);
-    word-break: break-word;
   }
 </style>

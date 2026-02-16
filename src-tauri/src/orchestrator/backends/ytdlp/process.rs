@@ -34,6 +34,13 @@ impl YtdlpBackend {
         Self { app, binary_path }
     }
 
+    fn js_runtimes(&self) -> Vec<(String, String)> {
+        crate::deps::specs::js_runtime::resolve_available_js_runtimes(&self.app)
+            .into_iter()
+            .map(|(name, path)| (name, path.to_string_lossy().to_string()))
+            .collect()
+    }
+
     async fn resolve_impl(
         &self,
         url: &str,
@@ -49,6 +56,7 @@ impl YtdlpBackend {
         let option_groups = YtDlpArgsBuilder::new(url)
             .with_proxy(prepared.proxy_url)
             .with_cookies(prepared.cookies_from_browser, prepared.cookie_arg)
+            .with_js_runtimes(self.js_runtimes())
             .build_resolve(settings);
 
         apply_args_to_command(&mut cmd, option_groups);
@@ -90,6 +98,7 @@ impl YtdlpBackend {
         let option_groups = YtDlpArgsBuilder::new(url)
             .with_proxy(prepared.proxy_url)
             .with_cookies(prepared.cookies_from_browser, prepared.cookie_arg)
+            .with_js_runtimes(self.js_runtimes())
             .build_resolve(settings);
 
         apply_args_to_command(&mut cmd, option_groups);
@@ -234,6 +243,7 @@ impl YtdlpBackend {
         let option_groups = YtDlpArgsBuilder::new(&req.url)
             .with_proxy(prepared.proxy_url)
             .with_cookies(prepared.cookies_from_browser, prepared.cookie_arg)
+            .with_js_runtimes(self.js_runtimes())
             .build_download(req, ctx.effective_speed_limit, ffmpeg_location);
 
         let all_args: Vec<String> = option_groups.iter().flatten().cloned().collect();

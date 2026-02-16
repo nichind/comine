@@ -11,6 +11,9 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.os.storage.StorageManager
+import android.provider.DocumentsContract
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -21,6 +24,7 @@ import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -28,8 +32,10 @@ import com.yausername.youtubedl_android.YoutubeDL
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -51,6 +57,7 @@ class MainActivity : TauriActivity() {
     private var pendingShareUrl: String? = null
     private var pendingNavigateTo: String? = null
     private var folderPickerCallback: String? = null
+    private var folderPickerFuture: CompletableFuture<String?>? = null
     private var filePickerCallback: String? = null
 
     private lateinit var folderPickerLauncher: ActivityResultLauncher<Uri?>
@@ -91,10 +98,10 @@ class MainActivity : TauriActivity() {
     folderPickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
       val callbackName = folderPickerCallback
       folderPickerCallback = null
+      val future = folderPickerFuture
+      folderPickerFuture = null
 
-      if (callbackName == null) return@registerForActivityResult
-
-      val resultJson = if (uri != null) {
+      val resolvedPath: String? = if (uri != null) {
         try {
           contentResolver.takePersistableUriPermission(
             uri,
@@ -102,20 +109,28 @@ class MainActivity : TauriActivity() {
           )
         } catch (_: Exception) {
         }
-
-        JSONObject().apply {
-          put("success", true)
-          put("uri", uri.toString())
-          put("path", uri.toString())
-        }.toString()
+        treeUriToFilePath(uri) ?: uri.toString()
       } else {
-        JSONObject().apply {
-          put("success", false)
-          put("cancelled", true)
-        }.toString()
+        null
       }
 
-      sendCallback(callbackName, resultJson)
+      future?.complete(resolvedPath)
+
+      if (callbackName != null) {
+        val resultJson = if (uri != null) {
+          JSONObject().apply {
+            put("success", true)
+            put("uri", uri.toString())
+            put("path", resolvedPath ?: uri.toString())
+          }.toString()
+        } else {
+          JSONObject().apply {
+            put("success", false)
+            put("cancelled", true)
+          }.toString()
+        }
+        sendCallback(callbackName, resultJson)
+      }
     }
 
     filePickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -287,6 +302,37 @@ class MainActivity : TauriActivity() {
     evalJs("(function(){try{var fn=window[$cb];if(typeof fn==='function')fn(null);}catch(e){}})();")
   }
 
+  private fun treeUriToFilePath(uri: Uri): String? {
+    return try {
+      val docId = DocumentsContract.getTreeDocumentId(uri)
+      val parts = docId.split(":", limit = 2)
+      if (parts.size != 2) return null
+      val volumeId = parts[0]
+      val relativePath = parts[1]
+
+      if (volumeId.equals("primary", ignoreCase = true)) {
+        Environment.getExternalStorageDirectory().absolutePath + "/" + relativePath
+      } else {
+        "/storage/$volumeId/$relativePath"
+      }
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to convert tree URI to file path: $uri", e)
+      null
+    }
+  }
+
+  fun pickFolderFromRust(): String? {
+    val future = CompletableFuture<String?>()
+    folderPickerFuture = future
+    mainHandler.post { folderPickerLauncher.launch(null) }
+    return try {
+      future.get()
+    } catch (e: Exception) {
+      Log.w(TAG, "pickFolderFromRust failed", e)
+      null
+    }
+  }
+
   fun startJobFromRust(jobId: String, backend: String, payloadJson: String, title: String) {
     Log.d(TAG, "startJobFromRust: jobId=$jobId, backend=$backend, title=$title")
     try {
@@ -332,6 +378,22 @@ class MainActivity : TauriActivity() {
 
   fun openFile(filePath: String): Boolean = FileUtils.openFile(this, filePath)
   fun openFolder(filePath: String): Boolean = FileUtils.openFolder(this, filePath)
+
+  fun installApk(apkPath: String) {
+    Log.i(TAG, "installApk: $apkPath")
+    val file = java.io.File(apkPath)
+    if (!file.exists()) {
+      Log.e(TAG, "APK file does not exist: $apkPath")
+      return
+    }
+    val uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+      setDataAndType(uri, "application/vnd.android.package-archive")
+      addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    startActivity(intent)
+  }
 
   inner class AndroidYtDlpBridge {
     @JavascriptInterface
@@ -473,6 +535,25 @@ class MainActivity : TauriActivity() {
     fun pickFolder(callbackName: String) {
       folderPickerCallback = callbackName
       mainHandler.post { folderPickerLauncher.launch(null) }
+    }
+
+    @JavascriptInterface
+    fun shareLogs(content: String) {
+      try {
+        val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", java.util.Locale.US).format(java.util.Date())
+        val file = File(cacheDir, "comine-logs-$timestamp.txt")
+        file.writeText(content)
+        val uri = FileProvider.getUriForFile(this@MainActivity, "${packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+          type = "text/plain"
+          putExtra(Intent.EXTRA_STREAM, uri)
+          putExtra(Intent.EXTRA_SUBJECT, "Comine Logs $timestamp")
+          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(intent, "Share logs"))
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to share logs: ${e.message}")
+      }
     }
 
     @JavascriptInterface

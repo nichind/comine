@@ -1758,16 +1758,8 @@
   }
 
   @media (max-width: 700px) {
-    .downloads-inner {
-      padding: 0 8px;
-    }
-
-    .list-container {
-      margin-left: -8px;
-      margin-right: -8px;
-    }
-
     .toolbar {
+      margin-inline: 8px;
       height: 84px;
     }
 
@@ -1816,6 +1808,10 @@
     .speed-sparkline {
       left: 4px;
       right: 4px;
+    }
+
+    .stats-panel {
+      margin-inline: 8px;
     }
   }
 

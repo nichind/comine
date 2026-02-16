@@ -102,6 +102,12 @@ pub fn get_ytdlp_class() -> Result<&'static GlobalRef, String> {
         .ok_or_else(|| "YtDlp class not initialized".to_string())
 }
 
+pub fn get_rust_bridge_class() -> Result<&'static GlobalRef, String> {
+    RUST_BRIDGE_CLASS
+        .get()
+        .ok_or_else(|| "RustBridge class not initialized".to_string())
+}
+
 pub async fn start_android_job_jni(
     job_id: &str,
     backend: &str,
@@ -263,6 +269,13 @@ pub fn call_kotlin_progress_update(job_id: &str, progress: &ProgressUpdate) {
 pub fn update_ytdlp_channel_jni(channel: &str) -> Result<String, String> {
     let mut env = get_jni_env()?;
     let cls = get_ytdlp_class()?;
+    let activity = get_activity()?;
+
+    let app_obj = env
+        .call_method(activity.as_obj(), "getApplication", "()Landroid/app/Application;", &[])
+        .map_err(|e| format!("getApplication failed: {e}"))?
+        .l()
+        .map_err(|e| format!("getApplication return error: {e}"))?;
 
     let j_channel = env
         .new_string(channel)
@@ -272,12 +285,15 @@ pub fn update_ytdlp_channel_jni(channel: &str) -> Result<String, String> {
         .call_static_method(
             <&JClass>::from(cls.as_obj()),
             "updateChannel",
-            "(Ljava/lang/String;)Ljava/lang/String;",
-            &[JValue::Object(&j_channel)],
+            "(Landroid/app/Application;Ljava/lang/String;)Ljava/lang/String;",
+            &[JValue::Object(&app_obj), JValue::Object(&j_channel)],
         )
         .map_err(|e| format!("JNI call failed: {e}"))?;
 
     let jstr = result.l().map_err(|e| format!("JNI return error: {e}"))?;
+    if jstr.is_null() {
+        return Err("updateChannel returned null".to_string());
+    }
     let version: String = env
         .get_string((&jstr).into())
         .map_err(|e| format!("JNI string read error: {e}"))?

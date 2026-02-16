@@ -3,14 +3,21 @@
 
   interface Props {
     floating?: boolean;
+    position?: 'inline' | 'sticky' | 'floating';
     class?: string;
     children?: Snippet;
   }
 
-  let { floating = false, class: className = '', children }: Props = $props();
+  let { floating = false, position, class: className = '', children }: Props = $props();
+
+  let resolvedPosition = $derived(position ?? (floating ? 'floating' : 'inline'));
 </script>
 
-<div class="page-toolbar {className}" class:floating>
+<div
+  class="page-toolbar {className}"
+  class:floating={resolvedPosition === 'floating'}
+  class:sticky={resolvedPosition === 'sticky'}
+>
   {@render children?.()}
 </div>
 
@@ -21,6 +28,17 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
+  }
+
+  .page-toolbar.sticky {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: rgba(30, 30, 35, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    padding: 8px;
+    border-radius: var(--radius-lg, 12px);
   }
 
   .page-toolbar.floating {

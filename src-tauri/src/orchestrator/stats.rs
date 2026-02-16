@@ -231,6 +231,7 @@ impl StatsStore {
         match client
             .post(STATS_URL)
             .header("Content-Type", "application/json")
+            .header("Referer", "http://tauri.localhost")
             .json(&payload)
             .send()
             .await

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
   import Icon from '$lib/components/ui/Icon.svelte';
+  import MetaRow from '$lib/components/ui/MetaRow.svelte';
   import { formatSize } from '$lib/utils/format';
   import type { TorrentInfo } from '$lib/bindings/TorrentInfo';
 
@@ -39,63 +40,48 @@
     {/if}
 
     {#if torrent.totalSize != null}
-      <div class="meta-row">
-        <Icon name="weight" size={14} />
-        <span class="meta-label">{$t('resolve.torrent.size')}</span>
-        <span class="meta-value">{formatSize(Number(torrent.totalSize))}</span>
-      </div>
+      <MetaRow icon="weight" label={$t('resolve.torrent.size')}>
+        {formatSize(Number(torrent.totalSize))}
+      </MetaRow>
     {/if}
 
     {#if torrent.infoHash}
-      <div class="meta-row">
-        <Icon name="code" size={14} />
-        <span class="meta-label">{$t('resolve.torrent.hash')}</span>
+      <MetaRow icon="code" label={$t('resolve.torrent.hash')}>
         <button class="hash-value" onclick={() => copyToClipboard(torrent.infoHash!)}>
           <span class="hash-text">{torrent.infoHash}</span>
           <Icon name="copy" size={12} />
         </button>
-      </div>
+      </MetaRow>
     {/if}
 
     {#if torrent.createdBy}
-      <div class="meta-row">
-        <Icon name="user" size={14} />
-        <span class="meta-label">{$t('resolve.torrent.createdBy')}</span>
-        <span class="meta-value">{torrent.createdBy}</span>
-      </div>
+      <MetaRow icon="user" label={$t('resolve.torrent.createdBy')}>
+        {torrent.createdBy}
+      </MetaRow>
     {/if}
 
     {#if torrent.creationDate}
-      <div class="meta-row">
-        <Icon name="date" size={14} />
-        <span class="meta-label">{$t('resolve.torrent.date')}</span>
-        <span class="meta-value">{torrent.creationDate}</span>
-      </div>
+      <MetaRow icon="date" label={$t('resolve.torrent.date')}>
+        {torrent.creationDate}
+      </MetaRow>
     {/if}
 
     {#if torrent.comment}
-      <div class="meta-row">
-        <Icon name="chat" size={14} />
-        <span class="meta-label">{$t('resolve.torrent.comment')}</span>
-        <span class="meta-value">{torrent.comment}</span>
-      </div>
+      <MetaRow icon="chat" label={$t('resolve.torrent.comment')}>
+        {torrent.comment}
+      </MetaRow>
     {/if}
 
     {#if torrent.pieceCount && torrent.pieceSize}
-      <div class="meta-row">
-        <Icon name="widgets" size={14} />
-        <span class="meta-label">{$t('resolve.torrent.pieces')}</span>
-        <span class="meta-value"
-          >{torrent.pieceCount} × {formatSize(Number(torrent.pieceSize))}</span
-        >
-      </div>
+      <MetaRow icon="widgets" label={$t('resolve.torrent.pieces')}>
+        {torrent.pieceCount} × {formatSize(Number(torrent.pieceSize))}
+      </MetaRow>
     {/if}
 
     {#if torrent.isPrivate}
-      <div class="meta-row">
-        <Icon name="lock" size={14} />
+      <MetaRow icon="lock" label="">
         <span class="private-badge">{$t('resolve.torrent.private')}</span>
-      </div>
+      </MetaRow>
     {/if}
   </div>
 
@@ -158,32 +144,6 @@
 
   .leechers {
     color: #f87171;
-  }
-
-  .meta-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.6);
-  }
-
-  .meta-row :global(svg) {
-    flex-shrink: 0;
-  }
-
-  .meta-label {
-    color: rgba(255, 255, 255, 0.4);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-    min-width: 70px;
-    flex-shrink: 0;
-  }
-
-  .meta-value {
-    color: var(--text-1, white);
-    word-break: break-word;
   }
 
   .hash-value {

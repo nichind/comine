@@ -24,6 +24,7 @@
   import { cubicOut } from 'svelte/easing';
   import { tooltip } from '$lib/actions/tooltip';
   import { open } from '@tauri-apps/plugin-dialog';
+  import { invoke } from '@tauri-apps/api/core';
   import { remoteDefaults, getEffectiveDefaultFrom } from '$lib/composables/remoteSync';
   import Icon, { type IconName } from '$lib/components/ui/Icon.svelte';
   import ScrollArea from '$lib/components/ui/ScrollArea.svelte';
@@ -34,10 +35,12 @@
   import Slider from '$lib/components/ui/Slider.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import PageShell from '$lib/components/layout/PageShell.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import ExtensionIntegrationSettings from '$lib/components/settings/ExtensionIntegrationSettings.svelte';
   import AccentPicker from '$lib/components/settings/AccentPicker.svelte';
   import AccentStyle from '$lib/components/settings/AccentStyle.svelte';
   import Dependencies from '$lib/components/settings/Dependencies.svelte';
+  import AndroidDeps from '$lib/components/settings/AndroidDeps.svelte';
   import DataActions from '$lib/components/settings/DataActions.svelte';
   import ProxyConfig from '$lib/components/settings/ProxyConfig.svelte';
   import NetworkCheck from '$lib/components/settings/NetworkCheck.svelte';
@@ -541,13 +544,23 @@
     if (!('type' in def) || def.type !== 'path') return;
     try {
       const isFolder = def.pickType === 'folder';
-      const result = await open({
-        multiple: false,
-        directory: isFolder,
-        filters: isFolder ? undefined : getFileFilters(def.key),
-      });
+      let result: string | null = null;
+
+      if (isFolder) {
+        result = await invoke<string | null>('pick_folder');
+      } else {
+        const picked = await open({
+          multiple: false,
+          directory: false,
+          filters: getFileFilters(def.key),
+        });
+        if (picked && typeof picked === 'string') {
+          result = picked;
+        }
+      }
+
       if (result) {
-        handleSettingChange(def, result as string);
+        handleSettingChange(def, result);
       }
     } catch (e) {
       console.error('Failed to pick path:', e);
@@ -592,7 +605,10 @@
   }
 </script>
 
-<PageShell title={$t('settings.title')} subtitle={$t('settings.subtitle')} scrollMode="custom">
+<PageShell scrollMode="custom">
+  {#snippet header()}
+    <PageHeader title={$t('settings.title')} subtitle={$t('settings.subtitle')} />
+  {/snippet}
   <div
     class="settings-layout"
     class:mobile={!onDesktop}
@@ -762,7 +778,11 @@
       {:else if def.key === 'accent-style'}
         <AccentStyle {searchQuery} />
       {:else if def.key === 'deps-manager'}
-        <Dependencies {searchQuery} />
+        {#if isAndroid()}
+          <AndroidDeps {searchQuery} />
+        {:else}
+          <Dependencies {searchQuery} />
+        {/if}
       {:else if def.key === 'data-actions'}
         <DataActions {searchQuery} />
       {:else if def.key === 'proxy-config'}

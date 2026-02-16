@@ -1,6 +1,7 @@
 interface AndroidWindow extends Window {
   AndroidYtDlp?: object;
   __androidLog?: (level: string, source: string, message: string) => void;
+  [key: string]: unknown;
 }
 
 declare let window: AndroidWindow;
@@ -51,6 +52,14 @@ export function onShareIntent(callback: (url: string) => void): () => void {
 
   window.addEventListener('share-intent', handler);
   return () => window.removeEventListener('share-intent', handler);
+}
+
+export function shareLogs(content: string): void {
+  if (!isAndroid()) return;
+  const bridge = (window as any).AndroidYtDlp;
+  if (bridge?.shareLogs) {
+    bridge.shareLogs(content);
+  }
 }
 
 export function onNavigateTo(callback: (path: string) => void): () => void {

@@ -64,10 +64,7 @@ object YtDlp {
             runCatching { FFmpeg.getInstance().init(app); ffmpegAvailable = true; Log.i(TAG, "ffmpeg ready") }
             runCatching { Aria2c.getInstance().init(app); aria2Available = true; Log.i(TAG, "aria2 ready") }
             if (initialized) {
-                runCatching {
-                    val status = YoutubeDL.getInstance().updateYoutubeDL(app, YoutubeDL.UpdateChannel.MASTER)
-                    Log.i(TAG, "yt-dlp master update: $status")
-                }
+                Log.i(TAG, "yt-dlp version: ${getVersion(app)}")
             }
             onReady?.invoke()
         }.start()
@@ -75,6 +72,7 @@ object YtDlp {
 
     fun getVersion(app: Application): String = runCatching { YoutubeDL.getInstance().versionName(app) ?: "" }.getOrDefault("")
 
+    @JvmStatic
     fun updateChannel(app: Application, channel: String): String {
         val updateChannel = when (channel.lowercase()) {
             "nightly" -> YoutubeDL.UpdateChannel.MASTER

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import Divider from '$lib/components/ui/Divider.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import ScrollArea from '$lib/components/ui/ScrollArea.svelte';
 
   /**
@@ -11,14 +12,23 @@
    *   - 'scroll-area' — wraps children in a <ScrollArea> with optional fade masks
    *   - 'virtual-list' — children manage their own scroll (VirtualList owns the scroll root)
    *   - 'custom'       — no scroll wrapper; the page handles everything inside
+   *
+   * Header: Use the `header` snippet for full control, OR pass `title`/`subtitle`
+   * for the default PageHeader rendering (backward compat).
+   *
+   * noPadding: When true the shell has no inline padding — useful for pages whose
+   * scroll containers need to run edge-to-edge (e.g. VirtualList, ViewStack).
    */
   interface Props {
+    /** @deprecated Use header snippet with <PageHeader> instead */
     title?: string;
+    /** @deprecated Use header snippet with <PageHeader> instead */
     subtitle?: string;
     scrollMode?: 'scroll-area' | 'virtual-list' | 'custom';
     preserveScrollKey?: string;
     class?: string;
     noPadding?: boolean;
+    header?: Snippet;
     toolbar?: Snippet;
     children?: Snippet;
     overlay?: Snippet;
@@ -31,6 +41,7 @@
     preserveScrollKey,
     class: className = '',
     noPadding = false,
+    header,
     toolbar,
     children,
     overlay,
@@ -83,14 +94,10 @@
 </script>
 
 <div class="page-shell {className}" class:no-padding={noPadding}>
-  {#if title}
-    <div class="page-header">
-      <h1>{title}</h1>
-      {#if subtitle}
-        <p class="page-subtitle">{subtitle}</p>
-      {/if}
-    </div>
-    <Divider my={20} />
+  {#if header}
+    {@render header()}
+  {:else if title}
+    <PageHeader {title} {subtitle} />
   {/if}
 
   {#if toolbar}
@@ -136,21 +143,6 @@
     to {
       opacity: 1;
     }
-  }
-
-  .page-header {
-    flex-shrink: 0;
-  }
-
-  .page-header h1 {
-    font-size: 28px;
-    font-weight: 700;
-    margin-bottom: 6px;
-  }
-
-  .page-subtitle {
-    color: rgba(255, 255, 255, 0.6);
-    font-size: var(--text-md, 14px);
   }
 
   .page-toolbar-slot {

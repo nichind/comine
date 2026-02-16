@@ -1,6 +1,7 @@
 package com.nichind.comine
 
 import android.util.Log
+import java.io.File
 
 object RustBridge {
     private const val TAG = "RustBridge"
@@ -170,5 +171,35 @@ object RustBridge {
         }
         runCatching { nativeOnConvertFailed(jobId, error) }
             .onFailure { Log.e(TAG, "notifyConvertFailed failed: ${it.message}") }
+    }
+
+    @JvmStatic
+    fun concatFiles(concatListPath: String, outputPath: String): String? {
+        val context = MainActivity.currentInstance()
+            ?: return "No activity context available"
+
+        NativeLibPaths.init(context)
+        val ffmpegPath = File(NativeLibPaths.binDir, "libffmpeg.so").absolutePath
+        if (!File(ffmpegPath).exists()) {
+            return "FFmpeg binary not found at $ffmpegPath"
+        }
+
+        val jobId = "concat-${java.util.UUID.randomUUID()}"
+        val cmd = listOf(
+            "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", concatListPath,
+            "-c", "copy",
+            outputPath
+        )
+
+        Log.i(TAG, "concatFiles: $concatListPath -> $outputPath")
+        val result = FFmpegExecutor.execute(context, jobId, cmd)
+        return when (result) {
+            is FFmpegExecutor.ExecuteResult.Success -> null
+            is FFmpegExecutor.ExecuteResult.Failed -> result.error
+            is FFmpegExecutor.ExecuteResult.Cancelled -> "Cancelled"
+        }
     }
 }

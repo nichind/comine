@@ -8,6 +8,7 @@ export { default as Dropdown } from './Dropdown.svelte';
 export { default as HighlightText } from './HighlightText.svelte';
 export { default as Icon, type IconName } from './Icon.svelte';
 export { default as Input } from './Input.svelte';
+export { default as MetaRow } from './MetaRow.svelte';
 export { default as Modal } from './Modal.svelte';
 export { default as OptionModal } from './OptionModal.svelte';
 export { default as PathPicker } from './PathPicker.svelte';

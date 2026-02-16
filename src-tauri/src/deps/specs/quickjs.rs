@@ -170,7 +170,7 @@ async fn fetch_latest_version(proxy_config: &ProxyConfig) -> String {
     }
 }
 
-pub async fn check_quickjs(app: AppHandle) -> Result<DependencyStatus, String> {
+pub async fn check_quickjs(app: AppHandle, check_updates: Option<bool>) -> Result<DependencyStatus, String> {
     let quickjs_path = match resolve_quickjs_path(&app) {
         Some(path) => path,
         None => return Ok(DependencyStatus::not_installed()),
@@ -195,8 +195,16 @@ pub async fn check_quickjs(app: AppHandle) -> Result<DependencyStatus, String> {
                 _ => "installed".to_string(),
             };
 
+            let update_available = if check_updates.unwrap_or(false) {
+                let latest = fetch_latest_version(&ProxyConfig::default()).await;
+                if version != "installed" && crate::deps::updater::is_remote_newer(&latest, &version) { Some(latest) } else { None }
+            } else {
+                None
+            };
+
             Ok(
                 DependencyStatus::installed(version, quickjs_path.to_string_lossy().to_string())
+                    .with_update(update_available)
                     .with_disk_size(disk_size),
             )
         }

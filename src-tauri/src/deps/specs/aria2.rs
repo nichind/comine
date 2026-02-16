@@ -57,9 +57,10 @@ async fn fetch_latest_version(proxy_config: &ProxyConfig) -> String {
     }
 }
 
-pub async fn check_aria2(app: AppHandle) -> Result<DependencyStatus, String> {
+pub async fn check_aria2(app: AppHandle, check_updates: Option<bool>) -> Result<DependencyStatus, String> {
     #[cfg(target_os = "android")]
     {
+        let _ = check_updates;
         return Ok(DependencyStatus::embedded("youtubedl-android library"));
     }
 
@@ -81,8 +82,16 @@ pub async fn check_aria2(app: AppHandle) -> Result<DependencyStatus, String> {
                     .to_string();
                 let disk_size = tokio::fs::metadata(&aria2_path).await.ok().map(|m| m.len());
 
+                let update_available = if check_updates.unwrap_or(false) {
+                    let latest = fetch_latest_version(&ProxyConfig::default()).await;
+                    if crate::deps::updater::is_remote_newer(&latest, &version) { Some(latest) } else { None }
+                } else {
+                    None
+                };
+
                 Ok(
                     DependencyStatus::installed(version, aria2_path.to_string_lossy().to_string())
+                        .with_update(update_available)
                         .with_disk_size(disk_size),
                 )
             }

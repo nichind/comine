@@ -121,7 +121,10 @@
   @media (max-width: 480px) {
     .scroll-area {
       padding-right: 4px;
-      padding-bottom: 100px;
     }
+  }
+
+  :global(.app.mobile) .scroll-area {
+    padding-bottom: var(--mobile-nav-clearance, 0px);
   }
 </style>

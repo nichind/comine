@@ -12,7 +12,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import VirtualList from '$lib/components/media/VirtualList.svelte';
   import { formatSize } from '$lib/utils/format';
-  import { isDesktop as checkIsDesktop } from '$lib/utils/android';
+  import { isDesktop as checkIsDesktop, isAndroid as checkIsAndroid, shareLogs as androidShareLogs } from '$lib/utils/android';
 
   const ESTIMATED_HEIGHT_DESKTOP = 28;
   const ESTIMATED_HEIGHT_MOBILE = 48;
@@ -23,6 +23,7 @@
   let hasScrolledDown = $state(false);
   let isMobile = $state(false);
   let isDesktop = $state(false);
+  let isAndroidDevice = $state(false);
   let isLoading = $state(true);
 
   let estimatedHeight = $derived(isMobile ? ESTIMATED_HEIGHT_MOBILE : ESTIMATED_HEIGHT_DESKTOP);
@@ -42,6 +43,7 @@
     window.addEventListener('resize', resizeHandler);
 
     isDesktop = checkIsDesktop();
+    isAndroidDevice = checkIsAndroid();
 
     isLoading = true;
     await logs.loadFromDisk();
@@ -305,6 +307,11 @@
               <Icon name="folder" size={16} />
             </button>
           {/if}
+          {#if isAndroidDevice}
+            <button class="action-btn" onclick={async () => { const text = await logs.exportAsText(); androidShareLogs(text); }} use:tooltip={'Share logs'}>
+              <Icon name="link2" size={16} />
+            </button>
+          {/if}
           <button class="action-btn" onclick={promptCopyLogs} use:tooltip={'Copy to clipboard'}>
             <Icon name="copy" size={16} />
           </button>
@@ -361,8 +368,8 @@
 
 <style>
   .logs-inner {
-    position: absolute;
-    inset: 0;
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -378,10 +385,6 @@
 
   :global(.log-list-virtual) {
     padding: 4px 8px;
-  }
-
-  :global(.app.mobile) .log-container {
-    margin-bottom: 180px;
   }
 
   .empty-state {

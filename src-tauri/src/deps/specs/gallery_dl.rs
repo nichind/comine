@@ -70,7 +70,7 @@ pub async fn check_gallery_dl(
                     match fetch_latest_release(&ProxyConfig::default()).await {
                         Ok(release) => {
                             let latest = release.tag_name.trim_start_matches('v').to_string();
-                            if latest != version {
+                            if crate::deps::updater::is_remote_newer(&latest, &version) {
                                 Some(latest)
                             } else {
                                 None

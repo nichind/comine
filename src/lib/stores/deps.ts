@@ -317,18 +317,7 @@ function createDepsStore() {
     cancelInstall,
 
     async installYtdlp(version?: string) {
-      const success = await installDep('ytdlp', version);
-      if (success) {
-        try {
-          logs.info('deps', 'Auto-switching yt-dlp to master channel...');
-          await invoke<string>('update_ytdlp_channel', { channel: 'master' });
-          logs.info('deps', 'yt-dlp switched to master');
-          await checkDep('ytdlp');
-        } catch (err) {
-          logs.warn('deps', `Failed to auto-switch to master: ${err}`);
-        }
-      }
-      return success;
+      return installDep('ytdlp', version);
     },
 
     async updateYtdlpChannel(channel: 'stable' | 'master') {
@@ -347,17 +336,17 @@ function createDepsStore() {
     async forceUpdateYtdlp(): Promise<void> {
       const state = get({ subscribe });
       if (!state.ytdlp?.installed) {
-        logs.debug('deps', 'Skipping yt-dlp force update: not installed');
+        logs.debug('deps', 'Skipping yt-dlp self-update: not installed');
         return;
       }
 
       try {
-        logs.info('deps', 'Force-updating yt-dlp to master channel...');
-        const newVersion = await invoke<string>('update_ytdlp_channel', { channel: 'master' });
-        logs.info('deps', `yt-dlp updated to: ${newVersion}`);
+        logs.info('deps', 'Running yt-dlp --update (self-update within current channel)...');
+        const newVersion = await invoke<string>('self_update_ytdlp');
+        logs.info('deps', `yt-dlp self-update complete: ${newVersion}`);
         await checkDep('ytdlp');
       } catch (err) {
-        logs.warn('deps', `yt-dlp force update failed: ${err}`);
+        logs.warn('deps', `yt-dlp self-update failed: ${err}`);
       }
     },
 
@@ -407,7 +396,6 @@ function createDepsStore() {
       let installed = 0;
       const total = missing.length;
 
-      // Install aria2 first (download accelerator used by others)
       const aria2Idx = missing.findIndex((d) => d.key === 'aria2');
       if (aria2Idx !== -1) {
         const aria2 = missing.splice(aria2Idx, 1)[0];
@@ -472,46 +460,30 @@ function createDepsStore() {
 
 export const deps = createDepsStore();
 
-let depCheckInterval: ReturnType<typeof setInterval> | null = null;
-let depCheckTimeout: ReturnType<typeof setTimeout> | null = null;
+let depUpdateUnlisten: (() => void) | null = null;
 
-async function checkAllDepUpdates(): Promise<Array<{ dep: DependencyName; version: string }>> {
-  const state = get(deps);
-  const installed = (Object.keys(DEP_CONFIG) as DependencyName[]).filter(
-    (d) => d !== 'ytdlp' && state[d]?.installed
-  );
-
-  const results: Array<{ dep: DependencyName; version: string }> = [];
-  await Promise.all(
-    installed.map(async (dep) => {
-      const status = await deps.check(dep, true);
-      if (status?.updateAvailable) {
-        results.push({ dep, version: status.updateAvailable });
-      }
-    })
-  );
-  return results;
+interface DepUpdatePayload {
+  dep: DependencyName;
+  version: string;
 }
 
-export function startDepUpdateChecker(): void {
-  if (depCheckInterval) return;
+export async function listenForDepUpdates(): Promise<void> {
+  if (depUpdateUnlisten) return;
 
-  const check = async () => {
-    const s = get(settings);
-    if (!s.checkDepUpdates) return;
+  depUpdateUnlisten = await listen<DepUpdatePayload[]>('dep-updates-available', (event) => {
+    const updates = event.payload;
+    if (!updates || updates.length === 0) return;
 
-    logs.debug('deps', 'Checking for dependency updates...');
-    const updates = await checkAllDepUpdates();
-    if (updates.length === 0) {
-      logs.debug('deps', 'All dependencies are up to date');
-      return;
+    logs.info('deps', `Backend reports updates for: ${updates.map((u) => u.dep).join(', ')}`);
+
+    for (const { dep } of updates) {
+      deps.check(dep, true);
     }
 
-    logs.info('deps', `Updates available for: ${updates.map((u) => u.dep).join(', ')}`);
+    const s = get(settings);
     const $t = translate;
-    const autoUpdate = s.autoUpdateDeps;
 
-    if (autoUpdate) {
+    if (s.autoUpdateDeps) {
       const toastId = toast.info(
         $t('deps.updatesAvailable') || `Updates available for ${updates.length} component(s)`,
         15000
@@ -525,14 +497,14 @@ export function startDepUpdateChecker(): void {
       });
 
       let dismissed = false;
-      await new Promise((r) => setTimeout(r, 15000));
-
-      if (!dismissed) {
-        dismissToast(toastId);
-        for (const { dep } of updates) {
-          await deps.install(dep);
+      setTimeout(async () => {
+        if (!dismissed) {
+          dismissToast(toastId);
+          for (const { dep } of updates) {
+            await deps.install(dep);
+          }
         }
-      }
+      }, 15000);
     } else {
       if (updates.length === 1) {
         const { dep, version } = updates[0];
@@ -565,19 +537,12 @@ export function startDepUpdateChecker(): void {
         });
       }
     }
-  };
-
-  depCheckTimeout = setTimeout(check, 10_000);
-  depCheckInterval = setInterval(check, 60 * 60 * 1000);
+  });
 }
 
-export function stopDepUpdateChecker(): void {
-  if (depCheckTimeout) {
-    clearTimeout(depCheckTimeout);
-    depCheckTimeout = null;
-  }
-  if (depCheckInterval) {
-    clearInterval(depCheckInterval);
-    depCheckInterval = null;
+export function stopDepUpdateListener(): void {
+  if (depUpdateUnlisten) {
+    depUpdateUnlisten();
+    depUpdateUnlisten = null;
   }
 }

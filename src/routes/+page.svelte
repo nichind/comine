@@ -17,9 +17,9 @@
   import OptionModal from '$lib/components/ui/OptionModal.svelte';
   import Modal from '$lib/components/ui/Modal.svelte';
   import Checkbox from '$lib/components/ui/Checkbox.svelte';
-  import Divider from '$lib/components/ui/Divider.svelte';
   import CollapsibleBlock from '$lib/components/layout/CollapsibleBlock.svelte';
   import PageShell from '$lib/components/layout/PageShell.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { edgeMask } from '$lib/actions/edgeMask';
   import ResolveBuilder from '$lib/components/builders/ResolveBuilder.svelte';
   import { mediaCache } from '$lib/stores/mediaCache';
@@ -515,12 +515,7 @@
           {@const active = isActive(view.id)}
           <div class="view-container" class:active use:edgeMask>
             {#if view.type === 'home'}
-              <div class="page-header">
-                <h1>{$t('app.name')}</h1>
-                <p class="subtitle">{$t('download.subtitle')}</p>
-              </div>
-
-              <Divider my={20} />
+              <PageHeader title={$t('app.name')} subtitle={$t('download.subtitle')} />
 
               <div class="page-content">
                 <div class="url-input-wrapper">
@@ -1040,26 +1035,15 @@
     }
   }
 
+  :global(.app.mobile) .view-container {
+    padding-bottom: var(--mobile-nav-clearance, 0px);
+  }
+
   .view-container.active {
     visibility: visible;
     opacity: 1;
     pointer-events: auto;
     z-index: 1;
-  }
-
-  .page-header {
-    margin-bottom: 0;
-  }
-
-  h1 {
-    font-size: 28px;
-    font-weight: 700;
-    margin-bottom: 6px;
-  }
-
-  .subtitle {
-    color: rgba(255, 255, 255, 0.6);
-    font-size: 14px;
   }
 
   .page-content {

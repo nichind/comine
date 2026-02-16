@@ -4,6 +4,7 @@
   import Icon from '$lib/components/ui/Icon.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import PageShell from '$lib/components/layout/PageShell.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
 
   const APP_VERSION = __APP_VERSION__;
   const GIT_BRANCH = __GIT_BRANCH__;
@@ -35,11 +36,12 @@
 </script>
 
 <PageShell
-  title={$t('info.title')}
-  subtitle={$t('info.subtitle')}
   scrollMode="scroll-area"
   preserveScrollKey="info"
 >
+  {#snippet header()}
+    <PageHeader title={$t('info.title')} subtitle={$t('info.subtitle')} />
+  {/snippet}
   <div class="info-content">
     <section class="info-section">
       <div class="setting-item">

@@ -93,7 +93,7 @@ pub async fn check_ytdlp(
                 let update_available = if check_updates.unwrap_or(false) {
                     match fetch_latest_release(&ProxyConfig::default()).await {
                         Ok(release) => {
-                            if release.tag_name != version {
+                            if crate::deps::updater::is_remote_newer(&release.tag_name, &version) {
                                 Some(release.tag_name)
                             } else {
                                 None
@@ -226,6 +226,42 @@ pub async fn get_ytdlp_releases(
                 published_at: r.published_at,
             })
             .collect())
+    }
+}
+
+pub async fn self_update_ytdlp(app: AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        let _ = app;
+        return Ok("embedded".to_string());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let ytdlp_path = match resolve_ytdlp_path(&app) {
+            Some(path) => path,
+            None => return Err("yt-dlp is not installed".to_string()),
+        };
+
+        info!("Running yt-dlp --update (self-update within current channel)");
+
+        let output = run_capture_async(&ytdlp_path, &["--update"]).await?;
+
+        if output.status_code == Some(0) {
+            let version_output = run_capture_async(&ytdlp_path, &["--version"]).await?;
+            let new_version = version_output.stdout.trim().to_string();
+            info!("yt-dlp self-update complete, version: {}", new_version);
+            Ok(new_version)
+        } else {
+            let error = if !output.stderr.is_empty() {
+                output.stderr
+            } else {
+                output.stdout
+            };
+            warn!("yt-dlp self-update returned non-zero: {}", error);
+            let version_output = run_capture_async(&ytdlp_path, &["--version"]).await?;
+            Ok(version_output.stdout.trim().to_string())
+        }
     }
 }
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from '$lib/components/ui/Icon.svelte';
   import { open } from '@tauri-apps/plugin-dialog';
+  import { invoke } from '@tauri-apps/api/core';
 
   interface Props {
     value: string;
@@ -15,12 +16,21 @@
     if (disabled) return;
 
     try {
-      const selected = await open({
-        directory: pickType === 'folder',
-        multiple: false,
-      });
+      let selected: string | null = null;
 
-      if (selected && typeof selected === 'string') {
+      if (pickType === 'folder') {
+        selected = await invoke<string | null>('pick_folder');
+      } else {
+        const result = await open({
+          directory: false,
+          multiple: false,
+        });
+        if (result && typeof result === 'string') {
+          selected = result;
+        }
+      }
+
+      if (selected) {
         value = selected;
         onchange?.(selected);
       }

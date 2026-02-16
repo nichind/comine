@@ -131,7 +131,7 @@ export const SECTIONS = [
   },
   { id: 'appearance', titleKey: 'settings.appearance.title', icon: 'pen_new' },
   { id: 'app', titleKey: 'settings.app.title', icon: 'widgets' },
-  { id: 'deps', titleKey: 'settings.deps.title', icon: 'package', platforms: ['desktop'] },
+  { id: 'deps', titleKey: 'settings.deps.title', icon: 'package' },
   { id: 'data', titleKey: 'settings.data.title', icon: 'folder' },
 ] as const;
 
@@ -1346,7 +1346,6 @@ export const SETTINGS: SettingDef[] = [
     key: 'deps-manager',
     section: 'deps',
     titleKey: 'settings.deps.title',
-    platforms: ['desktop'],
   },
   {
     type: 'toggle',

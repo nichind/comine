@@ -64,9 +64,10 @@ fn build_asset_name(version: &str) -> String {
     return String::new();
 }
 
-pub async fn check_lux(app: AppHandle) -> Result<DependencyStatus, String> {
+pub async fn check_lux(app: AppHandle, check_updates: Option<bool>) -> Result<DependencyStatus, String> {
     #[cfg(target_os = "android")]
     {
+        let _ = check_updates;
         return Ok(DependencyStatus::not_installed());
     }
 
@@ -89,6 +90,18 @@ pub async fn check_lux(app: AppHandle) -> Result<DependencyStatus, String> {
                     .to_string();
                 let disk_size = tokio::fs::metadata(&lux_path).await.ok().map(|m| m.len());
 
+                let update_available = if check_updates.unwrap_or(false) {
+                    match installer::fetch_github_latest_release("iawia002/lux", &ProxyConfig::default()).await {
+                        Ok(release) => {
+                            let latest = release.tag_name.trim_start_matches('v').to_string();
+                            if !version.is_empty() && crate::deps::updater::is_remote_newer(&latest, &version) { Some(latest) } else { None }
+                        }
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
+
                 Ok(DependencyStatus::installed(
                     if version.is_empty() {
                         "installed".to_string()
@@ -97,6 +110,7 @@ pub async fn check_lux(app: AppHandle) -> Result<DependencyStatus, String> {
                     },
                     lux_path.to_string_lossy().to_string(),
                 )
+                .with_update(update_available)
                 .with_disk_size(disk_size))
             }
             _ => Ok(DependencyStatus::not_installed()),

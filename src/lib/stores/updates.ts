@@ -156,7 +156,7 @@ export async function downloadAndInstall(): Promise<void> {
   let unlisten: UnlistenFn | null = null;
 
   try {
-    const apkUrl = isAndroid() ? info.downloadUrl : undefined;
+    const apkUrl = info.downloadUrl || undefined;
 
     if (isAndroid() && !apkUrl) {
       throw new Error('No download URL available');
@@ -192,7 +192,7 @@ export async function downloadAndInstall(): Promise<void> {
       ...s,
       downloading: false,
       progress: 100,
-      installTriggered: isAndroid(),
+      installTriggered: true,
     }));
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);

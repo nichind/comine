@@ -97,7 +97,7 @@ fn is_ffprobe_file(name: &str) -> bool {
     (name.ends_with("/ffprobe") || name == "ffprobe") && !name.ends_with(".exe")
 }
 
-pub async fn check_ffmpeg(app: AppHandle) -> Result<DependencyStatus, String> {
+pub async fn check_ffmpeg(app: AppHandle, check_updates: Option<bool>) -> Result<DependencyStatus, String> {
     let ffmpeg_path = match resolve_ffmpeg_path(&app) {
         Some(path) => path,
         None => {
@@ -110,6 +110,8 @@ pub async fn check_ffmpeg(app: AppHandle) -> Result<DependencyStatus, String> {
     };
     #[cfg(not(target_os = "android"))]
     let ffprobe_path = resolve_ffprobe_path(&app);
+
+    let _ = check_updates;
 
     match run_capture_async(&ffmpeg_path, &["-version"]).await {
         Ok(output) if output.status_code == Some(0) => {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
-  import Icon from '$lib/components/ui/Icon.svelte';
+  import MetaRow from '$lib/components/ui/MetaRow.svelte';
   import type { MusicInfo } from '$lib/bindings/MusicInfo';
 
   interface Props {
@@ -15,68 +15,50 @@
 </script>
 
 {#if hasContent}
-  <div class="music-metadata">
+  <div class="music-metadata" style="--meta-label-width: 55px">
     {#if music.track}
-      <div class="meta-row">
-        <Icon name="music" size={14} />
-        <span class="meta-label">{$t('resolve.music.track')}</span>
-        <span class="meta-value">
-          {music.track}
-          {#if music.trackNumber}
-            <span class="meta-dim">#{music.trackNumber}</span>
-          {/if}
-        </span>
-      </div>
+      <MetaRow icon="music" label={$t('resolve.music.track')}>
+        {music.track}
+        {#if music.trackNumber}
+          <span class="meta-dim">#{music.trackNumber}</span>
+        {/if}
+      </MetaRow>
     {/if}
 
     {#if music.artist}
-      <div class="meta-row">
-        <Icon name="user" size={14} />
-        <span class="meta-label">{$t('resolve.music.artist')}</span>
-        <span class="meta-value">{music.artist}</span>
-      </div>
+      <MetaRow icon="user" label={$t('resolve.music.artist')}>
+        {music.artist}
+      </MetaRow>
     {/if}
 
     {#if music.album}
-      <div class="meta-row">
-        <Icon name="album" size={14} />
-        <span class="meta-label">{$t('resolve.music.album')}</span>
-        <span class="meta-value">
-          {music.album}
-          {#if music.albumArtist && music.albumArtist !== music.artist}
-            <span class="meta-dim">by {music.albumArtist}</span>
-          {/if}
-        </span>
-      </div>
+      <MetaRow icon="album" label={$t('resolve.music.album')}>
+        {music.album}
+        {#if music.albumArtist && music.albumArtist !== music.artist}
+          <span class="meta-dim">by {music.albumArtist}</span>
+        {/if}
+      </MetaRow>
     {/if}
 
     {#if music.genre}
-      <div class="meta-row">
-        <Icon name="star" size={14} />
-        <span class="meta-label">{$t('resolve.music.genre')}</span>
-        <span class="meta-value">{music.genre}</span>
-      </div>
+      <MetaRow icon="star" label={$t('resolve.music.genre')}>
+        {music.genre}
+      </MetaRow>
     {/if}
 
     {#if music.releaseYear}
-      <div class="meta-row">
-        <Icon name="clock" size={14} />
-        <span class="meta-label">{$t('resolve.music.year')}</span>
-        <span class="meta-value">{music.releaseYear}</span>
-      </div>
+      <MetaRow icon="clock" label={$t('resolve.music.year')}>
+        {music.releaseYear}
+      </MetaRow>
     {/if}
 
     {#if music.discNumber}
-      <div class="meta-row">
-        <Icon name="pie" size={14} />
-        <span class="meta-label">{$t('resolve.music.disc')}</span>
-        <span class="meta-value">
-          {music.discNumber}
-          {#if music.discCount}
-            <span class="meta-dim">/ {music.discCount}</span>
-          {/if}
-        </span>
-      </div>
+      <MetaRow icon="pie" label={$t('resolve.music.disc')}>
+        {music.discNumber}
+        {#if music.discCount}
+          <span class="meta-dim">/ {music.discCount}</span>
+        {/if}
+      </MetaRow>
     {/if}
   </div>
 {/if}
@@ -90,31 +72,6 @@
     background: rgba(255, 255, 255, 0.03);
     border-radius: var(--radius, 8px);
     border: 1px solid rgba(255, 255, 255, 0.05);
-  }
-
-  .meta-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.6);
-  }
-
-  .meta-row :global(svg) {
-    flex-shrink: 0;
-  }
-
-  .meta-label {
-    color: rgba(255, 255, 255, 0.4);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-    min-width: 55px;
-    flex-shrink: 0;
-  }
-
-  .meta-value {
-    color: var(--text-1, white);
   }
 
   .meta-dim {

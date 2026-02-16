@@ -1,7 +1,6 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
-  import Icon from '$lib/components/ui/Icon.svelte';
-  import Chip from '$lib/components/ui/Chip.svelte';
+  import MetaRow from '$lib/components/ui/MetaRow.svelte';
   import type { GalleryInfo } from '$lib/bindings/GalleryInfo';
 
   interface Props {
@@ -23,72 +22,56 @@
 {#if hasContent}
   <div class="gallery-metadata">
     {#if gallery.artist}
-      <div class="meta-row">
-        <Icon name="user" size={14} />
-        <span class="meta-label">{$t('resolve.gallery.artist')}</span>
-        <span class="meta-value">{gallery.artist}</span>
-      </div>
+      <MetaRow icon="user" label={$t('resolve.gallery.artist')}>
+        {gallery.artist}
+      </MetaRow>
     {/if}
 
     {#if gallery.circle}
-      <div class="meta-row">
-        <Icon name="user" size={14} />
-        <span class="meta-label">{$t('resolve.gallery.circle')}</span>
-        <span class="meta-value">{gallery.circle}</span>
-      </div>
+      <MetaRow icon="user" label={$t('resolve.gallery.circle')}>
+        {gallery.circle}
+      </MetaRow>
     {/if}
 
     {#if gallery.pageCount != null}
-      <div class="meta-row">
-        <Icon name="documents" size={14} />
-        <span class="meta-label">{$t('resolve.gallery.pages')}</span>
-        <span class="meta-value">{gallery.pageCount}</span>
-      </div>
+      <MetaRow icon="documents" label={$t('resolve.gallery.pages')}>
+        {gallery.pageCount}
+      </MetaRow>
     {/if}
 
     {#if gallery.language}
-      <div class="meta-row">
-        <Icon name="globe" size={14} />
-        <span class="meta-label">{$t('resolve.gallery.language')}</span>
-        <span class="meta-value">
-          {gallery.language}
-          {#if gallery.translated}
-            <span class="tag-translated">(translated)</span>
-          {/if}
-        </span>
-      </div>
+      <MetaRow icon="globe" label={$t('resolve.gallery.language')}>
+        {gallery.language}
+        {#if gallery.translated}
+          <span class="tag-translated">(translated)</span>
+        {/if}
+      </MetaRow>
     {/if}
 
     {#if gallery.parody && gallery.parody.length > 0}
-      <div class="meta-row">
-        <Icon name="book" size={14} />
-        <span class="meta-label">{$t('resolve.gallery.parody')}</span>
+      <MetaRow icon="book" label={$t('resolve.gallery.parody')}>
         <div class="chip-list">
           {#each gallery.parody as p}
             <span class="meta-chip">{p}</span>
           {/each}
         </div>
-      </div>
+      </MetaRow>
     {/if}
 
     {#if gallery.characters && gallery.characters.length > 0}
-      <div class="meta-row">
-        <Icon name="user" size={14} />
-        <span class="meta-label">{$t('resolve.gallery.characters')}</span>
+      <MetaRow icon="user" label={$t('resolve.gallery.characters')}>
         <div class="chip-list">
           {#each gallery.characters as c}
             <span class="meta-chip">{c}</span>
           {/each}
         </div>
-      </div>
+      </MetaRow>
     {/if}
 
     {#if gallery.convention}
-      <div class="meta-row">
-        <Icon name="star" size={14} />
-        <span class="meta-label">{$t('resolve.gallery.convention')}</span>
-        <span class="meta-value">{gallery.convention}</span>
-      </div>
+      <MetaRow icon="star" label={$t('resolve.gallery.convention')}>
+        {gallery.convention}
+      </MetaRow>
     {/if}
   </div>
 {/if}
@@ -102,33 +85,6 @@
     background: rgba(255, 255, 255, 0.03);
     border-radius: var(--radius, 8px);
     border: 1px solid rgba(255, 255, 255, 0.05);
-  }
-
-  .meta-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.6);
-  }
-
-  .meta-row :global(svg) {
-    flex-shrink: 0;
-    margin-top: 2px;
-  }
-
-  .meta-label {
-    color: rgba(255, 255, 255, 0.4);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-    min-width: 70px;
-    flex-shrink: 0;
-  }
-
-  .meta-value {
-    color: var(--text-1, white);
-    word-break: break-word;
   }
 
   .tag-translated {

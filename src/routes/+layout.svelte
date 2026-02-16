@@ -48,7 +48,7 @@
     stopUpdateChecker,
     clearDismissedVersionIfUpdated,
   } from '$lib/stores/updates';
-  import { startDepUpdateChecker, stopDepUpdateChecker } from '$lib/stores/deps';
+  import { listenForDepUpdates, stopDepUpdateListener } from '$lib/stores/deps';
   import { navigation } from '$lib/stores/navigation';
   import NotificationPopup from '$lib/components/layout/NotificationPopup.svelte';
   import { initRemoteSync } from '$lib/composables/remoteSync';
@@ -302,7 +302,6 @@
       await deps.checkAll();
       if (!isAndroid()) {
         await deps.autoInstallBundle();
-        deps.forceUpdateYtdlp();
         checkDiskSpace();
       }
     }, 1500);
@@ -324,7 +323,7 @@
     }
 
     startUpdateChecker();
-    startDepUpdateChecker();
+    listenForDepUpdates();
     clearDismissedVersionIfUpdated();
     initRemoteSyncComposable();
 
@@ -655,7 +654,7 @@
     }
     cleanupClipboardListeners();
     stopUpdateChecker();
-    stopDepUpdateChecker();
+    stopDepUpdateListener();
     for (const fn of cleanups) fn();
     cleanups.length = 0;
     queue.cleanup();
@@ -1575,17 +1574,17 @@
   }
 
   .app.mobile .content-area {
+    --mobile-nav-clearance: 96px;
     padding: 0 0 0 0;
     padding-top: env(safe-area-inset-top, 24px);
   }
 
   .app.mobile :global(.page-shell) {
-    padding: 0 !important;
-    padding-bottom: 24px !important;
+    padding: 0 0 24px var(--page-padding-inline-compact) !important;
   }
 
-  .app.mobile :global(.page-shell h1) {
-    font-size: 28px !important;
+  .app.mobile :global(.page-shell.no-padding) {
+    padding-left: 0 !important;
   }
 
   .app.mobile :global(.page-header) {
