@@ -401,7 +401,12 @@ impl YtdlpBackend {
                     buffer.clear();
                     loop {
                         match reader.read_u8().await {
-                            Ok(b'\n') => return Ok(buffer.len()),
+                            Ok(b'\n') => {
+                                if buffer.is_empty() {
+                                    continue;
+                                }
+                                return Ok(buffer.len());
+                            }
                             Ok(b'\r') => {
                                 if !buffer.is_empty() {
                                     return Ok(buffer.len());

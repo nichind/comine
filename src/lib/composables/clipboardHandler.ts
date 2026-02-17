@@ -6,7 +6,9 @@ import { goto } from '$app/navigation';
 import { toast, dismissToast } from '$lib/components/ui/Toast.svelte';
 import { translate } from '$lib/i18n';
 import { getSettings } from '$lib/stores/settings';
+import { mediaCache } from '$lib/stores/mediaCache';
 import { isValidMediaUrl } from '$lib/utils/urlUtils';
+import type { UrlInfo } from '$lib/bindings/UrlInfo';
 
 const cleanupFns: (() => void)[] = [];
 let resolvingToastId: number | null = null;
@@ -73,6 +75,17 @@ export async function setupClipboardWatcher(): Promise<void> {
     }
   );
   cleanupFns.push(ulFile);
+
+  const ulResolveResult = await listen<{ url: string; info: UrlInfo }>(
+    'clipboard-resolve-result',
+    (event) => {
+      const { url, info } = event.payload;
+      if (url && info) {
+        mediaCache.setResolveResult(url, info);
+      }
+    }
+  );
+  cleanupFns.push(ulResolveResult);
 }
 
 export function cleanupClipboardListeners(): void {

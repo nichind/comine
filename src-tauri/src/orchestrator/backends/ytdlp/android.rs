@@ -8,6 +8,7 @@ use tracing::info;
 use super::common::{
     apply_metadata_event, normalize_url_for_ytdlp, ProgressTracker, YtDlpArgsBuilder,
 };
+use crate::orchestrator::backends::aria2::parse_aria2_progress_line;
 use super::json::{parse_ytdlp_output, PaginationContext};
 use super::shared;
 use crate::orchestrator::backends::android_jni::{
@@ -303,6 +304,7 @@ impl YtdlpBackend {
 
         let mut final_path = None;
         let mut captured_output_paths: Vec<String> = Vec::new();
+        let mut last_aria2_emit = std::time::Instant::now();
 
         loop {
             tokio::select! {
@@ -316,6 +318,18 @@ impl YtdlpBackend {
                         Some(AndroidEvent::RawProgressLine(line)) => {
                             if let Some(update) = tracker.parse_progress_line(&line) {
                                 let _ = ctx.progress_tx.send(update);
+                            } else if let Some(raw_update) = parse_aria2_progress_line(&line, &job_id) {
+                                if last_aria2_emit.elapsed().as_millis() >= 250 {
+                                    if let Some(update) = tracker.feed_external_progress(
+                                        raw_update.downloaded_bytes,
+                                        raw_update.total_bytes,
+                                        raw_update.speed,
+                                        raw_update.eta,
+                                    ) {
+                                        let _ = ctx.progress_tx.send(update);
+                                    }
+                                    last_aria2_emit = std::time::Instant::now();
+                                }
                             }
                         }
                         Some(AndroidEvent::Metadata(event)) => {

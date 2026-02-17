@@ -8,7 +8,7 @@ use url::Url;
 
 use crate::notifications;
 use crate::orchestrator::manager::JobManager;
-use crate::orchestrator::types::{ProxyConfig, ResolveSettings};
+use crate::orchestrator::types::{ProxyConfig, ResolveSettings, UrlInfo};
 use crate::store_utils::{get_bool, get_str, get_string_array};
 use crate::types::{NotificationData, NotificationMonitor, NotificationPosition};
 use crate::url_utils;
@@ -300,6 +300,15 @@ async fn handle_detected_file_url(app: &AppHandle, raw_url: &str, detected_filen
     }
 }
 
+fn emit_cached_resolve(app: &AppHandle, url: &str, info: &UrlInfo) {
+    #[derive(serde::Serialize, Clone)]
+    struct Payload<'a> {
+        url: &'a str,
+        info: &'a UrlInfo,
+    }
+    let _ = app.emit("clipboard-resolve-result", Payload { url, info });
+}
+
 async fn handle_detected_url(app: &AppHandle, raw_url: &str) {
     let ignore_mixes = get_bool(app, "ignoreMixes", false);
     let url = url_utils::clean_url(raw_url, ignore_mixes);
@@ -362,6 +371,7 @@ async fn handle_detected_url(app: &AppHandle, raw_url: &str) {
                 return;
             }
             Ok(Ok(result)) => {
+                emit_cached_resolve(app, &url, &result.info);
                 let info = &result.info;
                 let channel_name = info
                     .channel
@@ -428,6 +438,7 @@ async fn handle_detected_url(app: &AppHandle, raw_url: &str) {
                 return;
             }
             Ok(Ok(result)) => {
+                emit_cached_resolve(app, &url, &result.info);
                 let info = &result.info;
                 let total_count = info
                     .playlist_count
@@ -464,6 +475,7 @@ async fn handle_detected_url(app: &AppHandle, raw_url: &str) {
             );
         }
         Ok(Ok(result)) => {
+            emit_cached_resolve(app, &url, &result.info);
             let info = &result.info;
             let thumbnail = info
                 .thumbnail

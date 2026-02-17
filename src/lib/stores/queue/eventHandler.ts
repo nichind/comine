@@ -115,11 +115,12 @@ export async function setupJobEventListener(update: StateUpdater): Promise<Unlis
           const speed =
             typeof speedBps === 'number' && Number.isFinite(speedBps) ? formatSpeed(speedBps) : '';
           const eta = payload.data.eta ? formatTime(payload.data.eta) : '';
-          const status = progress >= 95 ? 'processing' : 'downloading';
-          const statusMessage =
-            progress >= 95
-              ? translate('downloads.status.processing')
-              : translate('downloads.status.downloading');
+          const currentStatus = index !== -1 ? (isProgressOnly ? state.items[index].status : prevStatus) : undefined;
+          const isProcessing = currentStatus === 'processing' || progress >= 100;
+          const status = isProcessing ? 'processing' : 'downloading';
+          const statusMessage = isProcessing
+            ? translate('downloads.status.processing')
+            : translate('downloads.status.downloading');
 
           // Push speed data point (replaces 500ms polling interval)
           if (typeof speedBps === 'number' && Number.isFinite(speedBps)) {

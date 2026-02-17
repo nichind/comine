@@ -27,6 +27,7 @@ pub fn parse_ytdlp_line_event(line: &str) -> Option<YtdlpEvent> {
         || line.starts_with("[EmbedSubtitle]")
         || line.starts_with("[Metadata]")
         || line.starts_with("[FixupM3u8]")
+        || line.starts_with("[FixupM4a]")
         || line.starts_with("[MoveFiles]")
         || line.contains("Merging formats")
         || line.contains("Post-process")
