@@ -67,6 +67,11 @@ static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 static MAIN_ACTIVITY: OnceLock<GlobalRef> = OnceLock::new();
 static YTDLP_CLASS: OnceLock<GlobalRef> = OnceLock::new();
 static RUST_BRIDGE_CLASS: OnceLock<GlobalRef> = OnceLock::new();
+static NATIVE_LIB_DIR: OnceLock<String> = OnceLock::new();
+
+pub fn get_native_lib_dir() -> Option<&'static str> {
+    NATIVE_LIB_DIR.get().map(|s| s.as_str())
+}
 
 pub fn is_jni_ready() -> bool {
     JAVA_VM.get().is_some() && MAIN_ACTIVITY.get().is_some()
@@ -343,6 +348,22 @@ pub extern "system" fn Java_com_nichind_comine_RustBridge_initRustJniWithActivit
         }
     }
     if let Ok(g) = env.new_global_ref(activity) {
+        if let Ok(app_info) = env
+            .call_method(&g, "getApplicationInfo", "()Landroid/content/pm/ApplicationInfo;", &[])
+            .and_then(|v| v.l())
+        {
+            if let Ok(native_dir_obj) = env.get_field(&app_info, "nativeLibraryDir", "Ljava/lang/String;")
+                .and_then(|v| v.l())
+            {
+                if !native_dir_obj.is_null() {
+                    if let Ok(native_dir) = env.get_string((&native_dir_obj).into()) {
+                        let dir: String = native_dir.into();
+                        info!("nativeLibraryDir: {}", dir);
+                        let _ = NATIVE_LIB_DIR.set(dir);
+                    }
+                }
+            }
+        }
         let _ = MAIN_ACTIVITY.set(g);
     }
     info!("Android JNI initialized");

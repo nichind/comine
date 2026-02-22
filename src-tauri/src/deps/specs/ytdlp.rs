@@ -232,8 +232,15 @@ pub async fn get_ytdlp_releases(
 pub async fn self_update_ytdlp(app: AppHandle) -> Result<String, String> {
     #[cfg(target_os = "android")]
     {
+        use crate::orchestrator::backends::android_jni::update_ytdlp_channel_jni;
         let _ = app;
-        return Ok("embedded".to_string());
+
+        info!("Running yt-dlp self-update via youtubedl-android library");
+        tokio::task::spawn_blocking(move || -> Result<String, String> {
+            update_ytdlp_channel_jni("stable")
+        })
+        .await
+        .map_err(|e| format!("Task panicked: {}", e))?
     }
 
     #[cfg(not(target_os = "android"))]

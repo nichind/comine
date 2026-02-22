@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use jni::objects::{JClass, JValue};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -12,9 +12,9 @@ use crate::orchestrator::backends::aria2::parse_aria2_progress_line;
 use super::json::{parse_ytdlp_output, PaginationContext};
 use super::shared;
 use crate::orchestrator::backends::android_jni::{
-    cancel_download_jni, cancel_resolve_jni, get_jni_env, get_ytdlp_class, pause_download_jni,
-    register_listener, remove_listener, start_android_job_jni, start_resolve_jni,
-    wait_for_jni_ready, AndroidEvent,
+    cancel_download_jni, cancel_resolve_jni, get_jni_env, get_ytdlp_class,
+    pause_download_jni, register_listener, remove_listener, start_android_job_jni,
+    start_resolve_jni, wait_for_jni_ready, AndroidEvent,
 };
 use crate::orchestrator::backends::{
     resolve_effective_proxy, Backend, BackendCapabilities, SpawnContext, StreamingResolveHandle,
@@ -32,6 +32,14 @@ impl YtdlpBackend {
 
     pub fn new_android(app: AppHandle) -> Self {
         Self { app }
+    }
+
+    fn android_cache_dir(&self) -> Option<String> {
+        self.app
+            .path()
+            .app_cache_dir()
+            .ok()
+            .map(|p| p.join("ytdlp-cache").to_string_lossy().to_string())
     }
 
     async fn resolve_impl(
@@ -75,6 +83,7 @@ impl YtdlpBackend {
                 settings.cookies_from_browser.clone(),
                 settings.custom_cookies.clone(),
             )
+            .with_cache_dir(self.android_cache_dir())
             .build_resolve(settings);
 
         let args_json = match serde_json::to_string(&option_groups) {
@@ -193,6 +202,7 @@ impl YtdlpBackend {
                 settings.cookies_from_browser.clone(),
                 settings.custom_cookies.clone(),
             )
+            .with_cache_dir(self.android_cache_dir())
             .build_resolve(settings);
 
         let args_json = serde_json::to_string(&option_groups)
@@ -274,6 +284,7 @@ impl YtdlpBackend {
         let option_groups = YtDlpArgsBuilder::new(&url)
             .with_proxy(proxy_url)
             .with_cookies(cookies_from_browser, cookie_arg)
+            .with_cache_dir(self.android_cache_dir())
             .build_download(req, ctx.effective_speed_limit, None);
 
         let args_json = serde_json::to_string(&option_groups)

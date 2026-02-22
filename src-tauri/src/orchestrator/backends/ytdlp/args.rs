@@ -210,6 +210,15 @@ impl YtDlpArgsBuilder {
         self
     }
 
+    pub fn with_cache_dir(mut self, cache_dir: Option<String>) -> Self {
+        if let Some(dir) = cache_dir {
+            if !dir.is_empty() {
+                self = self.add_pair("--cache-dir", dir);
+            }
+        }
+        self
+    }
+
     pub fn with_js_runtimes(mut self, runtimes: Vec<(String, String)>) -> Self {
         for (name, path) in runtimes {
             if !path.is_empty() {
@@ -386,7 +395,12 @@ impl YtDlpArgsBuilder {
         }
 
         if req.options.use_aria2 {
-            self = self.add_pair("--external-downloader", "aria2c".to_string());
+            #[cfg(target_os = "android")]
+            let aria2_bin = "libaria2c.so";
+            #[cfg(not(target_os = "android"))]
+            let aria2_bin = "aria2c";
+
+            self = self.add_pair("--external-downloader", aria2_bin.to_string());
             let conns = req.options.aria2_connections.unwrap_or(8);
             let splits = req.options.aria2_splits.unwrap_or(8);
             let min_split = req.options.aria2_min_split_size.as_deref().unwrap_or("1M");
@@ -399,8 +413,8 @@ impl YtDlpArgsBuilder {
                 .trim();
 
             let mut aria2_args = format!(
-                "aria2c:-x {} -s {} -k {} --disable-ipv6={} --show-console-readout=true --summary-interval=1",
-                conns, splits, min_split, disable_ipv6
+                "{}:-x {} -s {} -k {} --disable-ipv6={} --show-console-readout=true --summary-interval=1",
+                aria2_bin, conns, splits, min_split, disable_ipv6
             );
             if !custom_args.is_empty() {
                 aria2_args.push(' ');

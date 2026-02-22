@@ -74,6 +74,13 @@ object YtDlp {
 
     @JvmStatic
     fun updateChannel(app: Application, channel: String): String {
+        runCatching {
+            val cl = YoutubeDL::class.java.classLoader ?: app.javaClass.classLoader
+            if (cl != null) {
+                Thread.currentThread().contextClassLoader = cl
+            }
+        }
+
         val updateChannel = when (channel.lowercase()) {
             "nightly" -> YoutubeDL.UpdateChannel.MASTER
             "master" -> YoutubeDL.UpdateChannel.MASTER
