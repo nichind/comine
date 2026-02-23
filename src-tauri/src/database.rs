@@ -125,7 +125,10 @@ impl Database {
                 "ALTER TABLE history ADD COLUMN is_directory INTEGER NOT NULL DEFAULT 0;
                  ALTER TABLE history ADD COLUMN file_count INTEGER;",
             ) {
-                warn!("Migration: adding directory columns failed (may already exist): {}", e);
+                warn!(
+                    "Migration: adding directory columns failed (may already exist): {}",
+                    e
+                );
             } else {
                 info!("Migration: added is_directory and file_count columns to history");
             }
@@ -154,7 +157,10 @@ impl Database {
                 // DB already has data, rename JSON as backup
                 let backup = data_dir.join("history_backend.json.bak");
                 let _ = std::fs::rename(&json_path, &backup);
-                info!("History DB already populated ({} items), backed up JSON", count);
+                info!(
+                    "History DB already populated ({} items), backed up JSON",
+                    count
+                );
                 return;
             }
         }
@@ -181,7 +187,10 @@ impl Database {
             return;
         }
 
-        info!("Migrating {} history items from JSON to SQLite", items.len());
+        info!(
+            "Migrating {} history items from JSON to SQLite",
+            items.len()
+        );
 
         let conn = self.conn();
         let tx = match conn.unchecked_transaction() {
@@ -294,10 +303,7 @@ impl Database {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default();
             let created_at = job.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
-            let retry_count = job
-                .get("retry_count")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+            let retry_count = job.get("retry_count").and_then(|v| v.as_u64()).unwrap_or(0);
             let last_error = job.get("last_error").and_then(|v| v.as_str());
             let title = job.get("title").and_then(|v| v.as_str());
             let thumbnail = job.get("thumbnail").and_then(|v| v.as_str());

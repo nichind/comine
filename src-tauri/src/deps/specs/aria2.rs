@@ -57,7 +57,10 @@ async fn fetch_latest_version(proxy_config: &ProxyConfig) -> String {
     }
 }
 
-pub async fn check_aria2(app: AppHandle, check_updates: Option<bool>) -> Result<DependencyStatus, String> {
+pub async fn check_aria2(
+    app: AppHandle,
+    check_updates: Option<bool>,
+) -> Result<DependencyStatus, String> {
     #[cfg(target_os = "android")]
     {
         let _ = check_updates;
@@ -84,7 +87,11 @@ pub async fn check_aria2(app: AppHandle, check_updates: Option<bool>) -> Result<
 
                 let update_available = if check_updates.unwrap_or(false) {
                     let latest = fetch_latest_version(&ProxyConfig::default()).await;
-                    if crate::deps::updater::is_remote_newer(&latest, &version) { Some(latest) } else { None }
+                    if crate::deps::updater::is_remote_newer(&latest, &version) {
+                        Some(latest)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 };

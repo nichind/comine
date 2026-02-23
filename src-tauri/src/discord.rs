@@ -101,7 +101,10 @@ impl DiscordIpc {
         let opcode = u32::from_le_bytes(header[..4].try_into().unwrap());
         let len = u32::from_le_bytes(header[4..].try_into().unwrap()) as usize;
         if len > 1_048_576 {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "payload too large"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "payload too large",
+            ));
         }
         let mut buf = vec![0u8; len];
         self.pipe.read_exact(&mut buf)?;
@@ -119,7 +122,10 @@ impl DiscordIpc {
                 std::io::ErrorKind::ConnectionRefused,
                 format!(
                     "handshake rejected: {}",
-                    payload.pointer("/data/message").and_then(|m| m.as_str()).unwrap_or("unknown")
+                    payload
+                        .pointer("/data/message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("unknown")
                 ),
             )),
             _ => Err(std::io::Error::new(
@@ -130,27 +136,36 @@ impl DiscordIpc {
     }
 
     fn set_activity(&mut self, activity: Value, nonce: &str) -> std::io::Result<Value> {
-        self.send(1, &json!({
-            "cmd": "SET_ACTIVITY",
-            "args": { "pid": std::process::id(), "activity": activity },
-            "nonce": nonce
-        }))?;
+        self.send(
+            1,
+            &json!({
+                "cmd": "SET_ACTIVITY",
+                "args": { "pid": std::process::id(), "activity": activity },
+                "nonce": nonce
+            }),
+        )?;
         self.recv_response()
     }
 
     fn clear_activity(&mut self, nonce: &str) -> std::io::Result<Value> {
-        self.send(1, &json!({
-            "cmd": "SET_ACTIVITY",
-            "args": { "pid": std::process::id() },
-            "nonce": nonce
-        }))?;
+        self.send(
+            1,
+            &json!({
+                "cmd": "SET_ACTIVITY",
+                "args": { "pid": std::process::id() },
+                "nonce": nonce
+            }),
+        )?;
         self.recv_response()
     }
 
     fn recv_response(&mut self) -> std::io::Result<Value> {
         let (op, response) = self.recv()?;
         if op == 2 {
-            return Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "connection closed"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "connection closed",
+            ));
         }
         Ok(response)
     }
@@ -175,7 +190,11 @@ pub fn start_polling(app: &AppHandle) {
         }
     });
 
-    let version = app.config().version.clone().unwrap_or_else(|| "0.0.0".into());
+    let version = app
+        .config()
+        .version
+        .clone()
+        .unwrap_or_else(|| "0.0.0".into());
     let handle = app.clone();
     tauri::async_runtime::spawn(event_loop(handle, version));
 }
@@ -190,10 +209,17 @@ async fn event_loop(app: AppHandle, version: String) {
     loop {
         let discord = match app.try_state::<Arc<DiscordRpcState>>() {
             Some(s) => s.inner().clone(),
-            None => { tokio::time::sleep(Duration::from_secs(1)).await; continue }
+            None => {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
         };
 
-        let interval = if has_active_jobs(&app) { THROTTLE } else { IDLE_INTERVAL };
+        let interval = if has_active_jobs(&app) {
+            THROTTLE
+        } else {
+            IDLE_INTERVAL
+        };
         tokio::select! {
             _ = discord.notify.notified() => {},
             _ = tokio::time::sleep(interval) => {},
@@ -234,7 +260,9 @@ async fn disconnect(ipc: &Arc<Mutex<Option<DiscordIpc>>>, nonce: &mut u64) {
             }
             *guard = None;
         }
-    }).await.ok();
+    })
+    .await
+    .ok();
 }
 
 async fn send_activity(ipc: &Arc<Mutex<Option<DiscordIpc>>>, nonce: &mut u64, activity: Value) {
@@ -242,41 +270,49 @@ async fn send_activity(ipc: &Arc<Mutex<Option<DiscordIpc>>>, nonce: &mut u64, ac
     *nonce += 1;
     let n = nonce.to_string();
 
-    let result = tokio::time::timeout(IPC_TIMEOUT, tokio::task::spawn_blocking(move || -> Option<Value> {
-        let mut guard = ipc_ref.lock().ok()?;
+    let result = tokio::time::timeout(
+        IPC_TIMEOUT,
+        tokio::task::spawn_blocking(move || -> Option<Value> {
+            let mut guard = ipc_ref.lock().ok()?;
 
-        if guard.is_none() {
-            let mut pipe = DiscordIpc::connect()?;
-            match pipe.handshake() {
-                Ok(resp) => {
-                    info!("Discord RPC connected: {resp}");
-                    *guard = Some(pipe);
+            if guard.is_none() {
+                let mut pipe = DiscordIpc::connect()?;
+                match pipe.handshake() {
+                    Ok(resp) => {
+                        info!("Discord RPC connected: {resp}");
+                        *guard = Some(pipe);
+                    }
+                    Err(e) => {
+                        error!("Discord RPC handshake failed: {e}");
+                        return None;
+                    }
                 }
+            }
+
+            let pipe = guard.as_mut().unwrap();
+            match pipe.set_activity(activity, &n) {
+                Ok(resp) => Some(resp),
                 Err(e) => {
-                    error!("Discord RPC handshake failed: {e}");
-                    return None;
+                    error!("Discord RPC IPC error: {e}");
+                    *guard = None;
+                    None
                 }
             }
-        }
-
-        let pipe = guard.as_mut().unwrap();
-        match pipe.set_activity(activity, &n) {
-            Ok(resp) => Some(resp),
-            Err(e) => {
-                error!("Discord RPC IPC error: {e}");
-                *guard = None;
-                None
-            }
-        }
-    })).await;
+        }),
+    )
+    .await;
 
     match result {
         Ok(Ok(Some(resp))) => {
             if resp.get("evt").and_then(|v| v.as_str()) == Some("ERROR") {
                 error!(
                     "Discord RPC error ({}): {}",
-                    resp.pointer("/data/code").and_then(|c| c.as_i64()).unwrap_or(-1),
-                    resp.pointer("/data/message").and_then(|m| m.as_str()).unwrap_or("unknown"),
+                    resp.pointer("/data/code")
+                        .and_then(|c| c.as_i64())
+                        .unwrap_or(-1),
+                    resp.pointer("/data/message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("unknown"),
                 );
             } else {
                 debug!("Discord RPC activity updated");
@@ -303,7 +339,11 @@ async fn build_activity(manager: &Arc<JobManager>, session_start: u64, version: 
     let active: Vec<_> = jobs.iter().filter(|j| j.status.is_active()).collect();
 
     let by_status = |s: JobStatus| -> Vec<_> {
-        active.iter().filter(|j| std::mem::discriminant(&j.status) == std::mem::discriminant(&s)).copied().collect()
+        active
+            .iter()
+            .filter(|j| std::mem::discriminant(&j.status) == std::mem::discriminant(&s))
+            .copied()
+            .collect()
     };
 
     let downloading = by_status(JobStatus::Downloading);
@@ -334,20 +374,42 @@ fn build_downloading(jobs: &[&crate::orchestrator::types::Job], now: u64, assets
         (d + j.downloaded_bytes, t + j.total_bytes.unwrap_or(0))
     });
 
-    let details = if count == 1 { "Downloading 1 file".into() } else { format!("Downloading {count} files") };
-
-    let state = {
-        let speed = if total_speed > 0 { format!("↓ {}", fmt_speed(total_speed as f64)) } else { "Downloading…".into() };
-        if total > 0 { format!("{speed} · {}/{}", fmt_bytes(downloaded), fmt_bytes(total)) } else { speed }
+    let details = if count == 1 {
+        "Downloading 1 file".into()
+    } else {
+        format!("Downloading {count} files")
     };
 
-    let earliest = jobs.iter().filter_map(|j| j.started_at).min().map(|ms| ms / 1000).unwrap_or(now);
+    let state = {
+        let speed = if total_speed > 0 {
+            format!("↓ {}", fmt_speed(total_speed as f64))
+        } else {
+            "Downloading…".into()
+        };
+        if total > 0 {
+            format!("{speed} · {}/{}", fmt_bytes(downloaded), fmt_bytes(total))
+        } else {
+            speed
+        }
+    };
+
+    let earliest = jobs
+        .iter()
+        .filter_map(|j| j.started_at)
+        .min()
+        .map(|ms| ms / 1000)
+        .unwrap_or(now);
     let timestamps = if total > 0 && downloaded > 0 {
         let progress = (downloaded as f64 / total as f64).clamp(0.0, 1.0);
         let elapsed = now.saturating_sub(earliest).max(1);
         let est_total = (elapsed as f64 / progress) as u64;
         json!({ "start": now - (progress * est_total as f64) as u64, "end": now - (progress * est_total as f64) as u64 + est_total })
-    } else if let Some(eta) = jobs.iter().filter_map(|j| j.eta).max().filter(|&e| e > 0 && e < 86400) {
+    } else if let Some(eta) = jobs
+        .iter()
+        .filter_map(|j| j.eta)
+        .max()
+        .filter(|&e| e > 0 && e < 86400)
+    {
         json!({ "start": earliest, "end": now + eta })
     } else {
         json!({ "start": earliest })
@@ -358,14 +420,27 @@ fn build_downloading(jobs: &[&crate::orchestrator::types::Job], now: u64, assets
 
 fn build_processing(jobs: &[&crate::orchestrator::types::Job], now: u64, assets: &Value) -> Value {
     let count = jobs.len();
-    let details = if count == 1 { "Processing 1 file".into() } else { format!("Processing {count} files") };
-    let start = jobs.iter().filter_map(|j| j.started_at).min().map(|ms| ms / 1000).unwrap_or(now);
+    let details = if count == 1 {
+        "Processing 1 file".into()
+    } else {
+        format!("Processing {count} files")
+    };
+    let start = jobs
+        .iter()
+        .filter_map(|j| j.started_at)
+        .min()
+        .map(|ms| ms / 1000)
+        .unwrap_or(now);
     json!({ "details": details, "state": "Post-processing…", "assets": assets, "timestamps": { "start": start }, "buttons": buttons() })
 }
 
 fn build_resolving(jobs: &[&crate::orchestrator::types::Job], now: u64, assets: &Value) -> Value {
     let count = jobs.len();
-    let details = if count == 1 { "Resolving 1 URL".into() } else { format!("Resolving {count} URLs") };
+    let details = if count == 1 {
+        "Resolving 1 URL".into()
+    } else {
+        format!("Resolving {count} URLs")
+    };
     json!({ "details": details, "state": "Fetching metadata…", "assets": assets, "timestamps": { "start": now }, "buttons": buttons() })
 }
 
@@ -375,7 +450,10 @@ async fn build_idle(manager: &Arc<JobManager>, session_start: u64, assets: &Valu
     let state = if gb >= 1.0 {
         format!("{} downloads · {gb:.1} GB total", stats.total_downloads)
     } else {
-        format!("{} downloads · {:.0} MB total", stats.total_downloads, stats.total_size_mb)
+        format!(
+            "{} downloads · {:.0} MB total",
+            stats.total_downloads, stats.total_size_mb
+        )
     };
     json!({ "details": "Idling", "state": state, "assets": assets, "timestamps": { "start": session_start }, "buttons": buttons() })
 }
@@ -388,7 +466,10 @@ fn buttons() -> Value {
 }
 
 fn epoch_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn fmt_bytes(b: u64) -> String {

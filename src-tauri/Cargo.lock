@@ -739,7 +739,7 @@ dependencies = [
 
 [[package]]
 name = "comine"
-version = "1.1.0-14"
+version = "1.1.0-15"
 dependencies = [
  "aes-gcm",
  "async-trait",

@@ -64,7 +64,10 @@ fn get_download_url() -> &'static str {
     return "";
 }
 
-pub async fn check_deno(app: AppHandle, check_updates: Option<bool>) -> Result<DependencyStatus, String> {
+pub async fn check_deno(
+    app: AppHandle,
+    check_updates: Option<bool>,
+) -> Result<DependencyStatus, String> {
     let deno_path = match resolve_deno_path(&app) {
         Some(path) => path,
         None => return Ok(DependencyStatus::not_installed()),
@@ -83,10 +86,19 @@ pub async fn check_deno(app: AppHandle, check_updates: Option<bool>) -> Result<D
             let disk_size = tokio::fs::metadata(&deno_path).await.ok().map(|m| m.len());
 
             let update_available = if check_updates.unwrap_or(false) {
-                match installer::fetch_github_latest_release("denoland/deno", &ProxyConfig::default()).await {
+                match installer::fetch_github_latest_release(
+                    "denoland/deno",
+                    &ProxyConfig::default(),
+                )
+                .await
+                {
                     Ok(release) => {
                         let latest = release.tag_name.trim_start_matches('v').to_string();
-                        if crate::deps::updater::is_remote_newer(&latest, &version) { Some(latest) } else { None }
+                        if crate::deps::updater::is_remote_newer(&latest, &version) {
+                            Some(latest)
+                        } else {
+                            None
+                        }
                     }
                     Err(_) => None,
                 }

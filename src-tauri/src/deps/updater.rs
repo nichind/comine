@@ -76,12 +76,21 @@ async fn run_dep_update_check(app: &AppHandle) {
     let app_clone = app.clone();
     let results = tokio::join!(
         check_dep_update("ytdlp", ytdlp::check_ytdlp(app_clone.clone(), Some(true))),
-        check_dep_update("ffmpeg", ffmpeg::check_ffmpeg(app_clone.clone(), Some(true))),
+        check_dep_update(
+            "ffmpeg",
+            ffmpeg::check_ffmpeg(app_clone.clone(), Some(true))
+        ),
         check_dep_update("aria2", aria2::check_aria2(app_clone.clone(), Some(true))),
         check_dep_update("deno", deno::check_deno(app_clone.clone(), Some(true))),
-        check_dep_update("quickjs", quickjs::check_quickjs(app_clone.clone(), Some(true))),
+        check_dep_update(
+            "quickjs",
+            quickjs::check_quickjs(app_clone.clone(), Some(true))
+        ),
         check_dep_update("lux", lux::check_lux(app_clone.clone(), Some(true))),
-        check_dep_update("gallery_dl", gallery_dl::check_gallery_dl(app_clone.clone(), Some(true))),
+        check_dep_update(
+            "gallery_dl",
+            gallery_dl::check_gallery_dl(app_clone.clone(), Some(true))
+        ),
     );
 
     let updates: Vec<DepUpdateInfo> = [

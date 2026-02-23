@@ -399,9 +399,15 @@
   {#if thumbnail && !thumbBgError}
     <img src={thumbnail} alt="" class="thumb-bg-img" onerror={() => (thumbBgError = true)} />
   {:else}
-    <div class="thumb-bg-accent" style="background: radial-gradient(ellipse at 30% 50%, {accentColor}50 0%, transparent 70%), radial-gradient(ellipse at 70% 60%, {accentColor}30 0%, transparent 60%);"></div>
+    <div
+      class="thumb-bg-accent"
+      style="background: radial-gradient(ellipse at 30% 50%, {accentColor}50 0%, transparent 70%), radial-gradient(ellipse at 70% 60%, {accentColor}30 0%, transparent 60%);"
+    ></div>
   {/if}
-  <div class="thumb-bg-tint" style="background: rgba(19, 19, 19, {Math.max(windowTint, 0.4)});"></div>
+  <div
+    class="thumb-bg-tint"
+    style="background: rgba(19, 19, 19, {Math.max(windowTint, 0.4)});"
+  ></div>
 </div>
 
 {#if fancyBackground}

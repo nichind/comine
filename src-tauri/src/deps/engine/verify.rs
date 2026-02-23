@@ -27,7 +27,7 @@ pub fn find_in_system_path(binary_name: &str) -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         let extra_dirs: &[&str] = &[
-            "/opt/homebrew/bin",  // Apple Silicon
+            "/opt/homebrew/bin", // Apple Silicon
             "/usr/local/bin",    // Intel Macs
         ];
         for dir in extra_dirs {

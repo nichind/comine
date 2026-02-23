@@ -1,6 +1,6 @@
 [package]
 name = "comine"
-version = "1.1.0-14"
+version = "1.1.0-15"
 description = "Crossplatform media and file downloader"
 authors = ["nichind"]
 license = "GPL-3.0-only"

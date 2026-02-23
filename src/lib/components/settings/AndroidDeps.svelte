@@ -46,50 +46,49 @@
 
   <div class="deps-list">
     {#if $deps.ytdlp}
-    {@const info = $deps.ytdlp}
-    {@const isChecking = $deps.checking === 'ytdlp'}
+      {@const info = $deps.ytdlp}
+      {@const isChecking = $deps.checking === 'ytdlp'}
 
-    <div class="dep-row">
-      <div class="dep-main">
-        <div class="dep-header">
-          <span class="dep-name">yt-dlp</span>
-          <span class="dep-badge required">{$t('settings.deps.required')}</span>
-          {#if isChecking}
-            <span class="dep-version checking">
-              <Icon name="spinner" size={12} />
-            </span>
-          {:else if info?.installed}
-            <span class="dep-version installed">
-              {info.version ?? 'embedded'}
-            </span>
-          {:else}
-            <span class="dep-version missing">{$t('settings.deps.notInstalled')}</span>
+      <div class="dep-row">
+        <div class="dep-main">
+          <div class="dep-header">
+            <span class="dep-name">yt-dlp</span>
+            <span class="dep-badge required">{$t('settings.deps.required')}</span>
+            {#if isChecking}
+              <span class="dep-version checking">
+                <Icon name="spinner" size={12} />
+              </span>
+            {:else if info?.installed}
+              <span class="dep-version installed">
+                {info.version ?? 'embedded'}
+              </span>
+            {:else}
+              <span class="dep-version missing">{$t('settings.deps.notInstalled')}</span>
+            {/if}
+          </div>
+          <div class="dep-desc">{$t('settings.deps.ytdlpDescription')}</div>
+        </div>
+
+        <div class="dep-actions">
+          {#if info?.installed}
+            <button
+              class="action-btn master"
+              class:active={isMasterVersion(info.version)}
+              onclick={() => switchChannel(isMasterVersion(info.version) ? 'stable' : 'master')}
+              disabled={updatingChannel}
+              use:tooltip={isMasterVersion(info.version)
+                ? $t('settings.deps.switchToStable')
+                : $t('settings.deps.switchToMaster')}
+            >
+              {#if updatingChannel}
+                <Icon name="spinner" size={18} />
+              {:else}
+                <Icon name="code_funky" size={18} />
+              {/if}
+            </button>
           {/if}
         </div>
-        <div class="dep-desc">{$t('settings.deps.ytdlpDescription')}</div>
       </div>
-
-      <div class="dep-actions">
-        {#if info?.installed}
-          <button
-            class="action-btn master"
-            class:active={isMasterVersion(info.version)}
-            onclick={() =>
-              switchChannel(isMasterVersion(info.version) ? 'stable' : 'master')}
-            disabled={updatingChannel}
-            use:tooltip={isMasterVersion(info.version)
-              ? $t('settings.deps.switchToStable')
-              : $t('settings.deps.switchToMaster')}
-          >
-            {#if updatingChannel}
-              <Icon name="spinner" size={18} />
-            {:else}
-              <Icon name="code_funky" size={18} />
-            {/if}
-          </button>
-        {/if}
-      </div>
-    </div>
     {/if}
   </div>
 </SettingsCard>

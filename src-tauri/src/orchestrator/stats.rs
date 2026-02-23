@@ -124,7 +124,10 @@ impl StatsStore {
         .unwrap_or_default()
     }
 
-    pub async fn backfill_from_history(&self, _history: &crate::orchestrator::history::HistoryStore) {
+    pub async fn backfill_from_history(
+        &self,
+        _history: &crate::orchestrator::history::HistoryStore,
+    ) {
         let stats = self.get().await;
         if stats.total_downloads > 0 {
             return;
@@ -202,8 +205,7 @@ impl StatsStore {
             .clone()
             .unwrap_or_else(|| "0.0.0".to_string());
         let platform = current_platform();
-        let locale =
-            crate::store_utils::get_str(app, "language", "en");
+        let locale = crate::store_utils::get_str(app, "language", "en");
 
         let payload = serde_json::json!({
             "id": stats.installation_id,
@@ -296,9 +298,11 @@ impl StatsStore {
             .into_iter()
             .filter(|bc| {
                 if let Some(ref platforms) = bc.platforms {
-                    let ps: Vec<&str> =
-                        platforms.split(',').map(|p| p.trim()).collect();
-                    if !ps.iter().any(|p| p.eq_ignore_ascii_case("all") || p.eq_ignore_ascii_case(&platform)) {
+                    let ps: Vec<&str> = platforms.split(',').map(|p| p.trim()).collect();
+                    if !ps
+                        .iter()
+                        .any(|p| p.eq_ignore_ascii_case("all") || p.eq_ignore_ascii_case(&platform))
+                    {
                         return false;
                     }
                 }
@@ -334,9 +338,7 @@ fn current_platform() -> String {
 }
 
 fn compare_versions(a: &str, b: &str) -> i32 {
-    let parse = |s: &str| -> Vec<u32> {
-        s.split('.').map(|p| p.parse().unwrap_or(0)).collect()
-    };
+    let parse = |s: &str| -> Vec<u32> { s.split('.').map(|p| p.parse().unwrap_or(0)).collect() };
     let pa = parse(a);
     let pb = parse(b);
     let len = pa.len().max(pb.len());

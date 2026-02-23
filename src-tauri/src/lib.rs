@@ -1,6 +1,8 @@
 mod clipboard;
 mod database;
 mod deps;
+#[cfg(not(target_os = "android"))]
+mod discord;
 mod logs;
 mod media_info;
 mod notifications;
@@ -9,8 +11,6 @@ mod proxy;
 mod server;
 mod store_utils;
 mod thumbnail_color;
-#[cfg(not(target_os = "android"))]
-mod discord;
 #[cfg(not(target_os = "android"))]
 mod tray;
 #[cfg(not(target_os = "android"))]
@@ -179,11 +179,9 @@ async fn open_folder(path: String) -> Result<bool, String> {
 async fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog()
-        .file()
-        .pick_folder(move |folder| {
-            let _ = tx.send(folder.map(|p| p.to_string()));
-        });
+    app.dialog().file().pick_folder(move |folder| {
+        let _ = tx.send(folder.map(|p| p.to_string()));
+    });
     rx.await.map_err(|_| "Dialog channel closed".to_string())
 }
 

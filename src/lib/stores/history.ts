@@ -31,7 +31,15 @@ export type HistoryItem = Omit<
   fileCount?: number;
 };
 
-export type FilterType = 'all' | 'video' | 'audio' | 'image' | 'file' | 'gallery' | 'torrent' | 'favourites';
+export type FilterType =
+  | 'all'
+  | 'video'
+  | 'audio'
+  | 'image'
+  | 'file'
+  | 'gallery'
+  | 'torrent'
+  | 'favourites';
 export type SortType = 'date' | 'name' | 'size' | 'duration' | 'format';
 
 interface HistoryState {
@@ -132,10 +140,7 @@ function createHistoryStore() {
         const rawItems = await invoke<BindingHistoryItem[]>('get_history');
         const items = rawItems.map(normalizeItem);
         update((state) => ({ ...state, items }));
-        logs.info(
-          'history',
-          `Loaded ${items.length} items from backend`
-        );
+        logs.info('history', `Loaded ${items.length} items from backend`);
 
         if (items.length === 0) {
           await migrateFromFrontendStore();
@@ -469,7 +474,9 @@ function applyHistoryStats(stats: HistoryStats) {
     totalDownloads: stats.totalDownloads,
     totalSize: Number(stats.totalSize),
     totalDuration: stats.totalDuration,
-    formatCounts: stats.formatCounts,
+    formatCounts: Object.fromEntries(
+      Object.entries(stats.formatCounts).filter((e): e is [string, number] => e[1] != null)
+    ),
     favouritesCount: stats.favouritesCount,
   });
 }

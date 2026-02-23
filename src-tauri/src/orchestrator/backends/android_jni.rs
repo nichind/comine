@@ -277,7 +277,12 @@ pub fn update_ytdlp_channel_jni(channel: &str) -> Result<String, String> {
     let activity = get_activity()?;
 
     let app_obj = env
-        .call_method(activity.as_obj(), "getApplication", "()Landroid/app/Application;", &[])
+        .call_method(
+            activity.as_obj(),
+            "getApplication",
+            "()Landroid/app/Application;",
+            &[],
+        )
         .map_err(|e| format!("getApplication failed: {e}"))?
         .l()
         .map_err(|e| format!("getApplication return error: {e}"))?;
@@ -349,10 +354,16 @@ pub extern "system" fn Java_com_nichind_comine_RustBridge_initRustJniWithActivit
     }
     if let Ok(g) = env.new_global_ref(activity) {
         if let Ok(app_info) = env
-            .call_method(&g, "getApplicationInfo", "()Landroid/content/pm/ApplicationInfo;", &[])
+            .call_method(
+                &g,
+                "getApplicationInfo",
+                "()Landroid/content/pm/ApplicationInfo;",
+                &[],
+            )
             .and_then(|v| v.l())
         {
-            if let Ok(native_dir_obj) = env.get_field(&app_info, "nativeLibraryDir", "Ljava/lang/String;")
+            if let Ok(native_dir_obj) = env
+                .get_field(&app_info, "nativeLibraryDir", "Ljava/lang/String;")
                 .and_then(|v| v.l())
             {
                 if !native_dir_obj.is_null() {

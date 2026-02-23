@@ -63,7 +63,9 @@ pub async fn set_window_effect(app: AppHandle, effect_type: String) -> Result<()
             let _ = window.set_effects(None::<WindowEffectsConfig>);
 
             let effect_type = match effect_type.as_str() {
-                "acrylic" | "blur" | "mica" | "mica-dark" | "tabbed" | "tabbed-dark" => "vibrancy-under-window".to_string(),
+                "acrylic" | "blur" | "mica" | "mica-dark" | "tabbed" | "tabbed-dark" => {
+                    "vibrancy-under-window".to_string()
+                }
                 "mica-light" | "tabbed-light" => "vibrancy-under-window".to_string(),
                 other => other.to_string(),
             };

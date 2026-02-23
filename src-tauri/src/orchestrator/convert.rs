@@ -747,9 +747,7 @@ mod exec {
                 )
                 .map_err(|e| format!("JNI concatFiles call failed: {}", e))?;
 
-            let jstr = result
-                .l()
-                .map_err(|e| format!("JNI return error: {}", e))?;
+            let jstr = result.l().map_err(|e| format!("JNI return error: {}", e))?;
 
             if jstr.is_null() {
                 Ok(())

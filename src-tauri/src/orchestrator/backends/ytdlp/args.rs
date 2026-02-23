@@ -797,7 +797,10 @@ mod tests {
         let opts = builder.build_download(&req, None, None);
 
         let format = opts_get_pair(&opts, "-f").unwrap();
-        assert_eq!(format, "best[protocol=m3u8_native]/bestvideo+bestaudio/best");
+        assert_eq!(
+            format,
+            "best[protocol=m3u8_native]/bestvideo+bestaudio/best"
+        );
     }
 
     #[test]
@@ -1030,12 +1033,11 @@ mod tests {
 
     #[test]
     fn test_builder_with_js_runtimes() {
-        let builder = YtDlpArgsBuilder::new("https://youtube.com/watch?v=test").with_js_runtimes(
-            vec![
+        let builder =
+            YtDlpArgsBuilder::new("https://youtube.com/watch?v=test").with_js_runtimes(vec![
                 ("deno".to_string(), "/usr/local/bin/deno".to_string()),
                 ("quickjs".to_string(), "/usr/local/bin/qjs".to_string()),
-            ],
-        );
+            ]);
 
         let runtimes = opts_get_all_pairs(&builder.opts, "--js-runtimes");
         assert_eq!(runtimes.len(), 2);
@@ -1045,8 +1047,8 @@ mod tests {
 
     #[test]
     fn test_builder_with_js_runtimes_empty() {
-        let builder = YtDlpArgsBuilder::new("https://youtube.com/watch?v=test")
-            .with_js_runtimes(vec![]);
+        let builder =
+            YtDlpArgsBuilder::new("https://youtube.com/watch?v=test").with_js_runtimes(vec![]);
 
         assert!(opts_get_all_pairs(&builder.opts, "--js-runtimes").is_empty());
     }

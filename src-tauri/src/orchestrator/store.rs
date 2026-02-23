@@ -151,7 +151,8 @@ struct JobRow {
 impl JobRow {
     fn into_job(self) -> Option<Job> {
         let request: DownloadRequest = serde_json::from_str(&self.request_json).ok()?;
-        let status: JobStatus = serde_json::from_str(&self.status_json).unwrap_or(JobStatus::Queued);
+        let status: JobStatus =
+            serde_json::from_str(&self.status_json).unwrap_or(JobStatus::Queued);
         let temp_files: Vec<String> =
             serde_json::from_str(&self.temp_files_json).unwrap_or_default();
 

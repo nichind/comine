@@ -97,7 +97,10 @@ fn is_ffprobe_file(name: &str) -> bool {
     (name.ends_with("/ffprobe") || name == "ffprobe") && !name.ends_with(".exe")
 }
 
-pub async fn check_ffmpeg(app: AppHandle, check_updates: Option<bool>) -> Result<DependencyStatus, String> {
+pub async fn check_ffmpeg(
+    app: AppHandle,
+    check_updates: Option<bool>,
+) -> Result<DependencyStatus, String> {
     let ffmpeg_path = match resolve_ffmpeg_path(&app) {
         Some(path) => path,
         None => {

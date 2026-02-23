@@ -35,10 +35,7 @@
   }
 </script>
 
-<PageShell
-  scrollMode="scroll-area"
-  preserveScrollKey="info"
->
+<PageShell scrollMode="scroll-area" preserveScrollKey="info">
   {#snippet header()}
     <PageHeader title={$t('info.title')} subtitle={$t('info.subtitle')} />
   {/snippet}

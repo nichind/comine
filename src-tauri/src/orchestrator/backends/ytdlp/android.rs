@@ -8,14 +8,14 @@ use tracing::info;
 use super::common::{
     apply_metadata_event, normalize_url_for_ytdlp, ProgressTracker, YtDlpArgsBuilder,
 };
-use crate::orchestrator::backends::aria2::parse_aria2_progress_line;
 use super::json::{parse_ytdlp_output, PaginationContext};
 use super::shared;
 use crate::orchestrator::backends::android_jni::{
-    cancel_download_jni, cancel_resolve_jni, get_jni_env, get_ytdlp_class,
-    pause_download_jni, register_listener, remove_listener, start_android_job_jni,
-    start_resolve_jni, wait_for_jni_ready, AndroidEvent,
+    cancel_download_jni, cancel_resolve_jni, get_jni_env, get_ytdlp_class, pause_download_jni,
+    register_listener, remove_listener, start_android_job_jni, start_resolve_jni,
+    wait_for_jni_ready, AndroidEvent,
 };
+use crate::orchestrator::backends::aria2::parse_aria2_progress_line;
 use crate::orchestrator::backends::{
     resolve_effective_proxy, Backend, BackendCapabilities, SpawnContext, StreamingResolveHandle,
 };

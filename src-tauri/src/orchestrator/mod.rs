@@ -235,9 +235,7 @@ pub async fn restore_history_from_frontend(
 }
 
 #[tauri::command]
-pub async fn get_app_stats(
-    state: State<'_, Arc<JobManager>>,
-) -> Result<types::AppStats, String> {
+pub async fn get_app_stats(state: State<'_, Arc<JobManager>>) -> Result<types::AppStats, String> {
     Ok(state.stats.get().await)
 }
 
@@ -283,7 +281,10 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
     let manager_clone = Arc::clone(&manager);
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
-        manager_clone.stats.backfill_from_history(&manager_clone.history).await;
+        manager_clone
+            .stats
+            .backfill_from_history(&manager_clone.history)
+            .await;
         manager_clone.stats.start(app_clone.clone());
         if let Some(aria2) = crate::orchestrator::backends::aria2::Aria2Backend::new(&app_clone) {
             manager_clone.register_backend(Arc::new(aria2)).await;

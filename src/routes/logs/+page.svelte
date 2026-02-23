@@ -12,7 +12,11 @@
   import Button from '$lib/components/ui/Button.svelte';
   import VirtualList from '$lib/components/media/VirtualList.svelte';
   import { formatSize } from '$lib/utils/format';
-  import { isDesktop as checkIsDesktop, isAndroid as checkIsAndroid, shareLogs as androidShareLogs } from '$lib/utils/android';
+  import {
+    isDesktop as checkIsDesktop,
+    isAndroid as checkIsAndroid,
+    shareLogs as androidShareLogs,
+  } from '$lib/utils/android';
 
   const ESTIMATED_HEIGHT_DESKTOP = 28;
   const ESTIMATED_HEIGHT_MOBILE = 48;
@@ -308,7 +312,14 @@
             </button>
           {/if}
           {#if isAndroidDevice}
-            <button class="action-btn" onclick={async () => { const text = await logs.exportAsText(); androidShareLogs(text); }} use:tooltip={'Share logs'}>
+            <button
+              class="action-btn"
+              onclick={async () => {
+                const text = await logs.exportAsText();
+                androidShareLogs(text);
+              }}
+              use:tooltip={'Share logs'}
+            >
               <Icon name="link2" size={16} />
             </button>
           {/if}

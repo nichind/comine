@@ -176,7 +176,7 @@ async function handleBroadcasts(showNotification: ShowNotificationFn): Promise<v
       if (dismissed.includes(bc.id) || activeBroadcastNotifIds.has(bc.id)) continue;
 
       const notifId = showNotification({
-        title: bc.title || getBroadcastTitle(bc.broadcastType),
+        title: bc.title || getBroadcastTitle(bc.type),
         body: bc.message,
         thumbnail: bc.icon ?? undefined,
         duration: 0,

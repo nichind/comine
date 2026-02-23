@@ -79,7 +79,10 @@ pub async fn self_update_ytdlp(app: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn check_ffmpeg(app: AppHandle, check_updates: Option<bool>) -> Result<DependencyStatus, String> {
+pub async fn check_ffmpeg(
+    app: AppHandle,
+    check_updates: Option<bool>,
+) -> Result<DependencyStatus, String> {
     ffmpeg::check_ffmpeg(app, check_updates).await
 }
 
@@ -97,7 +100,10 @@ pub async fn uninstall_ffmpeg(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn check_aria2(app: AppHandle, check_updates: Option<bool>) -> Result<DependencyStatus, String> {
+pub async fn check_aria2(
+    app: AppHandle,
+    check_updates: Option<bool>,
+) -> Result<DependencyStatus, String> {
     aria2::check_aria2(app, check_updates).await
 }
 
@@ -115,7 +121,10 @@ pub async fn uninstall_aria2(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn check_deno(app: AppHandle, check_updates: Option<bool>) -> Result<DependencyStatus, String> {
+pub async fn check_deno(
+    app: AppHandle,
+    check_updates: Option<bool>,
+) -> Result<DependencyStatus, String> {
     deno::check_deno(app, check_updates).await
 }
 
@@ -133,7 +142,10 @@ pub async fn uninstall_deno(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn check_quickjs(app: AppHandle, check_updates: Option<bool>) -> Result<DependencyStatus, String> {
+pub async fn check_quickjs(
+    app: AppHandle,
+    check_updates: Option<bool>,
+) -> Result<DependencyStatus, String> {
     quickjs::check_quickjs(app, check_updates).await
 }
 
@@ -151,7 +163,10 @@ pub async fn uninstall_quickjs(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn check_lux(app: AppHandle, check_updates: Option<bool>) -> Result<DependencyStatus, String> {
+pub async fn check_lux(
+    app: AppHandle,
+    check_updates: Option<bool>,
+) -> Result<DependencyStatus, String> {
     lux::check_lux(app, check_updates).await
 }
 

@@ -185,7 +185,10 @@ async fn fetch_latest_version(proxy_config: &ProxyConfig) -> String {
     }
 }
 
-pub async fn check_quickjs(app: AppHandle, check_updates: Option<bool>) -> Result<DependencyStatus, String> {
+pub async fn check_quickjs(
+    app: AppHandle,
+    check_updates: Option<bool>,
+) -> Result<DependencyStatus, String> {
     #[cfg(target_os = "android")]
     {
         let _ = check_updates;
@@ -197,45 +200,54 @@ pub async fn check_quickjs(app: AppHandle, check_updates: Option<bool>) -> Resul
 
     #[cfg(not(target_os = "android"))]
     {
-    let quickjs_path = match resolve_quickjs_path(&app) {
-        Some(path) => path,
-        None => return Ok(DependencyStatus::not_installed()),
-    };
+        let quickjs_path = match resolve_quickjs_path(&app) {
+            Some(path) => path,
+            None => return Ok(DependencyStatus::not_installed()),
+        };
 
-    match verify_quickjs(&quickjs_path).await {
-        Ok(()) => {
-            let disk_size = tokio::fs::metadata(&quickjs_path)
-                .await
-                .ok()
-                .map(|m| m.len());
+        match verify_quickjs(&quickjs_path).await {
+            Ok(()) => {
+                let disk_size = tokio::fs::metadata(&quickjs_path)
+                    .await
+                    .ok()
+                    .map(|m| m.len());
 
-            let version = match run_capture_async(&quickjs_path, &["-h"]).await {
-                Ok(output) if output.status_code == Some(0) => {
-                    let text = format!("{}\n{}", output.stdout, output.stderr);
-                    let re = Regex::new(r"QuickJS version\s+([0-9]{4}-[0-9]{2}-[0-9]{2})").ok();
-                    re.and_then(|re| re.captures(&text))
-                        .and_then(|c| c.get(1))
-                        .map(|m| m.as_str().to_string())
-                        .unwrap_or_else(|| "installed".to_string())
-                }
-                _ => "installed".to_string(),
-            };
+                let version = match run_capture_async(&quickjs_path, &["-h"]).await {
+                    Ok(output) if output.status_code == Some(0) => {
+                        let text = format!("{}\n{}", output.stdout, output.stderr);
+                        let re = Regex::new(r"QuickJS version\s+([0-9]{4}-[0-9]{2}-[0-9]{2})").ok();
+                        re.and_then(|re| re.captures(&text))
+                            .and_then(|c| c.get(1))
+                            .map(|m| m.as_str().to_string())
+                            .unwrap_or_else(|| "installed".to_string())
+                    }
+                    _ => "installed".to_string(),
+                };
 
-            let update_available = if check_updates.unwrap_or(false) {
-                let latest = fetch_latest_version(&ProxyConfig::default()).await;
-                if version != "installed" && crate::deps::updater::is_remote_newer(&latest, &version) { Some(latest) } else { None }
-            } else {
-                None
-            };
+                let update_available = if check_updates.unwrap_or(false) {
+                    let latest = fetch_latest_version(&ProxyConfig::default()).await;
+                    if version != "installed"
+                        && crate::deps::updater::is_remote_newer(&latest, &version)
+                    {
+                        Some(latest)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
-            Ok(
-                DependencyStatus::installed(version, quickjs_path.to_string_lossy().to_string())
+                Ok(
+                    DependencyStatus::installed(
+                        version,
+                        quickjs_path.to_string_lossy().to_string(),
+                    )
                     .with_update(update_available)
                     .with_disk_size(disk_size),
-            )
+                )
+            }
+            Err(_) => Ok(DependencyStatus::not_installed()),
         }
-        Err(_) => Ok(DependencyStatus::not_installed()),
-    }
     }
 }
 
@@ -251,48 +263,48 @@ pub async fn install_quickjs(
 
     #[cfg(not(target_os = "android"))]
     {
-    let config = proxy_config.unwrap_or_default();
-    let version = fetch_latest_version(&config).await;
-    info!("QuickJS latest version: {}", version);
+        let config = proxy_config.unwrap_or_default();
+        let version = fetch_latest_version(&config).await;
+        info!("QuickJS latest version: {}", version);
 
-    let quickjs_path = get_quickjs_path(&app)?;
-    let bin_dir = get_bin_dir(&app)?;
+        let quickjs_path = get_quickjs_path(&app)?;
+        let bin_dir = get_bin_dir(&app)?;
 
-    #[cfg(target_os = "windows")]
-    let dest_name = "qjs.exe";
-    #[cfg(not(target_os = "windows"))]
-    let dest_name = "qjs";
+        #[cfg(target_os = "windows")]
+        let dest_name = "qjs.exe";
+        #[cfg(not(target_os = "windows"))]
+        let dest_name = "qjs";
 
-    installer::run_install(
-        &app,
-        InstallPlan {
-            dep_name: "quickjs",
-            display_name: "QuickJS",
-            event_name: EVENT_PROGRESS,
-            version: version.clone(),
-            download_urls: build_download_urls(&version),
-            checksum_urls: vec![],
-            checksum_filename_hint: Some("qjs"),
-            temp_archive: bin_dir.join(format!("quickjs_{}.zip", uuid::Uuid::new_v4())),
-            binary_path: quickjs_path,
-            extract: ExtractStrategy::Zip {
-                matcher: is_quickjs_file,
-                dest_name,
+        installer::run_install(
+            &app,
+            InstallPlan {
+                dep_name: "quickjs",
+                display_name: "QuickJS",
+                event_name: EVENT_PROGRESS,
+                version: version.clone(),
+                download_urls: build_download_urls(&version),
+                checksum_urls: vec![],
+                checksum_filename_hint: Some("qjs"),
+                temp_archive: bin_dir.join(format!("quickjs_{}.zip", uuid::Uuid::new_v4())),
+                binary_path: quickjs_path,
+                extract: ExtractStrategy::Zip {
+                    matcher: is_quickjs_file,
+                    dest_name,
+                },
+                extra_executables: vec![],
+                verify_args: vec![],
+                custom_verify: Some(Box::new(|path| {
+                    let path = path.to_path_buf();
+                    Box::pin(async move {
+                        verify_quickjs(&path)
+                            .await
+                            .map_err(|e| format!("QuickJS verification failed: {}", e))
+                    })
+                })),
             },
-            extra_executables: vec![],
-            verify_args: vec![],
-            custom_verify: Some(Box::new(|path| {
-                let path = path.to_path_buf();
-                Box::pin(async move {
-                    verify_quickjs(&path)
-                        .await
-                        .map_err(|e| format!("QuickJS verification failed: {}", e))
-                })
-            })),
-        },
-        &config,
-    )
-    .await
+            &config,
+        )
+        .await
     }
 }
 
@@ -305,14 +317,14 @@ pub async fn uninstall_quickjs(app: AppHandle) -> Result<(), String> {
 
     #[cfg(not(target_os = "android"))]
     {
-    let quickjs_path = get_quickjs_path(&app)?;
+        let quickjs_path = get_quickjs_path(&app)?;
 
-    if quickjs_path.exists() {
-        tokio::fs::remove_file(&quickjs_path)
-            .await
-            .map_err(|e| format!("Failed to remove QuickJS: {}", e))?;
-    }
+        if quickjs_path.exists() {
+            tokio::fs::remove_file(&quickjs_path)
+                .await
+                .map_err(|e| format!("Failed to remove QuickJS: {}", e))?;
+        }
 
-    Ok(())
+        Ok(())
     }
 }

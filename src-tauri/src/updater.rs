@@ -76,7 +76,9 @@ async fn build_updater(
     info!("Update endpoint: {url}");
 
     app.updater_builder()
-        .endpoints(vec![url.parse().map_err(|e| format!("Invalid URL: {e}"))?])
+        .endpoints(vec![url
+            .parse()
+            .map_err(|e| format!("Invalid URL: {e}"))?])
         .map_err(|e| format!("Failed to configure updater: {e}"))?
         .build()
         .map_err(|e| format!("Failed to build updater: {e}"))
@@ -318,7 +320,10 @@ async fn stream_download(
         serde_json::json!({ "event": "finished" }),
     );
 
-    info!("[{PLATFORM}] Downloaded {downloaded} bytes to {}", dest.display());
+    info!(
+        "[{PLATFORM}] Downloaded {downloaded} bytes to {}",
+        dest.display()
+    );
     Ok(downloaded)
 }
 
@@ -363,12 +368,14 @@ fn install_linux_update(
         LinuxInstallType::AppImage(current) => {
             use std::os::unix::fs::PermissionsExt;
             let dest = std::path::PathBuf::from(current);
-            std::fs::copy(path, &dest)
-                .map_err(|e| format!("Failed to replace AppImage: {e}"))?;
+            std::fs::copy(path, &dest).map_err(|e| format!("Failed to replace AppImage: {e}"))?;
             std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))
                 .map_err(|e| format!("Failed to set permissions: {e}"))?;
             let _ = std::fs::remove_file(path);
-            info!("[Linux] AppImage replaced at {}, restarting", dest.display());
+            info!(
+                "[Linux] AppImage replaced at {}, restarting",
+                dest.display()
+            );
             app.restart();
         }
         _ => {
@@ -457,8 +464,7 @@ pub async fn download_and_install_update(
         .path()
         .app_cache_dir()
         .map_err(|e| format!("Failed to get cache dir: {e}"))?;
-    std::fs::create_dir_all(&cache_dir)
-        .map_err(|e| format!("Failed to create cache dir: {e}"))?;
+    std::fs::create_dir_all(&cache_dir).map_err(|e| format!("Failed to create cache dir: {e}"))?;
 
     #[cfg(target_os = "linux")]
     {
