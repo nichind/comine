@@ -5,7 +5,7 @@ Made with Tauri, Svelte and Rust.
 
 > comine still in early development, expect bugs and missing features. Please report any issues you find on the [issues page](https://github.com/nichind/comine/issues). Pull requests are not accepted until the codebase is stabilized, request features on the issues page.
 
-<img width="750" align="center" alt="App preview" src="https://github.com/user-attachments/assets/d0c95796-99f3-4f98-9ab8-d53c6fde2019" />
+<img width="750" align="center" alt="App preview" src="https://github.com/user-attachments/assets/0bd45692-a0e1-4ab8-a1a7-efaed637545b" />
 
 ## Install 
 
