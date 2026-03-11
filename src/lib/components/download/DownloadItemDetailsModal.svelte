@@ -7,7 +7,7 @@
   import type { UnifiedDownloadItem } from '$lib/stores/downloadsState.svelte';
   import { formatSize, formatSpeed } from '$lib/utils/format';
   import { revealItemInDir } from '@tauri-apps/plugin-opener';
-  import { isAndroid } from '$lib/utils/android';
+  import { isMobile } from '$lib/utils/android';
   import { invoke } from '@tauri-apps/api/core';
   import { tick } from 'svelte';
   import type { MediaTechnicalInfo, MediaStreamInfo } from '$lib/bindings';
@@ -86,7 +86,7 @@
   }
 
   async function openFileLocation(filePath: string) {
-    if (isAndroid()) return;
+    if (isMobile()) return;
     try {
       await revealItemInDir(filePath);
     } catch {}
@@ -126,7 +126,7 @@
   $effect(() => {
     if (!open || !item) return;
 
-    if (isAndroid()) return;
+    if (isMobile()) return;
     if (!item.filePath) return;
 
     if (lastTechPath === item.filePath && (technicalInfo || technicalError)) return;
@@ -311,7 +311,7 @@
           </div>
         {/if}
 
-        {#if item.filePath && !isAndroid()}
+        {#if item.filePath && !isMobile()}
           <div class="section-title">{$t('downloads.details.media.title')}</div>
 
           {#if technicalLoading}
@@ -434,7 +434,7 @@
             <button
               class="action"
               onclick={() => openFileLocation(item.filePath!)}
-              disabled={isAndroid()}
+              disabled={isMobile()}
             >
               <Icon name="folder" size={14} />
               <span>{$t('downloads.openFolder')}</span>

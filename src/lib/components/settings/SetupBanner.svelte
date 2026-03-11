@@ -1,7 +1,7 @@
 <script lang="ts">
   import { deps, type DependencyName } from '$lib/stores/deps';
   import { t } from '$lib/i18n';
-  import { isAndroid } from '$lib/utils/android';
+  import { isMobile } from '$lib/utils/android';
   import Icon from '$lib/components/ui/Icon.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { toast, updateToast, dismissToast } from '$lib/components/ui/Toast.svelte';
@@ -98,7 +98,7 @@
   });
 
   let showBanner = $derived(
-    !isAndroid() && (missingDeps.length > 0 || installingCount > 0 || $deps.error)
+    !isMobile() && (missingDeps.length > 0 || installingCount > 0 || $deps.error)
   );
 </script>
 

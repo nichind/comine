@@ -110,6 +110,24 @@ fn build_aria2_args(req: &DownloadRequest, config: &Aria2Config) -> Vec<Vec<Stri
         args.push(vec!["--enable-dht=true".to_string()]);
         args.push(vec!["--bt-enable-lpd=true".to_string()]);
         args.push(vec!["--seed-ratio".to_string(), "0.0".to_string()]);
+
+        // Prioritize the beginning and end of each file so that media players
+        // can determine codec/duration information quickly (streaming playback).
+        args.push(vec![
+            "--bt-prioritize-piece=head=100M,tail=1M".to_string(),
+        ]);
+
+        // Selective file download — only fetch the chosen indices (1-based).
+        if let Some(ref selected) = req.options.torrent_selected_files {
+            if !selected.is_empty() {
+                let indices = selected
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                args.push(vec![format!("--select-file={}", indices)]);
+            }
+        }
     }
 
     args.push(vec![req.url.clone()]);
@@ -210,7 +228,7 @@ fn parse_eta_str(s: &str) -> Option<u64> {
 }
 
 pub struct Aria2Backend {
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     binary_path: PathBuf,
 }
 
@@ -314,14 +332,14 @@ pub fn cancel_aria2(job_id: &str) -> Result<(), String> {
 mod exec {
     use super::*;
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     pub fn create_backend(app: &AppHandle) -> Option<Aria2Backend> {
         let binary_path = crate::deps::resolve_aria2_path(app)?;
         info!("aria2 backend using binary: {:?}", binary_path);
         Some(Aria2Backend { binary_path })
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     pub async fn run_aria2(
         backend: &Aria2Backend,
         ctx: SpawnContext,
@@ -441,7 +459,7 @@ mod exec {
         Ok(final_path)
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     pub(super) fn extract_output_path(line: &str) -> Option<String> {
         if line.contains("Download complete:") {
             let path = line.split("Download complete:").nth(1)?.trim();
@@ -460,15 +478,26 @@ mod exec {
         None
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     async fn graceful_shutdown(child: &mut tokio::process::Child) {
         crate::orchestrator::backends::graceful_shutdown(child, "aria2").await;
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     pub fn create_backend(_app: &AppHandle) -> Option<Aria2Backend> {
-        info!("aria2 backend initialized for Android");
+        info!("aria2 backend initialized for mobile");
         Some(Aria2Backend {})
+    }
+
+    #[cfg(target_os = "ios")]
+    pub async fn run_aria2(
+        _backend: &Aria2Backend,
+        _ctx: SpawnContext,
+        _args: Vec<Vec<String>>,
+    ) -> Result<String, BackendError> {
+        Err(BackendError::Other(
+            "aria2 downloads are not supported on iOS".to_string(),
+        ))
     }
 
     #[cfg(target_os = "android")]
@@ -908,7 +937,7 @@ mod tests {
         assert_eq!(config.speed_limit, Some(512_000));
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     #[test]
     fn test_extract_output_path_basic() {
         assert_eq!(
@@ -917,7 +946,7 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     #[test]
     fn test_extract_output_path_with_notice() {
         assert_eq!(
@@ -926,7 +955,7 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     #[test]
     fn test_extract_output_path_no_match() {
         assert_eq!(exec::extract_output_path("Some random output line"), None);

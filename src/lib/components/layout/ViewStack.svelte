@@ -3,7 +3,7 @@
 
   export interface ViewInstance {
     id: string;
-    type: 'home' | 'video' | 'playlist' | 'channel';
+    type: 'home' | 'video' | 'playlist' | 'channel' | 'torrent-search' | 'torrent-detail';
     url?: string;
     cachedData?: {
       title?: string;
@@ -12,6 +12,9 @@
       duration?: number;
       entryCount?: number;
     };
+    torrentQuery?: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    torrentResult?: any;
     mountedAt: number;
   }
 </script>
@@ -37,6 +40,9 @@
   function getViewId(view: ViewState, index: number): string {
     if (view.type === 'home') return 'home-0';
     if (view.url) return `${view.type}-${view.url}`;
+    if (view.type === 'torrent-search') return `torrent-search-${index}-${view.torrentQuery ?? ''}`;
+    if (view.type === 'torrent-detail')
+      return `torrent-detail-${index}-${view.torrentResult?.title ?? ''}`;
     return `${view.type}-${index}-${Date.now()}`;
   }
 
@@ -48,6 +54,8 @@
       type: current.type,
       url: current.url,
       cachedData: current.cachedData,
+      torrentQuery: current.torrentQuery,
+      torrentResult: current.torrentResult,
       mountedAt: Date.now(),
     };
   }
@@ -68,6 +76,8 @@
           type: topView.type,
           url: topView.url,
           cachedData: topView.cachedData,
+          torrentQuery: topView.torrentQuery,
+          torrentResult: topView.torrentResult,
           mountedAt: Date.now(),
         };
       }

@@ -18,6 +18,9 @@ export type HistoryItem = Omit<
   | 'isFavourite'
   | 'isDirectory'
   | 'fileCount'
+  | 'podcastPath'
+  | 'podcastSubtitlePath'
+  | 'podcastStatus'
 > & {
   type: 'video' | 'audio' | 'image' | 'file' | 'gallery' | 'torrent';
   authorUrl?: string;
@@ -29,6 +32,9 @@ export type HistoryItem = Omit<
   isFavourite?: boolean;
   isDirectory?: boolean;
   fileCount?: number;
+  podcastPath?: string;
+  podcastSubtitlePath?: string;
+  podcastStatus?: string;
 };
 
 export type FilterType =
@@ -76,6 +82,9 @@ function normalizeItem(raw: BindingHistoryItem): HistoryItem {
     isFavourite: raw.isFavourite ?? false,
     isDirectory: raw.isDirectory ?? false,
     fileCount: raw.fileCount ?? undefined,
+    podcastPath: raw.podcastPath ?? undefined,
+    podcastSubtitlePath: raw.podcastSubtitlePath ?? undefined,
+    podcastStatus: raw.podcastStatus ?? undefined,
   };
 }
 
@@ -101,6 +110,9 @@ function toBackendItem(item: HistoryItem): BindingHistoryItem {
     isFavourite: item.isFavourite ?? false,
     isDirectory: item.isDirectory ?? false,
     fileCount: item.fileCount ?? null,
+    podcastPath: item.podcastPath ?? null,
+    podcastSubtitlePath: item.podcastSubtitlePath ?? null,
+    podcastStatus: item.podcastStatus ?? null,
   };
 }
 

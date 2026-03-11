@@ -133,6 +133,26 @@ impl Database {
                 info!("Migration: added is_directory and file_count columns to history");
             }
         }
+
+        // Add podcast columns for auto-podcast generation pipeline
+        let has_podcast_path: bool = conn
+            .prepare("SELECT podcast_path FROM history LIMIT 0")
+            .is_ok();
+
+        if !has_podcast_path {
+            if let Err(e) = conn.execute_batch(
+                "ALTER TABLE history ADD COLUMN podcast_path TEXT;
+                 ALTER TABLE history ADD COLUMN podcast_subtitle_path TEXT;
+                 ALTER TABLE history ADD COLUMN podcast_status TEXT;",
+            ) {
+                warn!(
+                    "Migration: adding podcast columns failed (may already exist): {}",
+                    e
+                );
+            } else {
+                info!("Migration: added podcast_path, podcast_subtitle_path, podcast_status columns to history");
+            }
+        }
     }
 
     fn migrate_from_json(&self, data_dir: &Path) {

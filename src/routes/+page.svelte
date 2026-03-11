@@ -27,8 +27,10 @@
   import type { IconName } from '$lib/components/ui/Icon.svelte';
   import { getPlatformIconFromUrl } from '$lib/components/resolve/utils';
   import Toggle from '$lib/components/ui/Toggle.svelte';
+  import TorrentSearch from '$lib/components/resolve/TorrentSearch.svelte';
+  import TorrentDetail from '$lib/components/resolve/TorrentDetail.svelte';
 
-  import { isAndroid } from '$lib/utils/android';
+  import { isAndroid, isMobile } from '$lib/utils/android';
   import {
     settings,
     settingsReady,
@@ -138,9 +140,9 @@
   let createPresetModalOpen = $state(false);
   let newPresetName = $state('');
 
-  const isAndroidPlatform = isAndroid();
+  const isMobilePlatform = isMobile();
 
-  const browserOptions = isAndroidPlatform
+  const browserOptions = isMobilePlatform
     ? [
         { value: '', label: $t('download.options.noCookies') },
         { value: 'custom', label: $t('download.options.customCookies') },
@@ -158,7 +160,7 @@
       ];
 
   $effect(() => {
-    if (!isAndroidPlatform) return;
+    if (!isMobilePlatform) return;
     if ($settings.cookiesFromBrowser && $settings.cookiesFromBrowser !== 'custom') {
       updateSetting('cookiesFromBrowser', '');
     }
@@ -410,6 +412,12 @@
     });
   }
 
+  function looksLikeUrl(input: string): boolean {
+    return (
+      /^(https?:|magnet:|ftp:)/i.test(input) || /^[a-z0-9][-a-z0-9]*\.[a-z]{2,}/i.test(input)
+    );
+  }
+
   async function quickDownload() {
     if (!url.trim()) {
       status = `⚠️ ${$t('download.placeholder')}`;
@@ -417,6 +425,13 @@
     }
 
     const downloadUrl = url.trim();
+
+    // If input doesn't look like a URL, treat as torrent search query
+    if (!looksLikeUrl(downloadUrl)) {
+      navigation.openTorrentSearch(downloadUrl);
+      return;
+    }
+
     logs.info('download', `Quick download: ${downloadUrl}`);
 
     const fileCheck = isDirectFileUrl(downloadUrl);
@@ -555,6 +570,13 @@
                       <Icon name="alt_arrow_rigth" size={18} />
                     </button>
                   {/if}
+                  <button
+                    class="search-torrent-btn"
+                    onclick={() => navigation.openTorrentSearch(url.trim() || undefined)}
+                    title={$t('torrentSearch.title')}
+                  >
+                    <Icon name="search" size={18} />
+                  </button>
                   <button class="download-btn" onclick={quickDownload} disabled={!url.trim()}>
                     <Icon name="download" size={20} />
                   </button>
@@ -846,6 +868,16 @@
                 onBack={handleBack}
                 onOpenChannel={handleOpenChannelFromVideo}
                 prefetchedInfo={view.cachedData}
+              />
+            {:else if view.type === 'torrent-search'}
+              <TorrentSearch
+                initialQuery={view.torrentQuery}
+                onBack={() => navigation.pop()}
+              />
+            {:else if view.type === 'torrent-detail'}
+              <TorrentDetail
+                result={view.torrentResult}
+                onBack={() => navigation.pop()}
               />
             {/if}
           </div>
@@ -1459,6 +1491,26 @@
   .customize-btn:hover {
     background: var(--accent-alpha, rgba(99, 102, 241, 0.25));
     color: var(--accent, rgb(99, 102, 241));
+  }
+
+  .search-torrent-btn {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.5);
+    border: none;
+    border-radius: var(--radius, 8px);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .search-torrent-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
   }
 
   :global(.rotate-180) {

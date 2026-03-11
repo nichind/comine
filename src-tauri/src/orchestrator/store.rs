@@ -188,6 +188,7 @@ impl JobRow {
             playlist_title: None,
             playlist_index: None,
             content_type: None,
+            skip_proxy: false,
         })
     }
 }

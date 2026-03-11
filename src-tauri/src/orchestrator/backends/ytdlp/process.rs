@@ -13,7 +13,7 @@ use tracing::{debug, info, warn};
 
 use super::common::{
     apply_metadata_event, normalize_url_for_ytdlp, parse_ytdlp_error, parse_ytdlp_line_event,
-    PreparedCookieProxy, ProgressTracker, YtDlpArgsBuilder, YtdlpEvent,
+    stderr_is_proxy_error, PreparedCookieProxy, ProgressTracker, YtDlpArgsBuilder, YtdlpEvent,
 };
 use super::shared;
 use crate::orchestrator::backends::apply_args_to_command;
@@ -240,8 +240,20 @@ impl YtdlpBackend {
                 .unwrap_or_else(|| p.to_string_lossy().to_string())
         });
 
+        // If skip_proxy is set (e.g. after a ProxyError retry), omit the proxy arg entirely.
+        let proxy_url = if ctx.job.skip_proxy {
+            info!(target: "ytdlp", "skip_proxy=true for job {}: omitting --proxy argument", ctx.job.id);
+            None
+        } else {
+            prepared.proxy_url
+        };
+
+        // Keep a copy of the proxy URL string for the circuit breaker — with_proxy()
+        // takes ownership so we save it before the builder consumes the value.
+        let proxy_url_for_cb = proxy_url.clone();
+
         let option_groups = YtDlpArgsBuilder::new(&req.url)
-            .with_proxy(prepared.proxy_url)
+            .with_proxy(proxy_url)
             .with_cookies(prepared.cookies_from_browser, prepared.cookie_arg)
             .with_js_runtimes(self.js_runtimes())
             .build_download(req, ctx.effective_speed_limit, ffmpeg_location);
@@ -507,6 +519,25 @@ impl YtdlpBackend {
                 };
                 guard.iter().cloned().collect::<Vec<_>>().join("\n")
             };
+
+            // Check for proxy errors before any other handling. Return a ProxyError so
+            // the manager can retry without proxy instead of falling back to a wrong backend.
+            if stderr_is_proxy_error(&tail) {
+                warn!(target: "ytdlp",
+                    "Proxy error detected in yt-dlp stderr for job {}. Signalling ProxyError for retry without proxy.",
+                    ctx.job.id
+                );
+                // Feed the circuit breaker — use the proxy URL that was actually passed to
+                // yt-dlp so the circuit breaker tracks the right entry.
+                #[cfg(desktop)]
+                if let Some(ref purl) = proxy_url_for_cb {
+                    crate::proxy::record_proxy_failure(purl);
+                }
+                return Err(BackendError::ProxyError(
+                    "yt-dlp proxy connection failed. Will retry without proxy.".to_string(),
+                ));
+            }
+
             let tail_msg = if tail.trim().is_empty() {
                 String::new()
             } else {

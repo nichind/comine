@@ -43,7 +43,7 @@ pub use common::{
     resolve_http_file, DIRECT_FILE_EXTENSIONS,
 };
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub use common::{apply_args_to_command, graceful_shutdown};
 
 #[cfg(target_os = "android")]

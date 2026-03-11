@@ -594,6 +594,10 @@ pub struct DownloadOptions {
     pub use_aria2: bool,
     #[serde(default)]
     pub force_keyframes_at_cuts: bool,
+    /// Torrent file indices to download (1-based). When set, only the selected
+    /// files are downloaded. Passed to aria2 as `--select-file=<indices>`.
+    #[serde(default)]
+    pub torrent_selected_files: Option<Vec<u32>>,
 }
 
 fn default_true() -> bool {
@@ -622,6 +626,7 @@ impl Default for DownloadOptions {
             clip_ranges: None,
             use_aria2: false,
             force_keyframes_at_cuts: false,
+            torrent_selected_files: None,
         }
     }
 }
@@ -673,6 +678,10 @@ pub struct Job {
     pub playlist_index: Option<u32>,
     #[serde(default)]
     pub content_type: Option<ContentType>,
+    /// When true, the yt-dlp backend should omit the --proxy argument on the next attempt.
+    /// Set after a ProxyError to retry the download over a direct connection.
+    #[serde(default)]
+    pub skip_proxy: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -792,6 +801,8 @@ pub enum BackendError {
     Paused,
     /// A non-terminal job with the same URL already exists.
     DuplicateUrl(String),
+    /// Proxy connection failed — retrying without proxy is appropriate.
+    ProxyError(String),
     Other(String),
 }
 
@@ -803,7 +814,12 @@ impl BackendError {
                 | BackendError::ServerError(_)
                 | BackendError::RateLimited(_)
                 | BackendError::ProcessError(_)
+                | BackendError::ProxyError(_)
         )
+    }
+
+    pub fn is_proxy_error(&self) -> bool {
+        matches!(self, BackendError::ProxyError(_))
     }
 }
 
@@ -823,6 +839,7 @@ impl std::fmt::Display for BackendError {
             BackendError::Cancelled => write!(f, "Cancelled"),
             BackendError::Paused => write!(f, "Paused"),
             BackendError::DuplicateUrl(id) => write!(f, "Duplicate URL (active job: {})", id),
+            BackendError::ProxyError(s) => write!(f, "Proxy error: {}", s),
             BackendError::Other(s) => write!(f, "{}", s),
         }
     }
@@ -1029,6 +1046,61 @@ pub struct HistoryItem {
     pub is_directory: bool,
     #[serde(default)]
     pub file_count: Option<u32>,
+    pub podcast_path: Option<String>,
+    pub podcast_subtitle_path: Option<String>,
+    /// "generating" | "completed" | "failed"
+    pub podcast_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct PodcastSettings {
+    pub enabled: bool,
+    pub subtitle_lang: String,
+    pub tts_voice: String,
+    pub tts_rate: String,
+    pub claude_prompt: Option<String>,
+    pub mastering_enabled: bool,
+    pub auto_generate: bool,
+}
+
+impl Default for PodcastSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            subtitle_lang: "en".into(),
+            tts_voice: "en-US-AndrewMultilingualNeural".into(),
+            tts_rate: "+0%".into(),
+            claude_prompt: None,
+            mastering_enabled: true,
+            auto_generate: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct PodcastResult {
+    pub podcast_path: String,
+    pub subtitle_path: Option<String>,
+    pub transcript_path: String,
+    pub script_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-export", derive(TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct PodcastProgress {
+    pub history_id: String,
+    /// "fetching_transcript" | "generating_script" | "narrating" | "mastering" | "complete" | "failed"
+    pub step: String,
+    pub progress: f64,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

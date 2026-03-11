@@ -21,12 +21,12 @@ fn get_logs_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 #[tauri::command]
 pub async fn get_log_file_path(app: AppHandle) -> Result<String, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
-        return Err("Log files not supported on Android".to_string());
+        return Err("Log files not supported on mobile".to_string());
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let logs_dir = get_logs_dir(&app)?;
         let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
@@ -41,12 +41,12 @@ pub async fn append_log(
     session_file: String,
     entry: String,
 ) -> Result<(), String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         return Ok(());
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let path = std::path::Path::new(&session_file);
         let mut file = std::fs::OpenOptions::new()
@@ -62,12 +62,12 @@ pub async fn append_log(
 
 #[tauri::command]
 pub async fn cleanup_old_logs(app: AppHandle, keep_sessions: usize) -> Result<usize, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         return Ok(0);
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let logs_dir = get_logs_dir(&app)?;
 
@@ -103,12 +103,12 @@ pub async fn cleanup_old_logs(app: AppHandle, keep_sessions: usize) -> Result<us
 
 #[tauri::command]
 pub async fn open_logs_folder(app: AppHandle) -> Result<(), String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
-        return Err("Not supported on Android".to_string());
+        return Err("Not supported on mobile".to_string());
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let logs_dir = get_logs_dir(&app)?;
 
@@ -142,12 +142,12 @@ pub async fn open_logs_folder(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn get_logs_folder_path(app: AppHandle) -> Result<String, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
-        return Err("Not supported on Android".to_string());
+        return Err("Not supported on mobile".to_string());
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let logs_dir = get_logs_dir(&app)?;
         Ok(logs_dir.to_string_lossy().to_string())
@@ -160,12 +160,12 @@ pub async fn read_session_logs(
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<Vec<String>, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         return Ok(vec![]);
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let path = std::path::Path::new(&session_file);
         if !path.exists() {
@@ -191,12 +191,12 @@ pub async fn read_session_logs(
 
 #[tauri::command]
 pub async fn get_session_log_count(session_file: String) -> Result<usize, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         return Ok(0);
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let path = std::path::Path::new(&session_file);
         if !path.exists() {

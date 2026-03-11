@@ -1,4 +1,4 @@
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
@@ -27,7 +27,7 @@ pub struct DiskSpaceInfo {
     pub used_percent: f64,
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub fn get_disk_space_for_path(path: &str) -> Option<DiskSpaceInfo> {
     use sysinfo::Disks;
 
@@ -66,7 +66,7 @@ pub fn get_disk_space_for_path(path: &str) -> Option<DiskSpaceInfo> {
     })
 }
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 pub fn get_disk_space_for_path(path: &str) -> Option<DiskSpaceInfo> {
     use std::ffi::CString;
     use std::mem::MaybeUninit;
@@ -181,7 +181,7 @@ pub fn http_client_with_proxy(proxy_url: Option<&str>) -> Result<reqwest::Client
         .map_err(|e| format!("Failed to create HTTP client: {}", e))
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub async fn get_media_duration(ffprobe_path: &Path, file_path: &str) -> Option<f64> {
     let mut cmd = new_command(ffprobe_path);
     cmd.args([

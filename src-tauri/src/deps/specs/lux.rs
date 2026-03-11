@@ -68,13 +68,13 @@ pub async fn check_lux(
     app: AppHandle,
     check_updates: Option<bool>,
 ) -> Result<DependencyStatus, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         let _ = check_updates;
         return Ok(DependencyStatus::not_installed());
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let lux_path = match resolve_lux_path(&app) {
             Some(path) => path,
@@ -132,7 +132,7 @@ pub async fn check_lux(
     }
 }
 
-#[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+#[cfg(all(desktop, not(target_os = "windows")))]
 async fn extract_tar_gz_lux(
     archive_path: &std::path::Path,
     bin_dir: &std::path::Path,
@@ -181,13 +181,13 @@ pub async fn install_lux(
     app: AppHandle,
     proxy_config: Option<ProxyConfig>,
 ) -> Result<String, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         let _ = proxy_config;
-        return Err("Lux installation on Android is not supported.".to_string());
+        return Err("Lux installation on mobile is not supported.".to_string());
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let config = proxy_config.unwrap_or_default();
         let release = installer::fetch_github_latest_release("iawia002/lux", &config).await?;

@@ -2,6 +2,7 @@ pub mod backends;
 pub mod convert;
 pub mod history;
 pub mod manager;
+pub mod podcast;
 pub mod stats;
 pub mod store;
 pub mod thumbnail;
@@ -300,7 +301,7 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
             ))
             .await;
 
-        #[cfg(not(target_os = "android"))]
+        #[cfg(desktop)]
         {
             match crate::deps::resolve_ytdlp_path(&app_clone) {
                 Some(path) => {
@@ -319,7 +320,7 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
             }
         }
 
-        #[cfg(not(target_os = "android"))]
+        #[cfg(desktop)]
         {
             match crate::deps::resolve_gallery_dl_path(&app_clone) {
                 Some(path) => {

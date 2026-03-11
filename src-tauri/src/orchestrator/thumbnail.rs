@@ -217,14 +217,14 @@ async fn embed_thumbnail_from_url(
         return Err("Empty thumbnail URL".to_string());
     }
 
-    // Android doesn't support thumbnail embedding into media files via ffmpeg.
-    #[cfg(target_os = "android")]
+    // Mobile platforms don't support thumbnail embedding into media files via ffmpeg.
+    #[cfg(mobile)]
     {
         let _ = app;
         return Ok((media_path.to_string(), None));
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         // Skip formats that don't support embedded thumbnails
         let ext = std::path::Path::new(media_path)
@@ -258,7 +258,7 @@ async fn embed_thumbnail_from_url(
     }
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 async fn embed_thumbnail_jpeg_bytes(
     app: &AppHandle,
     media_path: &str,
@@ -502,7 +502,7 @@ pub async fn generate_local_thumbnail(
 
         Ok(format!("file://{}", output_path.to_string_lossy()))
     } else if is_video {
-        #[cfg(not(target_os = "android"))]
+        #[cfg(desktop)]
         {
             use std::process::Stdio;
 
@@ -546,10 +546,10 @@ pub async fn generate_local_thumbnail(
 
             Ok(format!("file://{}", output_path.to_string_lossy()))
         }
-        #[cfg(target_os = "android")]
+        #[cfg(mobile)]
         {
             Err(format!(
-                "Video thumbnail generation not supported on Android"
+                "Video thumbnail generation not supported on mobile"
             ))
         }
     } else {

@@ -18,6 +18,7 @@
   import AccentProvider from '$lib/components/providers/AccentProvider.svelte';
   import SurfaceProvider from '$lib/components/providers/SurfaceProvider.svelte';
   import { toast } from '$lib/components/ui/Toast.svelte';
+  import MediaPlayer from '$lib/components/player/MediaPlayer.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { t } from '$lib/i18n';
   import {
@@ -39,6 +40,7 @@
 
   import {
     isAndroid,
+    isMobile as isMobilePlatform,
     onShareIntent,
     onNavigateTo,
     setupAndroidLogHandler,
@@ -87,7 +89,8 @@
   let appWindow: TauriWindow | null = $state(null);
 
   let isMobile = $derived(
-    $settings.navigationStyle === 'navbar' || ($settings.navigationStyle === 'auto' && isAndroid())
+    $settings.navigationStyle === 'navbar' ||
+      ($settings.navigationStyle === 'auto' && isMobilePlatform())
   );
 
   let hasShownTrayNotification = false;
@@ -236,7 +239,7 @@
         splash.remove();
         ensureAppRootVisible();
       } else {
-        if (!isAndroid()) {
+        if (!isMobilePlatform()) {
           try {
             emit('frontend-ready');
           } catch (e) {}
@@ -300,7 +303,7 @@
 
     setTimeout(async () => {
       await deps.checkAll();
-      if (!isAndroid()) {
+      if (!isMobilePlatform()) {
         await deps.autoInstallBundle();
         checkDiskSpace();
       }
@@ -312,13 +315,13 @@
 
     setupListeners();
 
-    if (!isAndroid()) {
+    if (!isMobilePlatform()) {
       setupKeyboardShortcuts();
     }
 
     setupLogForwarding();
 
-    if (!isAndroid()) {
+    if (!isMobilePlatform()) {
       setupClipboardWatcher();
     }
 
@@ -501,7 +504,7 @@
           return;
         }
 
-        if (!isAndroid()) {
+        if (!isMobilePlatform()) {
           await deps.checkAll();
         }
 
@@ -1047,6 +1050,7 @@
 
   <Toast />
   <NotificationPopup />
+  <MediaPlayer />
 {/if}
 
 <style>

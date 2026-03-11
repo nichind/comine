@@ -120,13 +120,13 @@ pub async fn install_deno(
     app: AppHandle,
     proxy_config: Option<ProxyConfig>,
 ) -> Result<String, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         let _ = proxy_config;
-        return Err("Deno installation on Android is not supported.".to_string());
+        return Err("Deno installation on mobile is not supported.".to_string());
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let download_url = get_download_url();
         if download_url.is_empty() {

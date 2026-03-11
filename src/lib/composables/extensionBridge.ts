@@ -13,7 +13,7 @@ import { toast } from '$lib/components/ui/Toast.svelte';
 import { translate } from '$lib/i18n';
 import { cleanUrl } from '$lib/utils/urlUtils';
 import { openFile } from '$lib/utils/platform';
-import { isAndroid } from '$lib/utils/android';
+import { isMobile } from '$lib/utils/android';
 
 interface ExtensionBridgeOptions {
   getAppWindow: () => TauriWindow | null;
@@ -168,7 +168,7 @@ export async function setupExtensionBridge(opts: ExtensionBridgeOptions): Promis
       const filePath = event.payload;
       logs.info('extension', `Server open request: ${filePath}`);
       try {
-        if (isAndroid()) {
+        if (isMobile()) {
           await openFile(filePath);
         } else {
           await openPath(filePath);

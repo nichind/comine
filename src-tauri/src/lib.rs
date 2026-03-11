@@ -1,7 +1,7 @@
 mod clipboard;
 mod database;
 mod deps;
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 mod discord;
 mod logs;
 mod media_info;
@@ -11,16 +11,17 @@ mod proxy;
 mod server;
 mod store_utils;
 mod thumbnail_color;
-#[cfg(not(target_os = "android"))]
+mod torrent_search;
+#[cfg(desktop)]
 mod tray;
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 mod tray_icon;
 mod types;
 mod updater;
 mod url_utils;
 mod utils;
 mod window_effects;
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub(crate) mod window_manager;
 
 use tracing::info;
@@ -52,7 +53,7 @@ async fn detect_system_proxy() -> Result<proxy::ResolvedProxy, String> {
 #[tauri::command]
 async fn get_disk_space(path: String) -> Result<utils::DiskSpaceInfo, String> {
     let actual_path = if path.is_empty() {
-        #[cfg(not(target_os = "android"))]
+        #[cfg(desktop)]
         {
             dirs::download_dir()
                 .ok_or("Could not find Downloads folder")?
@@ -62,6 +63,13 @@ async fn get_disk_space(path: String) -> Result<utils::DiskSpaceInfo, String> {
         #[cfg(target_os = "android")]
         {
             "/storage/emulated/0/Download/Comine".to_string()
+        }
+        #[cfg(target_os = "ios")]
+        {
+            dirs::document_dir()
+                .ok_or("Could not find Documents folder")?
+                .to_string_lossy()
+                .to_string()
         }
     } else {
         path
@@ -73,7 +81,7 @@ async fn get_disk_space(path: String) -> Result<utils::DiskSpaceInfo, String> {
 
 #[tauri::command]
 async fn get_default_download_dir() -> Result<String, String> {
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         dirs::download_dir()
             .map(|p| p.to_string_lossy().to_string())
@@ -83,6 +91,13 @@ async fn get_default_download_dir() -> Result<String, String> {
     {
         // On Android, use Downloads/Comine to avoid permission issues
         Ok("/storage/emulated/0/Download/Comine".to_string())
+    }
+    #[cfg(target_os = "ios")]
+    {
+        // On iOS, use the app's Documents directory
+        dirs::document_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .ok_or_else(|| "Could not determine Documents folder".to_string())
     }
 }
 
@@ -125,12 +140,18 @@ async fn open_file(path: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 async fn open_file(path: String) -> Result<bool, String> {
     tracing::info!("open_file called with path: {}", path);
     opener::open(std::path::Path::new(&path))
         .map(|_| true)
         .map_err(|e| format!("Failed to open file: {}", e))
+}
+
+#[tauri::command]
+#[cfg(target_os = "ios")]
+async fn open_file(_path: String) -> Result<bool, String> {
+    Ok(false)
 }
 
 #[tauri::command]
@@ -166,7 +187,7 @@ async fn open_folder(path: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 async fn open_folder(path: String) -> Result<bool, String> {
     tracing::info!("open_folder called with path: {}", path);
     opener::open(std::path::Path::new(&path))
@@ -175,7 +196,13 @@ async fn open_folder(path: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
+#[cfg(target_os = "ios")]
+async fn open_folder(_path: String) -> Result<bool, String> {
+    Ok(false)
+}
+
+#[tauri::command]
+#[cfg(desktop)]
 async fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -183,6 +210,12 @@ async fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
         let _ = tx.send(folder.map(|p| p.to_string()));
     });
     rx.await.map_err(|_| "Dialog channel closed".to_string())
+}
+
+#[tauri::command]
+#[cfg(target_os = "ios")]
+async fn pick_folder() -> Result<Option<String>, String> {
+    Ok(None)
 }
 
 #[tauri::command]
@@ -217,7 +250,7 @@ async fn pick_folder() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 async fn reveal_file(path: String) -> Result<bool, String> {
     tracing::info!("reveal_file called with path: {}", path);
     let p = std::path::PathBuf::from(&path);
@@ -256,12 +289,12 @@ async fn reveal_file(path: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 async fn reveal_file(_path: String) -> Result<bool, String> {
     Ok(false)
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub(crate) async fn reveal_file_internal(path: String) -> Result<bool, String> {
     reveal_file(path).await
 }
@@ -489,7 +522,7 @@ struct IpCheckResult {
     proxy_source: String,
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 #[tauri::command]
 async fn autostart_enable(app: AppHandle) -> Result<(), String> {
     use tauri_plugin_autostart::ManagerExt;
@@ -498,7 +531,7 @@ async fn autostart_enable(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("Failed to enable autostart: {}", e))
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 #[tauri::command]
 async fn autostart_disable(app: AppHandle) -> Result<(), String> {
     use tauri_plugin_autostart::ManagerExt;
@@ -507,7 +540,7 @@ async fn autostart_disable(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("Failed to disable autostart: {}", e))
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 #[tauri::command]
 async fn autostart_is_enabled(app: AppHandle) -> Result<bool, String> {
     use tauri_plugin_autostart::ManagerExt;
@@ -516,25 +549,25 @@ async fn autostart_is_enabled(app: AppHandle) -> Result<bool, String> {
         .map_err(|e| format!("Failed to check autostart status: {}", e))
 }
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 #[tauri::command]
 async fn autostart_enable(_app: AppHandle) -> Result<(), String> {
-    Err("Autostart not supported on Android".to_string())
+    Err("Autostart not supported on mobile".to_string())
 }
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 #[tauri::command]
 async fn autostart_disable(_app: AppHandle) -> Result<(), String> {
-    Err("Autostart not supported on Android".to_string())
+    Err("Autostart not supported on mobile".to_string())
 }
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 #[tauri::command]
 async fn autostart_is_enabled(_app: AppHandle) -> Result<bool, String> {
     Ok(false)
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 #[tauri::command]
 async fn discord_rpc_set_enabled(
     enabled: bool,
@@ -548,7 +581,7 @@ async fn discord_rpc_set_enabled(
     Ok(())
 }
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 #[tauri::command]
 async fn discord_rpc_set_enabled(_enabled: bool) -> Result<(), String> {
     Ok(())
@@ -595,7 +628,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init());
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     let builder = builder.plugin(
         tauri_plugin_autostart::Builder::new()
             .args(["--minimized"])
@@ -606,6 +639,9 @@ pub fn run() {
         media_info::get_media_duration,
         media_info::get_media_technical_info,
         media_info::generate_local_thumbnail,
+        media_info::find_subtitles,
+        media_info::read_subtitle_file,
+        media_info::remux_for_playback,
         orchestrator::thumbnail::get_or_cache_thumbnail,
         thumbnail_color::get_cached_thumbnail_color,
         thumbnail_color::extract_thumbnail_color,
@@ -661,6 +697,9 @@ pub fn run() {
         deps::install_gallery_dl,
         deps::uninstall_gallery_dl,
         deps::get_gallery_dl_releases,
+        deps::check_edge_tts,
+        deps::install_edge_tts,
+        deps::uninstall_edge_tts,
         deps::cancel_dep_install,
         autostart_enable,
         autostart_disable,
@@ -706,11 +745,20 @@ pub fn run() {
         orchestrator::fetch_broadcasts,
         orchestrator::convert::convert_local_file,
         orchestrator::convert::cancel_conversion,
+        #[cfg(desktop)]
+        orchestrator::podcast::generate_podcast,
+        #[cfg(desktop)]
+        orchestrator::podcast::get_podcast_settings,
+        #[cfg(desktop)]
+        orchestrator::podcast::set_podcast_settings,
         clipboard::start_clipboard_watcher,
         clipboard::stop_clipboard_watcher,
         clipboard::set_url_input_focused,
-        #[cfg(not(target_os = "android"))]
-        tray::rebuild_tray_menu
+        #[cfg(desktop)]
+        tray::rebuild_tray_menu,
+        torrent_search::torrent_search,
+        torrent_search::torrent_autocomplete,
+        torrent_search::torrent_list_files,
     ]);
 
     let builder = builder
@@ -720,7 +768,7 @@ pub fn run() {
             app.manage(std::sync::Arc::new(clipboard::ClipboardWatcherState::new()));
             app.manage(std::sync::Arc::new(clipboard::InputFocusState::new()));
 
-            #[cfg(not(target_os = "android"))]
+            #[cfg(desktop)]
             app.manage(std::sync::Arc::new(window_manager::WindowState::new()));
 
             {
@@ -732,7 +780,7 @@ pub fn run() {
 
             deps::updater::start(app.handle());
 
-            #[cfg(not(target_os = "android"))]
+            #[cfg(desktop)]
             {
                 tray::setup(app.handle())?;
                 tray_icon::start_polling(app.handle());

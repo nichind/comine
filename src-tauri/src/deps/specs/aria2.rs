@@ -61,13 +61,13 @@ pub async fn check_aria2(
     app: AppHandle,
     check_updates: Option<bool>,
 ) -> Result<DependencyStatus, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         let _ = check_updates;
         return Ok(DependencyStatus::embedded("youtubedl-android library"));
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let aria2_path = match resolve_aria2_path(&app) {
             Some(path) => path,
@@ -119,11 +119,11 @@ pub async fn install_aria2(
         );
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         let _ = proxy_config;
         return Err(
-            "aria2 installation on Android is not supported. Please install via Termux."
+            "aria2 installation on mobile is not supported. Please install via Termux."
                 .to_string(),
         );
     }

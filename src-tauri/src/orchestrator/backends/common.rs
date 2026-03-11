@@ -216,7 +216,7 @@ pub fn resolve_effective_proxy(proxy: &Option<ProxyConfig>) -> Option<String> {
                     return Some(url.clone());
                 }
             }
-            #[cfg(not(target_os = "android"))]
+            #[cfg(desktop)]
             {
                 let system_proxy = crate::proxy::detect_system_proxy();
                 if !system_proxy.url.is_empty() {
@@ -267,7 +267,7 @@ pub fn parse_size_str(s: &str) -> Option<u64> {
     Some((num * multiplier as f64) as u64)
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub async fn graceful_shutdown(child: &mut tokio::process::Child, label: &str) {
     use std::time::Duration;
 
@@ -351,7 +351,7 @@ pub async fn graceful_shutdown(child: &mut tokio::process::Child, label: &str) {
     }
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub fn apply_args_to_command(cmd: &mut tokio::process::Command, option_groups: Vec<Vec<String>>) {
     for group in option_groups {
         if group.len() == 1 {

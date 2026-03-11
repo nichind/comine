@@ -1,7 +1,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { browser } from '$app/environment';
-import { isAndroid } from '$lib/utils/android';
+import { isMobile } from '$lib/utils/android';
 
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 
@@ -78,14 +78,14 @@ function createLogsStore() {
   const { subscribe, set, update } = writable<LogsState>(initialState);
 
   let idCounter = 0;
-  const onAndroid = browser && isAndroid();
+  const onMobile = browser && isMobile();
 
   if (browser) {
-    update((s) => ({ ...s, isAndroidPlatform: onAndroid }));
+    update((s) => ({ ...s, isAndroidPlatform: onMobile }));
   }
 
   async function initLogging() {
-    if (!browser || isInitializing || onAndroid) return;
+    if (!browser || isInitializing || onMobile) return;
 
     const state = get({ subscribe });
     if (state.sessionFile) return;
@@ -108,7 +108,7 @@ function createLogsStore() {
   }
 
   async function writeToFile(entry: LogEntry) {
-    if (onAndroid) return;
+    if (onMobile) return;
 
     const state = get({ subscribe });
     if (!state.sessionFile) return;

@@ -1,5 +1,6 @@
 pub mod aria2;
 pub mod deno;
+pub mod edge_tts;
 pub mod ffmpeg;
 pub mod gallery_dl;
 pub mod js_runtime;

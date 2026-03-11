@@ -355,6 +355,12 @@ impl YtDlpArgsBuilder {
             if let Some(height) = req.quality.max_height {
                 self = self.add_pair("-S", format!("res:{}", height));
             }
+            // Force MP4 container for video downloads so the built-in HTML5 player can play
+            // the output. yt-dlp defaults to MKV when merging separate video+audio streams.
+            // --merge-output-format handles the merge path; --remux-video is a safety net for
+            // cases where yt-dlp downloads a single stream that is already muxed but not MP4.
+            self = self.add_pair("--merge-output-format", "mp4".to_string());
+            self = self.add_pair("--remux-video", "mp4".to_string());
         }
 
         if req.options.embed_metadata {
@@ -397,7 +403,9 @@ impl YtDlpArgsBuilder {
         if req.options.use_aria2 {
             #[cfg(target_os = "android")]
             let aria2_bin = "libaria2c.so";
-            #[cfg(not(target_os = "android"))]
+            #[cfg(desktop)]
+            let aria2_bin = "aria2c";
+            #[cfg(target_os = "ios")]
             let aria2_bin = "aria2c";
 
             self = self.add_pair("--external-downloader", aria2_bin.to_string());

@@ -4,9 +4,9 @@ pub mod json;
 pub mod progress;
 pub mod shared;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub mod process;
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub use process::YtdlpBackend;
 
 #[cfg(target_os = "android")]

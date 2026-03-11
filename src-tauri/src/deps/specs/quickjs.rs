@@ -189,7 +189,7 @@ pub async fn check_quickjs(
     app: AppHandle,
     check_updates: Option<bool>,
 ) -> Result<DependencyStatus, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         let _ = check_updates;
         if resolve_quickjs_path(&app).is_some() {
@@ -198,7 +198,7 @@ pub async fn check_quickjs(
         return Ok(DependencyStatus::not_installed());
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let quickjs_path = match resolve_quickjs_path(&app) {
             Some(path) => path,
@@ -255,13 +255,13 @@ pub async fn install_quickjs(
     app: AppHandle,
     proxy_config: Option<ProxyConfig>,
 ) -> Result<String, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         let _ = (app, proxy_config);
         return Err("libqjs.so".to_string());
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let config = proxy_config.unwrap_or_default();
         let version = fetch_latest_version(&config).await;
@@ -309,13 +309,13 @@ pub async fn install_quickjs(
 }
 
 pub async fn uninstall_quickjs(app: AppHandle) -> Result<(), String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         let _ = app;
         return Err("Cannot uninstall bundled quickjs".to_string());
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let quickjs_path = get_quickjs_path(&app)?;
 
