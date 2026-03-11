@@ -1732,12 +1732,8 @@
   }
 
   .speed-sparkline {
-    position: absolute;
-    top: calc(100% + 2px);
-    left: 0;
-    right: 0;
+    position: relative;
     height: 26px;
-    z-index: 24;
     pointer-events: none;
     opacity: 0.95;
 
@@ -1817,8 +1813,7 @@
     }
 
     .speed-sparkline {
-      left: 4px;
-      right: 4px;
+      margin-inline: 4px;
     }
 
     .stats-panel {
