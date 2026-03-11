@@ -10,7 +10,7 @@
     quality: string | null;
     codec: string | null;
     seeders: number | null;
-    sizeBytes: string | null;
+    sizeBytes: number | null;
     qualityScore: number | null;
     magnetUrl: string | null;
     torrentUrl: string | null;
@@ -19,7 +19,7 @@
   export interface TorrentSearchResult {
     title: string;
     year: number | null;
-    type: string | null;
+    contentType: string | null;
     ratingImdb: string | null;
     posterUrl: string | null;
     torrents: TorrentOption[];
@@ -341,8 +341,8 @@
                 {#if result.year}
                   <span class="meta-year">{result.year}</span>
                 {/if}
-                {#if result.type}
-                  <span class="meta-type">{result.type}</span>
+                {#if result.contentType}
+                  <span class="meta-type">{result.contentType}</span>
                 {/if}
               </div>
               {#if bestSeeders > 0}

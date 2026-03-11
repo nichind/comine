@@ -799,5 +799,13 @@
       order: 2;
       width: 100%;
     }
+
+    :global(.log-list-virtual) {
+      padding-bottom: 96px;
+    }
+
+    .log-entry.mobile {
+      margin-bottom: 5px;
+    }
   }
 </style>

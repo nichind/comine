@@ -35,8 +35,8 @@ pub struct TorrentOption {
     pub quality: Option<String>,
     pub codec: Option<String>,
     pub seeders: Option<u32>,
-    /// API returns size as a string (e.g. "4.2 GiB")
-    pub size_bytes: Option<String>,
+    /// Size in bytes as returned by the API (integer).
+    pub size_bytes: Option<u64>,
     pub quality_score: Option<u32>,
     pub magnet_url: Option<String>,
     pub torrent_url: Option<String>,
@@ -49,7 +49,7 @@ pub struct TorrentOption {
 pub struct TorrentSearchResult {
     pub title: String,
     pub year: Option<u32>,
-    #[serde(rename = "type")]
+    /// API field name is "contentType" (camelCase rename handled by serde).
     pub content_type: Option<String>,
     pub rating_imdb: Option<String>,
     pub poster_url: Option<String>,
@@ -161,10 +161,20 @@ pub async fn torrent_search(
         return Err(format!("TorrentClaw API error: {}", response.status()));
     }
 
-    response
-        .json::<TorrentSearchResponse>()
+    let text = response
+        .text()
         .await
-        .map_err(|e| format!("Failed to parse search response: {}", e))
+        .map_err(|e| format!("Failed to read search response: {}", e))?;
+
+    serde_json::from_str::<TorrentSearchResponse>(&text).map_err(|e| {
+        let preview = if text.len() > 300 {
+            format!("{}...", &text[..300])
+        } else {
+            text.clone()
+        };
+        warn!("TorrentClaw parse error: {}. Response preview: {}", e, preview);
+        format!("Failed to parse search response: {}", e)
+    })
 }
 
 #[tauri::command]

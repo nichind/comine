@@ -29,12 +29,6 @@
     return '#ef4444';
   }
 
-  function parseSizeBytes(sizeBytes: string | null): number {
-    if (!sizeBytes) return 0;
-    const n = parseInt(sizeBytes, 10);
-    return isNaN(n) ? 0 : n;
-  }
-
   async function handleDownload(torrent: TorrentOption, index: number) {
     const magnetUrl = torrent.magnetUrl ?? torrent.torrentUrl;
     if (!magnetUrl) {
@@ -104,8 +98,8 @@
               {result.year}
             </span>
           {/if}
-          {#if result.type}
-            <span class="meta-pill type">{result.type}</span>
+          {#if result.contentType}
+            <span class="meta-pill type">{result.contentType}</span>
           {/if}
           {#if result.ratingImdb}
             <span class="meta-pill rating">
@@ -142,7 +136,7 @@
           </div>
 
           {#each sortedTorrents as torrent, i}
-            {@const sizeNum = parseSizeBytes(torrent.sizeBytes)}
+            {@const sizeNum = torrent.sizeBytes ?? 0}
             {@const scoreColor = getQualityScoreColor(torrent.qualityScore)}
             <div class="table-row">
               <span class="col-quality">

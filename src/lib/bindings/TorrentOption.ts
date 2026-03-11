@@ -2,6 +2,6 @@
 
 export type TorrentOption = { quality: string | null, codec: string | null, seeders: number | null, 
 /**
- * API returns size as a string (e.g. "4.2 GiB")
+ * Size in bytes as returned by the API (integer).
  */
-sizeBytes: string | null, qualityScore: number | null, magnetUrl: string | null, torrentUrl: string | null, };
+sizeBytes: number | null, qualityScore: number | null, magnetUrl: string | null, torrentUrl: string | null, };
