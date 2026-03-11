@@ -780,6 +780,10 @@ pub enum JobEvent {
         job_id: String,
         color: (u8, u8, u8),
     },
+    FilePathResolved {
+        job_id: String,
+        output_path: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -911,15 +915,22 @@ pub struct DownloadSettings {
 
 impl DownloadSettings {
     pub fn default_download_path() -> String {
-        #[cfg(not(target_os = "android"))]
+        #[cfg(target_os = "android")]
+        {
+            "/storage/emulated/0/Download/Comine".to_string()
+        }
+        #[cfg(target_os = "ios")]
+        {
+            // iOS sandbox: download_dir() is unavailable, use Documents instead.
+            dirs::document_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default()
+        }
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             dirs::download_dir()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default()
-        }
-        #[cfg(target_os = "android")]
-        {
-            "/storage/emulated/0/Download/Comine".to_string()
         }
     }
 }

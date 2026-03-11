@@ -2,6 +2,7 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { formatPlayerTime } from '$lib/utils/subtitles';
 import type { SubtitleCue } from '$lib/utils/subtitles';
 import { openFile } from '$lib/utils/platform';
+import { isMobile } from '$lib/utils/android';
 
 export type { SubtitleCue };
 
@@ -69,48 +70,37 @@ export class PlayerState {
     'opus',
   ]);
 
-  // Formats that can be remuxed to a playable container via ffmpeg (no re-encoding).
-  private static readonly REMUXABLE_EXTENSIONS = new Set([
-    'mkv',
-    'avi',
-    'flv',
-    'wmv',
-    'mov',
-    'ts',
-    'mts',
-    'm2ts',
-  ]);
-
   loading = $state(false);
+
+  // Whether we're currently using an FFmpeg stream (need cleanup on close)
+  private _streaming = false;
 
   // Methods
   async openMedia(opts: PlayerOpenOptions) {
     const ext = opts.filePath.split('.').pop()?.toLowerCase() ?? '';
 
-    // Natively supported — play directly
-    let playPath = opts.filePath;
+    let mediaSrc: string;
 
-    if (!PlayerState.HTML5_SUPPORTED_EXTENSIONS.has(ext)) {
-      if (PlayerState.REMUXABLE_EXTENSIONS.has(ext)) {
-        // Remux to MP4/WebM (fast, no re-encoding) then play
-        this.loading = true;
-        this.title = opts.title ?? opts.filePath.split(/[\\/]/).pop() ?? 'Unknown';
-        this.thumbnail = opts.thumbnail ?? null;
-        this.open = true;
-        try {
-          playPath = await invoke<string>('remux_for_playback', { filePath: opts.filePath });
-        } catch (e) {
-          // Remux failed — fall back to system player
-          this.close();
-          await openFile(opts.filePath);
-          return;
-        } finally {
-          this.loading = false;
-        }
-      } else {
-        // Unsupported and not remuxable — use system player
+    if (PlayerState.HTML5_SUPPORTED_EXTENSIONS.has(ext) || isMobile()) {
+      // Natively supported, or on mobile where the WebView often handles
+      // MKV/other containers via system codecs — play directly.
+      mediaSrc = convertFileSrc(opts.filePath);
+    } else {
+      // Desktop non-native format — stream via FFmpeg (real-time remux)
+      this.loading = true;
+      this.title = opts.title ?? opts.filePath.split(/[\\/]/).pop() ?? 'Unknown';
+      this.thumbnail = opts.thumbnail ?? null;
+      this.open = true;
+      try {
+        mediaSrc = await invoke<string>('start_media_stream', { filePath: opts.filePath });
+        this._streaming = true;
+      } catch (e) {
+        // Streaming failed — fall back to system player
+        this.close();
         await openFile(opts.filePath);
         return;
+      } finally {
+        this.loading = false;
       }
     }
 
@@ -118,7 +108,7 @@ export class PlayerState {
     this.mediaType = opts.mediaType;
     this.title = opts.title ?? opts.filePath.split(/[\\/]/).pop() ?? 'Unknown';
     this.thumbnail = opts.thumbnail ?? null;
-    this.mediaSrc = convertFileSrc(playPath);
+    this.mediaSrc = mediaSrc;
     this.open = true;
     this.error = null;
 
@@ -153,6 +143,11 @@ export class PlayerState {
     this.subtitleDelay = 0;
     this.controlsVisible = true;
     this._clearHideTimer();
+
+    if (this._streaming) {
+      this._streaming = false;
+      invoke('stop_media_stream').catch(() => {});
+    }
   }
 
   togglePlay() {
@@ -180,6 +175,10 @@ export class PlayerState {
     const rates = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
     const idx = rates.indexOf(this.playbackRate);
     this.playbackRate = rates[(idx + 1) % rates.length];
+  }
+
+  setPlaybackRate(rate: number) {
+    this.playbackRate = rate;
   }
 
   setSubtitleTrack(index: number) {

@@ -573,6 +573,50 @@
     });
     cleanups.push(ulDlStatus);
 
+    const ulPodcastStarted = await listen<{ historyId: string }>('podcast-generation-started', () => {
+      toast.info('Generating podcast...');
+    });
+    cleanups.push(ulPodcastStarted);
+
+    const ulPodcastProgress = await listen<{
+      historyId: string;
+      step: string;
+      progress: number;
+      error: string | null;
+    }>('podcast-generation-progress', (event) => {
+      const { step, error } = event.payload;
+      if (step === 'fetching_transcript') {
+        toast.info('Podcast: fetching transcript...');
+      } else if (step === 'generating_script') {
+        toast.info('Podcast: generating script...');
+      } else if (step === 'narrating') {
+        toast.info('Podcast: narrating...');
+      } else if (step === 'mastering') {
+        toast.info('Podcast: mastering audio...');
+      } else if (step === 'complete') {
+        toast.success('Podcast generated!');
+      } else if (step === 'failed') {
+        toast.error('Podcast generation failed: ' + error);
+      }
+    });
+    cleanups.push(ulPodcastProgress);
+
+    const ulPodcastCompleted = await listen<{ historyId: string; podcastPath: string }>(
+      'podcast-generation-completed',
+      () => {
+        toast.success('Podcast ready!');
+      },
+    );
+    cleanups.push(ulPodcastCompleted);
+
+    const ulPodcastFailed = await listen<{ historyId: string; error: string }>(
+      'podcast-generation-failed',
+      (event) => {
+        toast.error('Podcast failed: ' + event.payload.error);
+      },
+    );
+    cleanups.push(ulPodcastFailed);
+
     const ulShown = await listen('window-shown', () => {
       onWindowShown();
     });

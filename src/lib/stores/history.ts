@@ -35,6 +35,8 @@ export type HistoryItem = Omit<
   podcastPath?: string;
   podcastSubtitlePath?: string;
   podcastStatus?: string;
+  podcastProgress?: number;
+  podcastStep?: string;
 };
 
 export type FilterType =
@@ -170,6 +172,65 @@ function createHistoryStore() {
         }));
       });
       unlistenHistoryItem = unlisten;
+
+      // Update history items when podcast status changes
+      await listen<{ historyId: string; podcastPath?: string; subtitlePath?: string }>(
+        'podcast-generation-completed',
+        (event) => {
+          const { historyId, podcastPath } = event.payload;
+          update((state) => ({
+            ...state,
+            items: state.items.map((item) =>
+              item.id === historyId
+                ? { ...item, podcastStatus: 'completed', podcastPath: podcastPath ?? item.podcastPath, podcastProgress: undefined, podcastStep: undefined }
+                : item
+            ),
+          }));
+        }
+      );
+
+      await listen<{ historyId: string }>(
+        'podcast-generation-started',
+        (event) => {
+          update((state) => ({
+            ...state,
+            items: state.items.map((item) =>
+              item.id === event.payload.historyId
+                ? { ...item, podcastStatus: 'generating', podcastProgress: 0, podcastStep: 'starting' }
+                : item
+            ),
+          }));
+        }
+      );
+
+      await listen<{ historyId: string; step: string; progress: number; error: string | null }>(
+        'podcast-generation-progress',
+        (event) => {
+          const { historyId, step, progress } = event.payload;
+          update((state) => ({
+            ...state,
+            items: state.items.map((item) =>
+              item.id === historyId
+                ? { ...item, podcastProgress: Math.round(progress * 100), podcastStep: step }
+                : item
+            ),
+          }));
+        }
+      );
+
+      await listen<{ historyId: string; error: string }>(
+        'podcast-generation-failed',
+        (event) => {
+          update((state) => ({
+            ...state,
+            items: state.items.map((item) =>
+              item.id === event.payload.historyId
+                ? { ...item, podcastStatus: 'failed', podcastProgress: undefined, podcastStep: undefined }
+                : item
+            ),
+          }));
+        }
+      );
     },
 
     async add(item: Omit<HistoryItem, 'id' | 'downloadedAt'>) {

@@ -153,11 +153,19 @@
     }
   }
 
+  // Skip the first $effect run to avoid double-firing with onMount.
+  // Svelte 5 effects can run after onMount sets hasSearched=true,
+  // causing a spurious 100ms-debounced duplicate search.
+  let filterEffectReady = false;
+
   $effect(() => {
-    // trigger filter re-search when contentType, quality, or sort change
     contentType;
     quality;
     sort;
+    if (!filterEffectReady) {
+      filterEffectReady = true;
+      return;
+    }
     applyFilter();
   });
 

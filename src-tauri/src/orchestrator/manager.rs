@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 #[allow(unused_imports)]
 use tracing::{debug, error, info, warn};
 
-use crate::orchestrator::backends::{Backend, BackendRegistry, SpawnContext};
+use crate::orchestrator::backends::{is_torrent_url, Backend, BackendRegistry, SpawnContext};
 use crate::orchestrator::store::JobStore;
 use crate::orchestrator::types::*;
 
@@ -391,6 +391,12 @@ impl JobManager {
                 .unwrap_or_else(|| "ytdlp".to_string())
         };
 
+        let content_type = if is_torrent_url(&request.url) {
+            Some(ContentType::Torrent)
+        } else {
+            None
+        };
+
         let job = Job {
             id: job_id.clone(),
             request,
@@ -415,7 +421,7 @@ impl JobManager {
             playlist_id: None,
             playlist_title: None,
             playlist_index: None,
-            content_type: None,
+            content_type,
             skip_proxy: false,
         };
 
@@ -1031,6 +1037,14 @@ impl JobManager {
                 }
                 MetadataEvent::PostProcessing => {
                     self.set_post_processing(&job_id);
+                }
+                MetadataEvent::FilePath(path) => {
+                    info!("FilePathResolved for {}: {}", job_id, path);
+                    // Emit to frontend so play-while-downloading can work.
+                    self.emit_event(JobEvent::FilePathResolved {
+                        job_id: job_id.clone(),
+                        output_path: path,
+                    });
                 }
             }
         }

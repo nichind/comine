@@ -6,7 +6,7 @@ use tracing::info;
 
 use crate::orchestrator::backends::{
     extract_filename_from_url, extract_magnet_name, guess_mime_type, has_file_extension,
-    is_torrent_url, parse_size_str, Backend, BackendCapabilities, SpawnContext,
+    is_torrent_url, parse_size_str, Backend, BackendCapabilities, MetadataEvent, SpawnContext,
     DIRECT_FILE_EXTENSIONS,
 };
 use crate::orchestrator::types::*;
@@ -385,6 +385,8 @@ mod exec {
         let mut output_path_count: u32 = 0;
         let mut last_update = std::time::Instant::now();
         let job_id = ctx.job.id.clone();
+        let is_torrent = is_torrent_url(&ctx.job.request.url);
+        let mut early_path_sent = false;
 
         loop {
             tokio::select! {
@@ -410,6 +412,19 @@ mod exec {
                             if let Some(path) = extract_output_path(&line) {
                                 output_path = Some(path);
                                 output_path_count += 1;
+                            }
+
+                            // For torrent downloads, detect the file path early
+                            // from aria2's "FILE:" lines and emit it so the
+                            // frontend can show a play button while downloading.
+                            if is_torrent && !early_path_sent {
+                                if let Some(path) = extract_aria2_file_line(&line) {
+                                    info!(target: "aria2", "Early file path detected: {}", path);
+                                    let _ = ctx.metadata_tx.send(
+                                        MetadataEvent::FilePath(path),
+                                    );
+                                    early_path_sent = true;
+                                }
                             }
                         }
                         Ok(None) => break,
@@ -457,6 +472,34 @@ mod exec {
         };
 
         Ok(final_path)
+    }
+
+    /// Extract a real file path from aria2's `FILE: /path/to/file` output lines.
+    /// Ignores `[MEMORY]` metadata lines. Strips trailing ` (Nmore)` suffixes.
+    #[cfg(desktop)]
+    pub(super) fn extract_aria2_file_line(line: &str) -> Option<String> {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("FILE:") {
+            return None;
+        }
+        let path = trimmed.strip_prefix("FILE:")?.trim();
+        if path.is_empty() || path.starts_with("[MEMORY]") {
+            return None;
+        }
+        // Strip trailing " (1more)", " (2more)", etc.
+        let clean = if let Some(idx) = path.rfind(" (") {
+            if path[idx..].ends_with("more)") {
+                path[..idx].trim()
+            } else {
+                path
+            }
+        } else {
+            path
+        };
+        if clean.is_empty() {
+            return None;
+        }
+        Some(clean.to_string())
     }
 
     #[cfg(desktop)]

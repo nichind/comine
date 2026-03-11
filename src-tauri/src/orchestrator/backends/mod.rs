@@ -32,6 +32,7 @@ pub mod aria2;
 pub mod common;
 pub mod direct;
 pub mod gallery_dl;
+pub mod librqbit;
 pub mod ytdlp;
 
 #[cfg(target_os = "android")]
@@ -59,6 +60,7 @@ pub use aria2::cancel_aria2;
 pub enum MetadataEvent {
     Patch(UrlInfoPatch),
     PostProcessing,
+    FilePath(String),
 }
 
 #[derive(Clone)]

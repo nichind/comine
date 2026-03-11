@@ -125,7 +125,12 @@ export function jobToQueueItem(job: Job): QueueItem {
     eta: '',
     error: job.lastError ?? undefined,
     addedAt: job.createdAt,
-    type: job.request.quality.audioOnly ? 'audio' : 'video',
+    type:
+      job.contentType === 'Torrent'
+        ? 'torrent'
+        : job.request.quality.audioOnly
+          ? 'audio'
+          : 'video',
     options: undefined,
     source: 'ytdlp',
     downloadedBytes: job.downloadedBytes,

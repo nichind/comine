@@ -71,13 +71,18 @@ export async function setupJobEventListener(update: StateUpdater): Promise<Unlis
       };
 
       switch (payload.type) {
-        case 'added':
+        case 'added': {
+          const addedItem = jobToQueueItem(payload.data.job);
           if (index !== -1) {
-            applyPatchToItem(jobToQueuePatch(payload.data.job));
+            // Include type from the full mapping — the placeholder created by
+            // enqueueUrl defaults to 'video', but the backend knows the real
+            // content type (e.g. 'torrent' for magnet links).
+            applyPatchToItem({ ...jobToQueuePatch(payload.data.job), type: addedItem.type });
           } else {
-            newItems!.unshift(jobToQueueItem(payload.data.job));
+            newItems!.unshift(addedItem);
           }
           break;
+        }
 
         case 'started':
           applyPatchToItem({
@@ -222,6 +227,14 @@ export async function setupJobEventListener(update: StateUpdater): Promise<Unlis
             });
           }
           if (jobId) lastProgressUpdate.delete(jobId);
+          break;
+        }
+
+        case 'filePathResolved': {
+          applyPatchToItem({
+            filePath: payload.data.output_path,
+            extension: filenameExt(payload.data.output_path),
+          });
           break;
         }
 

@@ -73,6 +73,10 @@ thiserror = "1"
 regex = "1"
 opener = "0.8.4"
 shell-words = "1.1.1"
+# Torrent/magnet downloads — used by LibrqbitBackend.
+# Minimal feature set: rust-tls matches the reqwest rustls-tls already in use, and we
+# explicitly disable the heavy http-api / webui features that pull in axum and JS assets.
+librqbit = { version = "8.1.1", default-features = false, features = ["rust-tls"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"

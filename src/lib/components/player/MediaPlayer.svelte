@@ -18,6 +18,7 @@
 
   // ── Local UI state ───────────────────────────────────────────────────────────
   let subtitleMenuOpen = $state(false);
+  let speedMenuOpen = $state(false);
   let isFullscreen = $state(false);
   let loadedSubtitleCues = $state<SubtitleCue[]>([]);
 
@@ -177,6 +178,14 @@
 
   function toggleSubtitleMenu() {
     subtitleMenuOpen = !subtitleMenuOpen;
+    if (subtitleMenuOpen) speedMenuOpen = false;
+  }
+
+  function toggleSpeedMenu() {
+    speedMenuOpen = !speedMenuOpen;
+    if (speedMenuOpen) subtitleMenuOpen = false;
+    if (speedMenuOpen) player.lockControls();
+    else player.unlockControls();
   }
 
   function toggleFullscreen() {
@@ -192,11 +201,13 @@
   }
 
   function handleOverlayClick(e: MouseEvent) {
-    if (subtitleMenuOpen) {
-      const target = e.target as HTMLElement;
-      if (!target.closest('.subtitle-control')) {
-        subtitleMenuOpen = false;
-      }
+    const target = e.target as HTMLElement;
+    if (subtitleMenuOpen && !target.closest('.subtitle-control')) {
+      subtitleMenuOpen = false;
+    }
+    if (speedMenuOpen && !target.closest('.speed-control')) {
+      speedMenuOpen = false;
+      player.unlockControls();
     }
   }
 
@@ -254,7 +265,12 @@
         if (player.mediaType === 'video') toggleFullscreen();
         break;
       case 'Escape':
-        if (isFullscreen) {
+        if (speedMenuOpen) {
+          speedMenuOpen = false;
+          player.unlockControls();
+        } else if (subtitleMenuOpen) {
+          subtitleMenuOpen = false;
+        } else if (isFullscreen) {
           document.exitFullscreen?.();
         } else {
           player.close();
@@ -483,13 +499,36 @@
             </div>
 
             <!-- Playback speed -->
-            <button
-              class="ctrl-btn speed-btn"
-              onclick={() => player.cyclePlaybackRate()}
-              aria-label="Playback speed: {player.playbackRate}x"
-            >
-              {player.playbackRate}x
-            </button>
+            <div class="speed-control">
+              <button
+                class="ctrl-btn speed-btn"
+                onclick={toggleSpeedMenu}
+                aria-label="Playback speed: {player.playbackRate}x"
+                aria-expanded={speedMenuOpen}
+              >
+                {player.playbackRate}x
+              </button>
+
+              {#if speedMenuOpen}
+                <div class="speed-menu" transition:fade={{ duration: 100 }} role="menu">
+                  {#each [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3] as rate}
+                    <button
+                      class="sub-option"
+                      class:selected={player.playbackRate === rate}
+                      role="menuitemradio"
+                      aria-checked={player.playbackRate === rate}
+                      onclick={() => {
+                        player.setPlaybackRate(rate);
+                        speedMenuOpen = false;
+                        player.unlockControls();
+                      }}
+                    >
+                      {rate}x
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
 
             <!-- Fullscreen (video only) -->
             {#if player.mediaType === 'video'}
@@ -884,6 +923,26 @@
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   }
 
+  /* ── Speed control & menu ──────────────────────────────────────────────────── */
+  .speed-control {
+    position: relative;
+  }
+
+  .speed-menu {
+    position: absolute;
+    bottom: 100%;
+    right: 0;
+    margin-bottom: 8px;
+    background: rgba(20, 20, 20, 0.95);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius, 8px);
+    min-width: 80px;
+    padding: 6px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  }
+
   .sub-option {
     display: block;
     width: 100%;
@@ -969,10 +1028,6 @@
     .subtitle-overlay {
       bottom: 80px;
       max-width: 90%;
-    }
-
-    .speed-btn {
-      display: none;
     }
   }
 

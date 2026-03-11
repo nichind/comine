@@ -9,6 +9,9 @@
   import { t } from '$lib/i18n';
   import { formatDuration } from '$lib/utils/format';
   import { useDownloadItem } from './useDownloadItem.svelte';
+  import { isMobile } from '$lib/utils/android';
+  import { openFile } from '$lib/utils/platform';
+  import { player } from '$lib/stores/player.svelte';
 
   export interface Props {
     item: UnifiedDownloadItem;
@@ -30,6 +33,46 @@
   let thumbHeight = $derived(dState.listItemSize - 16);
   let thumbWidth = $derived(Math.round(thumbHeight * (16 / 9)));
   let subtitle = $derived(dState.getItemSubtitle(item));
+
+  let canPlayWhileDownloading = $derived(
+    item.type === 'torrent' && dl.isDownloading && !!item.filePath
+  );
+
+  function playTorrentFile() {
+    if (!item.filePath) return;
+    player.openMedia({
+      filePath: item.filePath,
+      mediaType: 'video',
+      title: item.title,
+      thumbnail: item.thumbnail,
+    });
+  }
+
+  let hasPodcast = $derived(item.podcastStatus === 'completed' && !!item.podcastPath);
+  let isPodcastGenerating = $derived(item.podcastStatus === 'generating');
+  let podcastLabel = $derived.by(() => {
+    if (!isPodcastGenerating) return '';
+    const stepNames: Record<string, string> = {
+      starting: 'Starting',
+      fetching_transcript: 'Transcript',
+      generating_script: 'Script',
+      narrating: 'Narrating',
+      mastering: 'Mastering',
+    };
+    const step = stepNames[item.podcastStep ?? ''] ?? 'Generating';
+    const pct = item.podcastProgress != null ? ` ${item.podcastProgress}%` : '';
+    return `${step}${pct}`;
+  });
+
+  function playPodcast() {
+    if (!item.podcastPath) return;
+    player.openMedia({
+      filePath: item.podcastPath,
+      mediaType: 'audio',
+      title: `${item.title} (Podcast)`,
+      thumbnail: item.thumbnail,
+    });
+  }
 
   let progressLabel = $derived.by(() => {
     if (!item.isActive) return '';
@@ -239,6 +282,18 @@
                 : `${dl.displayProgress}%`}</span
             >
             <div class="download-actions">
+              {#if canPlayWhileDownloading}
+                <button
+                  class="overlay-action-btn play"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    playTorrentFile();
+                  }}
+                  use:tooltip={$t('downloads.playWhileDownloading')}
+                >
+                  <Icon name="play" size={16} />
+                </button>
+              {/if}
               {#if item.source !== 'convert'}
                 <button
                   class="overlay-action-btn"
@@ -340,6 +395,22 @@
               </button>
 
               <div class="card-actions-bar">
+                {#if hasPodcast}
+                  <button
+                    class="card-action-btn podcast"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      playPodcast();
+                    }}
+                    use:tooltip={'Play podcast'}
+                  >
+                    <Icon name="headphones" size={14} />
+                  </button>
+                {:else if isPodcastGenerating}
+                  <div class="card-action-btn generating" use:tooltip={'Generating podcast...'}>
+                    <Icon name="headphones" size={14} />
+                  </div>
+                {/if}
                 <button
                   class="card-action-btn"
                   onclick={(e) => {
@@ -411,6 +482,21 @@
         >
           <HighlightText text={item.title} highlight={dState.searchQuery} />
         </button>
+        {#if isPodcastGenerating}
+          <span class="podcast-tag generating">
+            <Icon name="headphones" size={10} />
+            {podcastLabel}
+          </span>
+        {:else if hasPodcast}
+          <button
+            class="podcast-tag ready"
+            onclick={(e) => { e.stopPropagation(); playPodcast(); }}
+            use:tooltip={'Play podcast'}
+          >
+            <Icon name="headphones" size={10} />
+            Podcast
+          </button>
+        {/if}
         {#if item.convertedFormat}
           <span
             class="converted-tag"
@@ -570,6 +656,21 @@
             <HighlightText text={item.title} highlight={dState.searchQuery} />
           </span>
         {/if}
+        {#if isPodcastGenerating}
+          <span class="podcast-tag generating">
+            <Icon name="headphones" size={10} />
+            {podcastLabel}
+          </span>
+        {:else if hasPodcast}
+          <button
+            class="podcast-tag ready"
+            onclick={(e) => { e.stopPropagation(); playPodcast(); }}
+            use:tooltip={'Play podcast'}
+          >
+            <Icon name="headphones" size={10} />
+            Podcast
+          </button>
+        {/if}
         {#if item.convertedFormat}
           <span
             class="converted-tag"
@@ -647,6 +748,18 @@
             <Icon name="refresh" size={15} />
           </button>
         {:else if item.source !== 'convert'}
+          {#if canPlayWhileDownloading}
+            <button
+              class="action-btn"
+              onclick={(e) => {
+                e.stopPropagation();
+                playTorrentFile();
+              }}
+              use:tooltip={$t('downloads.playWhileDownloading')}
+            >
+              <Icon name="video" size={15} />
+            </button>
+          {/if}
           {#if dl.isPaused}
             <button
               class="action-btn"
@@ -682,6 +795,22 @@
           <Icon name="close" size={15} />
         </button>
       {:else}
+        {#if hasPodcast}
+          <button
+            class="action-btn podcast"
+            onclick={(e) => {
+              e.stopPropagation();
+              playPodcast();
+            }}
+            use:tooltip={'Play podcast'}
+          >
+            <Icon name="headphones" size={15} />
+          </button>
+        {:else if isPodcastGenerating}
+          <div class="action-btn generating" use:tooltip={'Generating podcast...'}>
+            <Icon name="headphones" size={15} />
+          </div>
+        {/if}
         <button
           class="action-btn"
           onclick={(e) => {
@@ -992,6 +1121,38 @@
     background: var(--item-color, var(--accent, #6366f1));
     color: white;
     opacity: 0.85;
+  }
+
+  .history-item .podcast-tag {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 9px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm, 4px);
+    border: none;
+    cursor: default;
+    font-family: inherit;
+  }
+
+  .history-item .podcast-tag.generating {
+    background: rgba(168, 85, 247, 0.15);
+    color: rgba(168, 85, 247, 0.9);
+    animation: pulse-podcast 1.5s ease-in-out infinite;
+  }
+
+  .history-item .podcast-tag.ready {
+    background: rgba(168, 85, 247, 0.15);
+    color: rgba(168, 85, 247, 0.9);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .history-item .podcast-tag.ready:hover {
+    background: rgba(168, 85, 247, 0.3);
+    color: rgba(168, 85, 247, 1);
   }
 
   .history-item .source-tag {
@@ -1439,6 +1600,38 @@
     opacity: 0.85;
   }
 
+  .grid-card .podcast-tag {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 8px;
+    font-weight: 600;
+    padding: 2px 5px;
+    border-radius: 3px;
+    border: none;
+    cursor: default;
+    font-family: inherit;
+  }
+
+  .grid-card .podcast-tag.generating {
+    background: rgba(168, 85, 247, 0.15);
+    color: rgba(168, 85, 247, 0.9);
+    animation: pulse-podcast 1.5s ease-in-out infinite;
+  }
+
+  .grid-card .podcast-tag.ready {
+    background: rgba(168, 85, 247, 0.15);
+    color: rgba(168, 85, 247, 0.9);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .grid-card .podcast-tag.ready:hover {
+    background: rgba(168, 85, 247, 0.3);
+    color: rgba(168, 85, 247, 1);
+  }
+
   .grid-card .source-tag {
     flex-shrink: 0;
     font-size: 8px;
@@ -1626,6 +1819,16 @@
     border-color: rgba(239, 68, 68, 0.5);
   }
 
+  .overlay-action-btn.play {
+    background: rgba(34, 197, 94, 0.25);
+    border-color: rgba(34, 197, 94, 0.4);
+  }
+
+  .overlay-action-btn.play:hover {
+    background: rgba(34, 197, 94, 0.4);
+    border-color: rgba(34, 197, 94, 0.5);
+  }
+
   .failed-overlay {
     position: absolute;
     inset: 0;
@@ -1675,5 +1878,25 @@
     to {
       transform: rotate(360deg);
     }
+  }
+
+  .card-action-btn.podcast,
+  .action-btn.podcast {
+    color: rgba(168, 85, 247, 0.9);
+  }
+  .card-action-btn.podcast:hover,
+  .action-btn.podcast:hover {
+    color: rgba(168, 85, 247, 1);
+    background: rgba(168, 85, 247, 0.15);
+  }
+  .card-action-btn.generating,
+  .action-btn.generating {
+    color: rgba(168, 85, 247, 0.5);
+    animation: pulse-podcast 1.5s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes pulse-podcast {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 0.8; }
   }
 </style>

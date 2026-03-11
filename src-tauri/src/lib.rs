@@ -1,6 +1,7 @@
 mod clipboard;
 mod database;
 mod deps;
+mod media_stream;
 #[cfg(desktop)]
 mod discord;
 mod logs;
@@ -759,6 +760,8 @@ pub fn run() {
         torrent_search::torrent_search,
         torrent_search::torrent_autocomplete,
         torrent_search::torrent_list_files,
+        media_stream::start_media_stream,
+        media_stream::stop_media_stream,
     ]);
 
     let builder = builder

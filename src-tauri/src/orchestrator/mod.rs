@@ -301,6 +301,24 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
             ))
             .await;
 
+        // librqbit backend — handles torrents/magnets natively (no subprocess).
+        // On iOS it takes Priority::Absolute for torrent URLs (aria2 is unavailable there).
+        // On other platforms it returns Priority::None so aria2 wins; it can still be forced
+        // explicitly by name if needed.
+        // Session is lazy — DHT only starts on first download.
+        {
+            let default_dir = app_clone
+                .path()
+                .download_dir()
+                .or_else(|_| app_clone.path().document_dir())
+                .or_else(|_| app_clone.path().app_data_dir())
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| ".".to_string());
+
+            let backend = crate::orchestrator::backends::librqbit::LibrqbitBackend::new(&default_dir);
+            manager_clone.register_backend(Arc::new(backend)).await;
+        }
+
         #[cfg(desktop)]
         {
             match crate::deps::resolve_ytdlp_path(&app_clone) {

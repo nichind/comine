@@ -330,6 +330,7 @@
     },
     "moreOptions": "More options",
     "play": "Play file",
+    "playWhileDownloading": "Watch while downloading",
     "retry": "Retry",
     "retryFailed": "Retry failed",
     "retryAll": "Retry all failed",

@@ -80,7 +80,7 @@ export interface QueueItem {
   eta: string;
   error?: string;
   addedAt: number;
-  type: 'video' | 'audio' | 'image' | 'file';
+  type: 'video' | 'audio' | 'image' | 'file' | 'torrent';
   options?: QueueAddOptions;
   source: QueueItemSource;
   downloadedBytes?: number;

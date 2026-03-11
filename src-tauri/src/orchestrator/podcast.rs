@@ -468,7 +468,7 @@ impl PodcastPipeline {
             .arg(raw_mp3)
             .args([
                 "-af",
-                "highpass=f=80,lowpass=f=12000,acompressor=threshold=-18dB:ratio=3:attack=5:release=50,loudnorm=I=-16:TP=-1.5:LRA=11",
+                "highpass=f=80:poles=1,lowpass=f=12000:poles=1,acompressor=threshold=-18dB:ratio=3:attack=10:release=100,loudnorm=I=-16:TP=-1.5:LRA=11",
                 "-ar",
                 "44100",
                 "-b:a",

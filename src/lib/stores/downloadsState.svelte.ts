@@ -63,6 +63,10 @@ export interface UnifiedDownloadItem {
   convertedFormat?: string;
   source?: 'ytdlp' | 'file' | 'convert';
   downloadSource?: string;
+  podcastPath?: string;
+  podcastStatus?: string;
+  podcastProgress?: number;
+  podcastStep?: string;
 }
 
 export type VirtualListItem =
@@ -144,6 +148,10 @@ function historyToUnified(item: HistoryItem): UnifiedDownloadItem {
     progress: 100,
     convertedFormat: item.convertedFormat,
     downloadSource: item.downloadSource,
+    podcastPath: item.podcastPath ?? undefined,
+    podcastStatus: item.podcastStatus ?? undefined,
+    podcastProgress: item.podcastProgress,
+    podcastStep: item.podcastStep,
   };
 }
 

@@ -347,6 +347,7 @@ export type TranslationKeys =
   | 'downloads.openLink'
   | 'downloads.openSelected'
   | 'downloads.play'
+  | 'downloads.playWhileDownloading'
   | 'downloads.playWithSystemPlayer'
   | 'downloads.queue.cancelAll'
   | 'downloads.queue.cancelAllConfirm'
