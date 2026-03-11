@@ -11,6 +11,7 @@
     getActiveCue,
     type SubtitleCue,
   } from '$lib/utils/subtitles';
+  import LyricsView from './LyricsView.svelte';
 
   // ── Element refs ────────────────────────────────────────────────────────────
   let videoEl = $state<HTMLVideoElement | undefined>(undefined);
@@ -40,6 +41,9 @@
 
   const delayedCues = $derived(applyDelay(loadedSubtitleCues, player.subtitleDelay));
   const activeCue = $derived(getActiveCue(delayedCues, player.currentTime));
+  const lyricsMode = $derived(
+    player.mediaType === 'audio' && delayedCues.length > 0 && player.activeSubtitleIndex >= 0
+  );
 
   // ── Load subtitle cues when active track changes ─────────────────────────────
   $effect(() => {
@@ -319,19 +323,31 @@
         <!-- svelte-ignore a11y_media_has_caption -->
         <audio bind:this={audioEl} preload="metadata"></audio>
 
-        <!-- Audio visual -->
-        <div class="audio-visual">
-          {#if player.thumbnail}
-            <img src={player.thumbnail} alt="" class="audio-thumbnail" />
-          {:else}
-            <Icon name="music" size={120} />
-          {/if}
-          <p class="audio-title">{player.title}</p>
-        </div>
+        <!-- Audio visual (hidden when lyrics view is active) -->
+        {#if !lyricsMode}
+          <div class="audio-visual">
+            {#if player.thumbnail}
+              <img src={player.thumbnail} alt="" class="audio-thumbnail" />
+            {:else}
+              <Icon name="music" size={120} />
+            {/if}
+            <p class="audio-title">{player.title}</p>
+          </div>
+        {/if}
       {/if}
 
-      <!-- Subtitle overlay -->
-      {#if activeCue}
+      <!-- Lyrics view (audio) or subtitle overlay (video) -->
+      {#if lyricsMode}
+        <LyricsView
+          cues={delayedCues}
+          currentTime={player.currentTime}
+          onseek={(time) => {
+            player.seek(time);
+            const el = mediaEl;
+            if (el) el.currentTime = time;
+          }}
+        />
+      {:else if activeCue}
         <div class="subtitle-overlay">
           <p class="subtitle-text">{@html activeCue.text}</p>
         </div>

@@ -1001,6 +1001,9 @@ pub struct EnqueueOverrides {
     pub output_directory: Option<String>,
 
     pub dont_show_in_history: Option<bool>,
+
+    /// Torrent file indices to download (1-based).
+    pub torrent_selected_files: Option<Vec<u32>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

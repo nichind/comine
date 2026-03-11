@@ -5,6 +5,7 @@
   import { toast } from '$lib/components/ui/Toast.svelte';
   import Icon from '$lib/components/ui/Icon.svelte';
   import { formatSize } from '$lib/utils/format';
+  import TorrentFilePicker from './TorrentFilePicker.svelte';
   import type { TorrentSearchResult, TorrentOption } from './TorrentSearch.svelte';
 
   interface Props {
@@ -18,6 +19,10 @@
   let posterError = $state(false);
   let downloadingIndex = $state<number | null>(null);
   let collapsedSeasons = $state<Set<string>>(new Set());
+
+  // File picker state
+  let filePickerMagnet = $state<string | null>(null);
+  let filePickerTitle = $state('');
 
   interface EnrichedTorrent extends TorrentOption {
     displayName: string;
@@ -166,7 +171,7 @@
     return enrichedTorrents.indexOf(torrent);
   }
 
-  async function handleDownload(torrent: TorrentOption, index: number) {
+  async function handleDownload(torrent: TorrentOption, index: number, selectedFiles?: number[]) {
     const magnetUrl = torrent.magnetUrl ?? torrent.torrentUrl;
     if (!magnetUrl) {
       toast.error('No download URL available for this torrent');
@@ -186,6 +191,7 @@
           thumbnail: result.posterUrl ?? undefined,
         },
         useAria2: true,
+        torrentSelectedFiles: selectedFiles,
       });
       toast.info(`${result.title} — ${$t('downloads.started').replace('{title}', result.title)}`);
       navigation.replace({ type: 'home' });
@@ -194,6 +200,26 @@
     } finally {
       downloadingIndex = null;
     }
+  }
+
+  let filePickerTorrentIndex = $state<number>(-1);
+
+  function openFilePicker(torrent: TorrentOption, index: number) {
+    const magnetUrl = torrent.magnetUrl ?? torrent.torrentUrl;
+    if (!magnetUrl) {
+      toast.error('No download URL available for this torrent');
+      return;
+    }
+    filePickerMagnet = magnetUrl;
+    filePickerTitle = result.title;
+    filePickerTorrentIndex = index;
+  }
+
+  function handleFilePickerConfirm(selectedFiles: number[]) {
+    const torrent = enrichedTorrents[filePickerTorrentIndex];
+    if (!torrent) return;
+    filePickerMagnet = null;
+    handleDownload(torrent, filePickerTorrentIndex, selectedFiles);
   }
 </script>
 
@@ -247,6 +273,14 @@
     </span>
 
     <span class="col-action">
+      <button
+        class="select-files-btn"
+        onclick={() => openFilePicker(torrent, idx)}
+        aria-label={$t('torrentSearch.selectFiles')}
+        title={$t('torrentSearch.selectFiles')}
+      >
+        <Icon name="checklist" size={14} />
+      </button>
       <button
         class="download-row-btn"
         onclick={() => handleDownload(torrent, idx)}
@@ -374,6 +408,18 @@
       {/if}
     </div>
   </div>
+
+  {#if filePickerMagnet}
+    <div class="file-picker-overlay">
+      <TorrentFilePicker
+        magnetUrl={filePickerMagnet}
+        title={filePickerTitle}
+        posterUrl={result.posterUrl ?? undefined}
+        onConfirm={(selectedFiles) => handleFilePickerConfirm(selectedFiles)}
+        onBack={() => (filePickerMagnet = null)}
+      />
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -396,6 +442,7 @@
   }
 
   .torrent-detail {
+    position: relative;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -743,6 +790,25 @@
   .col-action {
     display: flex;
     justify-content: flex-end;
+    gap: 4px;
+  }
+
+  .select-files-btn {
+    display: flex;
+    align-items: center;
+    padding: 6px 8px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-sm, 6px);
+    color: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .select-files-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.15);
+    color: white;
   }
 
   .download-row-btn {
@@ -769,5 +835,15 @@
   .download-row-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .file-picker-overlay {
+    position: absolute;
+    inset: 0;
+    background: var(--surface-base, #1a1a2e);
+    z-index: 10;
+    padding: 0 16px;
+    display: flex;
+    flex-direction: column;
   }
 </style>

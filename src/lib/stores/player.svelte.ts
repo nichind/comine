@@ -92,7 +92,8 @@ export class PlayerState {
       this.thumbnail = opts.thumbnail ?? null;
       this.open = true;
       try {
-        mediaSrc = await invoke<string>('start_media_stream', { filePath: opts.filePath });
+        const tempPath = await invoke<string>('start_media_stream', { filePath: opts.filePath });
+        mediaSrc = convertFileSrc(tempPath);
         this._streaming = true;
       } catch (e) {
         // Streaming failed — fall back to system player

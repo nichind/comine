@@ -417,13 +417,18 @@ mod exec {
                             // For torrent downloads, detect the file path early
                             // from aria2's "FILE:" lines and emit it so the
                             // frontend can show a play button while downloading.
+                            // Only accept media files — skip subtitles, NFOs, etc.
                             if is_torrent && !early_path_sent {
                                 if let Some(path) = extract_aria2_file_line(&line) {
-                                    info!(target: "aria2", "Early file path detected: {}", path);
-                                    let _ = ctx.metadata_tx.send(
-                                        MetadataEvent::FilePath(path),
-                                    );
-                                    early_path_sent = true;
+                                    if is_media_extension(&path) {
+                                        info!(target: "aria2", "Early file path detected: {}", path);
+                                        let _ = ctx.metadata_tx.send(
+                                            MetadataEvent::FilePath(path),
+                                        );
+                                        early_path_sent = true;
+                                    } else {
+                                        debug!(target: "aria2", "Skipping non-media file: {}", path);
+                                    }
                                 }
                             }
                         }
@@ -500,6 +505,21 @@ mod exec {
             return None;
         }
         Some(clean.to_string())
+    }
+
+    /// Check if a file path has a media (video/audio) extension.
+    /// Used to filter out subtitle/text files when detecting early file paths from torrents.
+    #[cfg(desktop)]
+    fn is_media_extension(path: &str) -> bool {
+        const MEDIA_EXTS: &[&str] = &[
+            "mkv", "mp4", "avi", "wmv", "flv", "mov", "webm", "m4v", "mpg", "mpeg", "ts",
+            "vob", "ogv", "3gp", "m2ts", "mts", "divx", "rmvb", "asf",
+            "mp3", "flac", "wav", "aac", "ogg", "opus", "m4a", "wma", "alac", "ape", "aiff",
+        ];
+        path.rsplit('.')
+            .next()
+            .map(|ext| MEDIA_EXTS.contains(&ext.to_lowercase().as_str()))
+            .unwrap_or(false)
     }
 
     #[cfg(desktop)]

@@ -190,6 +190,10 @@ export function parseVTT(content: string): SubtitleCue[] {
  *
  * Supported formats: `'srt'`, `'vtt'`.
  * Returns an empty array for unsupported formats.
+ *
+ * When format is `'vtt'`, also detects SRT content (missing `WEBVTT` header)
+ * and routes to the SRT parser automatically. This handles edge-tts output
+ * which produces SRT-format content with a `.vtt` extension.
  */
 export function parseSubtitleContent(content: string, format: string): SubtitleCue[] {
   const fmt = format.toLowerCase().trim();
@@ -197,8 +201,15 @@ export function parseSubtitleContent(content: string, format: string): SubtitleC
   switch (fmt) {
     case 'srt':
       return parseSRT(content);
-    case 'vtt':
+    case 'vtt': {
+      // edge-tts (and some other tools) produce SRT-format content with a .vtt extension.
+      // Detect by checking for the WEBVTT header — if missing, parse as SRT.
+      const trimmed = content.trimStart();
+      if (!trimmed.startsWith('WEBVTT')) {
+        return parseSRT(content);
+      }
       return parseVTT(content);
+    }
     default:
       return [];
   }

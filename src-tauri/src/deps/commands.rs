@@ -4,7 +4,7 @@ use crate::proxy::ProxyConfig;
 use crate::types::{DependencyStatus, ReleaseInfo};
 
 use super::engine::cancel;
-use super::specs::{aria2, deno, edge_tts, ffmpeg, gallery_dl, lux, quickjs, ytdlp};
+use super::specs::{aria2, deno, edge_tts, ffmpeg, gallery_dl, lux, quickjs, whisper, ytdlp};
 
 #[allow(unused_imports)]
 pub use aria2::get_aria2_path;
@@ -265,6 +265,24 @@ pub async fn uninstall_edge_tts(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn check_whisper(
+    app: AppHandle,
+    check_updates: Option<bool>,
+) -> Result<DependencyStatus, String> {
+    whisper::check_whisper(app, check_updates).await
+}
+
+#[tauri::command]
+pub async fn install_whisper(app: AppHandle) -> Result<String, String> {
+    whisper::install_whisper(app).await
+}
+
+#[tauri::command]
+pub async fn uninstall_whisper(app: AppHandle) -> Result<(), String> {
+    whisper::uninstall_whisper(app).await
+}
+
+#[tauri::command]
 pub async fn cancel_dep_install(dep: String) -> Result<(), String> {
     const KNOWN_DEPS: &[&str] = &[
         "ytdlp",
@@ -275,6 +293,7 @@ pub async fn cancel_dep_install(dep: String) -> Result<(), String> {
         "lux",
         "gallery-dl",
         "edge-tts",
+        "whisper",
     ];
     if KNOWN_DEPS.contains(&dep.as_str()) {
         cancel::cancel(&dep);

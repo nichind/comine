@@ -46,6 +46,8 @@ function toOverrides(ui?: QueueAddOptions): Record<string, unknown> {
   if (ui.useAria2 !== undefined) o.useAria2 = ui.useAria2;
   if (ui.outputTemplate) o.outputTemplate = ui.outputTemplate;
   if (ui.clipRanges && ui.clipRanges.length > 0) o.clipRanges = ui.clipRanges;
+  if (ui.torrentSelectedFiles && ui.torrentSelectedFiles.length > 0)
+    o.torrentSelectedFiles = ui.torrentSelectedFiles;
   return o;
 }
 

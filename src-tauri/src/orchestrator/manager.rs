@@ -690,7 +690,7 @@ impl JobManager {
                 clip_ranges: o.clip_ranges.clone(),
                 use_aria2,
                 force_keyframes_at_cuts: false,
-                torrent_selected_files: None,
+                torrent_selected_files: o.torrent_selected_files.clone(),
             },
             post_process: Vec::new(),
         };

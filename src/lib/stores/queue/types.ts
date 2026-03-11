@@ -57,6 +57,7 @@ export interface QueueAddOptions {
   embedThumbnail?: boolean;
   outputTemplate?: string;
   clipRanges?: ClipRange[];
+  torrentSelectedFiles?: number[];
   prefetchedInfo?: PrefetchedInfo;
 }
 

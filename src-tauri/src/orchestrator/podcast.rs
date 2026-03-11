@@ -204,7 +204,6 @@ impl PodcastPipeline {
         let ytdlp = crate::deps::resolve_ytdlp_path(&self.app)
             .ok_or_else(|| "yt-dlp not installed. Install it from Settings → Dependencies.".to_string())?;
 
-        // yt-dlp writes files named: {workdir}/subs.{lang}.vtt (or similar)
         let subs_template = self.workdir.join("subs");
 
         info!(
@@ -215,58 +214,85 @@ impl PodcastPipeline {
         );
         let t = Instant::now();
 
-        let mut cmd = crate::utils::new_command(&ytdlp);
-        cmd.arg("--write-subs")
-            .arg("--write-auto-subs")
-            .arg("--skip-download")
-            .arg("--sub-lang")
-            .arg(&self.settings.subtitle_lang)
-            .arg("--sub-format")
-            .arg("vtt")
-            .arg("-o")
-            .arg(&subs_template)
-            .arg(&self.video_url)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        // Try configured language first, then fall back to any available language.
+        let lang_attempts = [self.settings.subtitle_lang.as_str(), "all"];
 
-        let result = timeout(Duration::from_secs(30), cmd.output())
-            .await
-            .map_err(|_| "yt-dlp subtitle download timed out (30s limit)".to_string())?
-            .map_err(|e| format!("yt-dlp failed to start: {}", e))?;
+        for (i, lang) in lang_attempts.iter().enumerate() {
+            if i > 0 {
+                // Clean up previous attempt's files
+                let _ = self.clean_vtt_files();
+                info!(
+                    history_id = %self.history_id,
+                    fallback_lang = %lang,
+                    "No subtitles found for '{}', retrying with any available language",
+                    self.settings.subtitle_lang
+                );
+            }
 
-        if !result.status.success() {
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            return Err(format!(
-                "yt-dlp subtitle download failed: {}",
-                stderr.lines().last().unwrap_or("unknown error")
-            ));
+            let mut cmd = crate::utils::new_command(&ytdlp);
+            cmd.arg("--write-subs")
+                .arg("--write-auto-subs")
+                .arg("--skip-download")
+                .arg("--sub-lang")
+                .arg(lang)
+                .arg("--sub-format")
+                .arg("vtt")
+                .arg("-o")
+                .arg(&subs_template)
+                .arg(&self.video_url)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            let result = timeout(Duration::from_secs(30), cmd.output())
+                .await
+                .map_err(|_| "yt-dlp subtitle download timed out (30s limit)".to_string())?
+                .map_err(|e| format!("yt-dlp failed to start: {}", e))?;
+
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                debug!(
+                    history_id = %self.history_id,
+                    lang = %lang,
+                    "yt-dlp subtitle attempt failed: {}",
+                    stderr.lines().last().unwrap_or("unknown error")
+                );
+                continue;
+            }
+
+            if let Ok(vtt_file) = self.find_vtt_file() {
+                let vtt_content = tokio::fs::read_to_string(&vtt_file)
+                    .await
+                    .map_err(|e| format!("Failed to read VTT subtitle file: {}", e))?;
+
+                let plain_text = vtt_to_plain_text(&vtt_content);
+
+                if plain_text.trim().is_empty() {
+                    debug!(history_id = %self.history_id, lang = %lang, "VTT file found but empty after parsing");
+                    continue;
+                }
+
+                let transcript_path = self.workdir.join("transcript.txt");
+                tokio::fs::write(&transcript_path, plain_text.as_bytes())
+                    .await
+                    .map_err(|e| format!("Failed to write transcript.txt: {}", e))?;
+
+                info!(
+                    history_id = %self.history_id,
+                    lang = %lang,
+                    elapsed_ms = %t.elapsed().as_millis(),
+                    "Podcast step 1/4: transcript fetched successfully"
+                );
+                return Ok(transcript_path);
+            }
         }
 
-        // Find the produced VTT file — yt-dlp appends lang code and extension.
-        // Pattern: subs.{lang}.vtt or subs.{lang}-{variant}.vtt
-        let vtt_file = self.find_vtt_file()?;
-
-        let vtt_content = tokio::fs::read_to_string(&vtt_file)
-            .await
-            .map_err(|e| format!("Failed to read VTT subtitle file: {}", e))?;
-
-        let plain_text = vtt_to_plain_text(&vtt_content);
-
-        if plain_text.trim().is_empty() {
-            return Err("No YouTube transcript available for this video".to_string());
-        }
-
-        let transcript_path = self.workdir.join("transcript.txt");
-        tokio::fs::write(&transcript_path, plain_text.as_bytes())
-            .await
-            .map_err(|e| format!("Failed to write transcript.txt: {}", e))?;
-
+        // Last resort: download audio and transcribe with Whisper.
         info!(
             history_id = %self.history_id,
-            elapsed_ms = %t.elapsed().as_millis(),
-            "Podcast step 1/4: transcript fetched successfully"
+            "No YouTube subtitles available, falling back to Whisper transcription"
         );
-        Ok(transcript_path)
+        self.emit_progress("transcribing_audio", 0.15, None);
+        self.whisper_transcribe(&ytdlp).await
     }
 
     fn find_vtt_file(&self) -> Result<PathBuf, String> {
@@ -281,6 +307,135 @@ impl PodcastPipeline {
         }
 
         Err("No YouTube transcript available for this video".to_string())
+    }
+
+    fn clean_vtt_files(&self) -> Result<(), String> {
+        let entries = std::fs::read_dir(&self.workdir)
+            .map_err(|e| format!("Failed to read workdir: {}", e))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("vtt") {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        Ok(())
+    }
+
+    // ── Step 1b: Whisper fallback — download audio and transcribe ──────────────
+
+    async fn whisper_transcribe(&self, ytdlp: &Path) -> Result<PathBuf, String> {
+        let whisper = find_tool("whisper", &self.app).ok_or_else(|| {
+            "No subtitles available and Whisper not found.\n\
+             Install with: pip install openai-whisper"
+                .to_string()
+        })?;
+
+        // Download audio only via yt-dlp.
+        let audio_path = self.workdir.join("audio.mp3");
+        info!(history_id = %self.history_id, "Downloading audio for Whisper transcription");
+
+        let mut dl_cmd = crate::utils::new_command(ytdlp);
+        dl_cmd
+            .arg("-x")
+            .arg("--audio-format")
+            .arg("mp3")
+            .arg("-o")
+            .arg(&audio_path)
+            .arg(&self.video_url)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let dl_result = timeout(Duration::from_secs(120), dl_cmd.output())
+            .await
+            .map_err(|_| "yt-dlp audio download timed out (120s limit)".to_string())?
+            .map_err(|e| format!("yt-dlp audio download failed: {}", e))?;
+
+        if !dl_result.status.success() {
+            let stderr = String::from_utf8_lossy(&dl_result.stderr);
+            return Err(format!(
+                "yt-dlp audio download failed: {}",
+                stderr.lines().last().unwrap_or("unknown error")
+            ));
+        }
+
+        // yt-dlp may append codec suffixes — find the actual audio file.
+        let actual_audio = self.find_audio_file()?.unwrap_or(audio_path);
+        if !actual_audio.exists() {
+            return Err("yt-dlp did not produce an audio file".to_string());
+        }
+
+        // Run Whisper on the audio. Use "base" model for speed.
+        info!(history_id = %self.history_id, "Running Whisper transcription");
+
+        let mut w_cmd = crate::utils::new_command(&whisper);
+        w_cmd
+            .arg(&actual_audio)
+            .arg("--model")
+            .arg("base")
+            .arg("--output_format")
+            .arg("txt")
+            .arg("--output_dir")
+            .arg(&self.workdir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        // Whisper can take a while, especially without GPU — 5 min timeout.
+        let w_result = timeout(Duration::from_secs(300), w_cmd.output())
+            .await
+            .map_err(|_| "Whisper transcription timed out (5 min limit)".to_string())?
+            .map_err(|e| format!("Whisper failed to start: {}", e))?;
+
+        if !w_result.status.success() {
+            let stderr = String::from_utf8_lossy(&w_result.stderr);
+            return Err(format!(
+                "Whisper transcription failed: {}",
+                stderr.lines().last().unwrap_or("unknown error")
+            ));
+        }
+
+        // Whisper outputs {stem}.txt in the output dir.
+        let stem = actual_audio
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "audio".to_string());
+        let whisper_txt = self.workdir.join(format!("{}.txt", stem));
+
+        if !whisper_txt.exists() {
+            return Err("Whisper did not produce a transcript file".to_string());
+        }
+
+        let content = tokio::fs::read_to_string(&whisper_txt)
+            .await
+            .map_err(|e| format!("Failed to read Whisper transcript: {}", e))?;
+
+        if content.trim().is_empty() {
+            return Err("Whisper produced an empty transcript".to_string());
+        }
+
+        // Write to the standard transcript.txt location.
+        let transcript_path = self.workdir.join("transcript.txt");
+        tokio::fs::write(&transcript_path, content.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to write transcript.txt: {}", e))?;
+
+        info!(history_id = %self.history_id, "Whisper transcription complete");
+        Ok(transcript_path)
+    }
+
+    fn find_audio_file(&self) -> Result<Option<PathBuf>, String> {
+        let entries = std::fs::read_dir(&self.workdir)
+            .map_err(|e| format!("Failed to read workdir: {}", e))?;
+
+        const AUDIO_EXTS: &[&str] = &["mp3", "m4a", "wav", "opus", "ogg", "webm"];
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if AUDIO_EXTS.contains(&ext) {
+                    return Ok(Some(path));
+                }
+            }
+        }
+        Ok(None)
     }
 
     // ── Step 2: Generate podcast script via Claude CLI ────────────────────────
@@ -305,10 +460,13 @@ impl PodcastPipeline {
 
         let prompt = self.settings.claude_prompt.as_deref().unwrap_or(
             "You are a podcast scriptwriter. Given this transcript from a YouTube video, \
-             write a concise podcast-style script (2-4 minutes spoken). Focus on the real \
-             takeaways and insights, not just paraphrasing. Write it optimized for spoken \
-             delivery — short sentences, natural rhythm, clear transitions. Start with a brief \
-             hook, cover the key points, end with a takeaway.",
+             write a concise podcast-style script (2-4 minutes spoken) in English. \
+             If the transcript is in another language, translate and adapt it to English. \
+             Focus on the real takeaways and insights, not just paraphrasing. Write it optimized \
+             for spoken delivery — short sentences, natural rhythm, clear transitions. \
+             Start directly with a hook about the content — do NOT begin with meta-commentary \
+             like 'Here is a podcast script' or 'Here's a summary'. Just start the script. \
+             Cover the key points and end with a takeaway.",
         );
 
         let full_prompt = format!(

@@ -16,7 +16,8 @@ export type DependencyName =
   | 'quickjs'
   | 'lux'
   | 'gallery_dl'
-  | 'edge_tts';
+  | 'edge_tts'
+  | 'whisper';
 
 export interface DepsState {
   ytdlp: DependencyStatus | null;
@@ -27,6 +28,7 @@ export interface DepsState {
   lux: DependencyStatus | null;
   gallery_dl: DependencyStatus | null;
   edge_tts: DependencyStatus | null;
+  whisper: DependencyStatus | null;
   checking: DependencyName | null;
   installingDeps: Set<DependencyName>;
   installProgressMap: Map<DependencyName, InstallProgress>;
@@ -45,6 +47,7 @@ const initialState: DepsState = {
   lux: null,
   gallery_dl: null,
   edge_tts: null,
+  whisper: null,
   checking: null,
   installingDeps: new Set(),
   installProgressMap: new Map(),
@@ -127,6 +130,14 @@ export const DEP_CONFIG: Record<DependencyName, DepConfigEntry> = {
     installCommand: 'install_edge_tts',
     uninstallCommand: 'uninstall_edge_tts',
     progressEvent: 'edge-tts-install-progress',
+  },
+  whisper: {
+    label: 'whisper',
+    required: false,
+    checkCommand: 'check_whisper',
+    installCommand: 'install_whisper',
+    uninstallCommand: 'uninstall_whisper',
+    progressEvent: 'whisper-install-progress',
   },
 };
 
@@ -377,6 +388,7 @@ function createDepsStore() {
         checkDep('lux'),
         checkDep('gallery_dl'),
         checkDep('edge_tts'),
+        checkDep('whisper'),
       ]);
       update((s) => ({ ...s, hasCheckedAll: true }));
       logs.debug('deps', 'All dependency checks complete');
