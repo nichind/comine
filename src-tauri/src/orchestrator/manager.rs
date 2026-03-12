@@ -705,14 +705,22 @@ impl JobManager {
         let playlist_id = req.playlist_id.clone();
         let playlist_title = req.playlist_title.clone();
         let playlist_index = req.playlist_index;
+        let prefetched_title = req.overrides.title.clone();
+        let prefetched_thumbnail = req.overrides.thumbnail.clone();
         let request = self.build_request_from_enqueue(&req).await?;
         let job_id = self.start_job(request).await?;
 
-        if playlist_id.is_some() || playlist_title.is_some() || playlist_index.is_some() {
-            if let Some(mut job) = self.jobs.get_mut(&job_id) {
+        if let Some(mut job) = self.jobs.get_mut(&job_id) {
+            if playlist_id.is_some() || playlist_title.is_some() || playlist_index.is_some() {
                 job.playlist_id = playlist_id;
                 job.playlist_title = playlist_title;
                 job.playlist_index = playlist_index;
+            }
+            if let Some(title) = prefetched_title {
+                job.title = Some(title);
+            }
+            if let Some(thumb) = prefetched_thumbnail {
+                job.thumbnail = Some(thumb);
             }
         }
 

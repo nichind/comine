@@ -48,6 +48,8 @@ function toOverrides(ui?: QueueAddOptions): Record<string, unknown> {
   if (ui.clipRanges && ui.clipRanges.length > 0) o.clipRanges = ui.clipRanges;
   if (ui.torrentSelectedFiles && ui.torrentSelectedFiles.length > 0)
     o.torrentSelectedFiles = ui.torrentSelectedFiles;
+  if (ui.prefetchedInfo?.title) o.title = ui.prefetchedInfo.title;
+  if (ui.prefetchedInfo?.thumbnail) o.thumbnail = ui.prefetchedInfo.thumbnail;
   return o;
 }
 

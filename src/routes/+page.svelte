@@ -560,6 +560,7 @@
                     class="url-input"
                     onfocus={() => invoke('set_url_input_focused', { focused: true })}
                     onblur={() => invoke('set_url_input_focused', { focused: false })}
+                    onkeydown={(e) => { if (e.key === 'Enter' && url.trim()) quickDownload(); }}
                   />
                   {#if url.trim() && canDownload && (isVideoUrl || isPlaylistUrl || isChannelUrl)}
                     <button

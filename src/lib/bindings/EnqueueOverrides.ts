@@ -5,4 +5,12 @@ export type EnqueueOverrides = { downloadMode: string | null, videoQuality: stri
 /**
  * Torrent file indices to download (1-based).
  */
-torrentSelectedFiles: Array<number> | null, };
+torrentSelectedFiles: Array<number> | null, 
+/**
+ * Prefetched title (e.g. individual torrent file name).
+ */
+title: string | null, 
+/**
+ * Prefetched thumbnail URL.
+ */
+thumbnail: string | null, };

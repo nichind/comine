@@ -1004,6 +1004,11 @@ pub struct EnqueueOverrides {
 
     /// Torrent file indices to download (1-based).
     pub torrent_selected_files: Option<Vec<u32>>,
+
+    /// Prefetched title (e.g. individual torrent file name).
+    pub title: Option<String>,
+    /// Prefetched thumbnail URL.
+    pub thumbnail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
