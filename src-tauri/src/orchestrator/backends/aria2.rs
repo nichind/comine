@@ -114,8 +114,9 @@ fn build_aria2_args(req: &DownloadRequest, config: &Aria2Config) -> Vec<Vec<Stri
 
         // Prioritize the beginning and end of each file so that media players
         // can determine codec/duration information quickly (streaming playback).
+        // MP4 moov atoms are often at the end and can be 10-30MB for large files.
         args.push(vec![
-            "--bt-prioritize-piece=head=100M,tail=1M".to_string(),
+            "--bt-prioritize-piece=head=100M,tail=32M".to_string(),
         ]);
 
         // Selective file download — only fetch the chosen indices (1-based).
