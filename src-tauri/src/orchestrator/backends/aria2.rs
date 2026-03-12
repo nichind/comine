@@ -388,6 +388,8 @@ mod exec {
         let job_id = ctx.job.id.clone();
         let is_torrent = is_torrent_url(&ctx.job.request.url);
         let mut early_path_sent = false;
+        // Track the actual file path detected from aria2's FILE: lines (for torrents).
+        let mut detected_file_path: Option<String> = None;
 
         loop {
             tokio::select! {
@@ -418,17 +420,17 @@ mod exec {
                             // For torrent downloads, detect the file path early
                             // from aria2's "FILE:" lines and emit it so the
                             // frontend can show a play button while downloading.
-                            // Only accept media files — skip subtitles, NFOs, etc.
-                            if is_torrent && !early_path_sent {
+                            if is_torrent {
                                 if let Some(path) = extract_aria2_file_line(&line) {
-                                    if is_media_extension(&path) {
+                                    if detected_file_path.is_none() {
+                                        detected_file_path = Some(path.clone());
+                                    }
+                                    if !early_path_sent && is_media_extension(&path) {
                                         info!(target: "aria2", "Early file path detected: {}", path);
                                         let _ = ctx.metadata_tx.send(
                                             MetadataEvent::FilePath(path),
                                         );
                                         early_path_sent = true;
-                                    } else {
-                                        debug!(target: "aria2", "Skipping non-media file: {}", path);
                                     }
                                 }
                             }
@@ -455,7 +457,25 @@ mod exec {
             )));
         }
 
-        let final_path = if output_path_count > 1 {
+        // For torrent single-file downloads, use the detected FILE: path
+        // directly — this is the actual file, not the torrent directory.
+        let has_single_selected = ctx
+            .job
+            .request
+            .options
+            .torrent_selected_files
+            .as_ref()
+            .map(|f| f.len() == 1)
+            .unwrap_or(false);
+
+        let final_path = if has_single_selected {
+            if let Some(ref path) = detected_file_path {
+                info!(target: "aria2", "Using detected file path for single-file torrent: {}", path);
+                path.clone()
+            } else {
+                output_path.unwrap_or_else(|| ctx.job.request.output.directory.clone())
+            }
+        } else if output_path_count > 1 {
             // Multi-file download (torrent): use parent directory
             output_path
                 .as_ref()
@@ -475,30 +495,6 @@ mod exec {
                     .unwrap_or("download");
                 format!("{}/{}", dir, filename)
             })
-        };
-
-        // For torrent single-file downloads: if path is a directory with
-        // exactly one file inside, resolve to the file instead of the directory.
-        let final_path = {
-            let p = std::path::Path::new(&final_path);
-            if p.is_dir() {
-                let mut files = Vec::new();
-                if let Ok(entries) = std::fs::read_dir(p) {
-                    for entry in entries.flatten() {
-                        if entry.path().is_file() {
-                            files.push(entry.path().to_string_lossy().to_string());
-                        }
-                    }
-                }
-                if files.len() == 1 {
-                    info!(target: "aria2", "Resolved single-file dir to: {}", files[0]);
-                    files.into_iter().next().unwrap()
-                } else {
-                    final_path
-                }
-            } else {
-                final_path
-            }
         };
 
         Ok(final_path)
