@@ -40,6 +40,7 @@
 
   import {
     isAndroid,
+    isIOS,
     isMobile as isMobilePlatform,
     onShareIntent,
     onNavigateTo,
@@ -338,6 +339,23 @@
         logs.log(level, source, message);
       });
       logs.info('system', 'Android log forwarding initialized');
+    }
+
+    // iOS: auto-start/stop background audio keep-alive when downloads are active
+    if (isIOS()) {
+      let bgAudioActive = false;
+      const unsub = activeDownloadsCount.subscribe((count) => {
+        if (count > 0 && !bgAudioActive) {
+          bgAudioActive = true;
+          invoke('ios_start_background_audio').catch(() => {});
+          logs.info('ios', 'Background audio started (downloads active)');
+        } else if (count === 0 && bgAudioActive) {
+          bgAudioActive = false;
+          invoke('ios_stop_background_audio').catch(() => {});
+          logs.info('ios', 'Background audio stopped (no active downloads)');
+        }
+      });
+      cleanups.push(unsub);
     }
   });
 
@@ -1614,6 +1632,7 @@
   .app.mobile {
     border-radius: 0;
     border: none;
+    background: rgb(19, 19, 19);
   }
 
   .app.mobile .main-container {
@@ -1624,7 +1643,16 @@
   .app.mobile .content-area {
     --mobile-nav-clearance: 96px;
     padding: 0 0 0 0;
-    padding-top: env(safe-area-inset-top, 24px);
+    padding-top: calc(env(safe-area-inset-top, 24px) + 8px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  @media (orientation: landscape) {
+    .app.mobile .content-area {
+      padding-top: calc(env(safe-area-inset-top, 8px) + 12px);
+    }
   }
 
   .app.mobile :global(.page-shell) {

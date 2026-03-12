@@ -32,8 +32,10 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+      - path: Shared
       - path: Assets.xcassets
       - path: Externals
+        buildPhase: none
       - path: comine_iOS
       - path: assets
         buildPhase: resources
@@ -45,6 +47,10 @@ targets:
         LSRequiresIPhoneOS: true
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        NSSupportsLiveActivities: true
+        UIBackgroundModes: [audio, fetch]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
@@ -66,7 +72,7 @@ targets:
       base:
         ENABLE_BITCODE: false
         ARCHS: [arm64]
-        VALID_ARCHS: arm64 
+        VALID_ARCHS: arm64
         LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)
         LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)
         ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: true
@@ -83,6 +89,10 @@ targets:
       - sdk: Security.framework
       - sdk: UIKit.framework
       - sdk: WebKit.framework
+      - sdk: AVFoundation.framework
+      - sdk: AudioToolbox.framework
+      - target: ComineLiveActivity
+        embed: true
     preBuildScripts:
       - script: pnpm tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths "${FRAMEWORK_SEARCH_PATHS:?}" --header-search-paths "${HEADER_SEARCH_PATHS:?}" --gcc-preprocessor-definitions "${GCC_PREPROCESSOR_DEFINITIONS:-}" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}
         name: Build Rust Code
@@ -90,3 +100,33 @@ targets:
         outputFiles:
           - $(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a
           - $(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a
+  ComineLiveActivity:
+    type: app-extension
+    platform: iOS
+    deploymentTarget:
+      iOS: 16.2
+    sources:
+      - path: ComineLiveActivity
+      - path: Shared
+    entitlements:
+      path: ComineLiveActivity/ComineLiveActivity.entitlements
+    info:
+      path: ComineLiveActivity/Info.plist
+      properties:
+        CFBundleDisplayName: Comine Downloads
+        CFBundleShortVersionString: 1.1.0
+        CFBundleVersion: "1.1.0"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.nichind.comine.live-activity
+        DEVELOPMENT_TEAM: 365KJHJCW7
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_STYLE: Automatic
+        ARCHS: [arm64]
+        SKIP_INSTALL: true
+        SWIFT_EMIT_LOC_STRINGS: true
+    dependencies:
+      - sdk: SwiftUI.framework
+      - sdk: WidgetKit.framework

@@ -68,7 +68,11 @@ export function filenameExt(path: string): string {
   const base = normalized.split('/').pop() || '';
   const idx = base.lastIndexOf('.');
   if (idx === -1) return '';
-  return base.slice(idx + 1).toLowerCase();
+  const raw = base.slice(idx + 1).toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Real file extensions are short (e.g. mp4, mkv, webm). If longer than 8
+  // chars it's likely a torrent directory name parsed incorrectly.
+  if (raw.length > 8) return '';
+  return raw;
 }
 
 export function jobToQueuePatch(job: Job): Partial<QueueItem> {

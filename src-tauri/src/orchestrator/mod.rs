@@ -265,6 +265,9 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
         .app_data_dir()
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
+    // Database uses lazy initialization — the SQLite connection is opened on
+    // first `conn()` call, not here. This prevents blocking the main thread
+    // on iOS where a watchdog kills apps that stall during startup.
     let db = crate::database::Database::new(&app_data_dir)
         .unwrap_or_else(|e| panic!("Failed to initialize database: {}", e));
 
@@ -282,6 +285,10 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
     let manager_clone = Arc::clone(&manager);
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
+        // Seed stats (first_launch, installation_id) — this triggers the lazy
+        // DB connection for the first time, safely off the main thread.
+        manager_clone.stats.ensure_seeded();
+
         manager_clone
             .stats
             .backfill_from_history(&manager_clone.history)
@@ -307,6 +314,17 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
         // explicitly by name if needed.
         // Session is lazy — DHT only starts on first download.
         {
+            // On iOS, download_dir() resolves to a path the sandbox doesn't permit.
+            // Use document_dir() first since that's the writable Documents folder.
+            #[cfg(target_os = "ios")]
+            let default_dir = app_clone
+                .path()
+                .document_dir()
+                .or_else(|_| app_clone.path().app_data_dir())
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| ".".to_string());
+
+            #[cfg(not(target_os = "ios"))]
             let default_dir = app_clone
                 .path()
                 .download_dir()

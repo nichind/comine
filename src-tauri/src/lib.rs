@@ -629,6 +629,164 @@ fn server_is_running() -> bool {
     server::is_running()
 }
 
+// iOS Swift FFI — uses dlsym for runtime symbol resolution because the Swift
+// symbols are compiled by Xcode AFTER the Rust static lib is built.
+#[cfg(target_os = "ios")]
+mod ios_ffi {
+    use std::ffi::{c_char, c_void, CString};
+
+    unsafe fn dlsym_fn(name: &str) -> *mut c_void {
+        let c_name = CString::new(name).unwrap();
+        unsafe { libc::dlsym(libc::RTLD_DEFAULT, c_name.as_ptr()) }
+    }
+
+    pub fn call_start_background_audio() {
+        unsafe {
+            let ptr = dlsym_fn("start_background_audio");
+            if !ptr.is_null() {
+                let f: extern "C" fn() = std::mem::transmute(ptr);
+                f();
+            }
+        }
+    }
+
+    pub fn call_stop_background_audio() {
+        unsafe {
+            let ptr = dlsym_fn("stop_background_audio");
+            if !ptr.is_null() {
+                let f: extern "C" fn() = std::mem::transmute(ptr);
+                f();
+            }
+        }
+    }
+
+    pub fn call_is_background_audio_running() -> bool {
+        unsafe {
+            let ptr = dlsym_fn("is_background_audio_running");
+            if !ptr.is_null() {
+                let f: extern "C" fn() -> bool = std::mem::transmute(ptr);
+                f()
+            } else {
+                false
+            }
+        }
+    }
+
+    pub fn call_live_activity_start(job_id: &str, title: &str) {
+        unsafe {
+            let ptr = dlsym_fn("live_activity_start");
+            if !ptr.is_null() {
+                let c_job = CString::new(job_id).unwrap_or_default();
+                let c_title = CString::new(title).unwrap_or_default();
+                let f: extern "C" fn(*const c_char, *const c_char) = std::mem::transmute(ptr);
+                f(c_job.as_ptr(), c_title.as_ptr());
+            }
+        }
+    }
+
+    pub fn call_live_activity_update(
+        job_id: &str,
+        progress: f64,
+        speed_bps: i64,
+        downloaded_bytes: i64,
+        total_bytes: i64,
+        eta: i32,
+    ) {
+        unsafe {
+            let ptr = dlsym_fn("live_activity_update");
+            if !ptr.is_null() {
+                let c_job = CString::new(job_id).unwrap_or_default();
+                let f: extern "C" fn(*const c_char, f64, i64, i64, i64, i32) =
+                    std::mem::transmute(ptr);
+                f(c_job.as_ptr(), progress, speed_bps, downloaded_bytes, total_bytes, eta);
+            }
+        }
+    }
+
+    pub fn call_live_activity_finish(job_id: &str) {
+        unsafe {
+            let ptr = dlsym_fn("live_activity_finish");
+            if !ptr.is_null() {
+                let c_job = CString::new(job_id).unwrap_or_default();
+                let f: extern "C" fn(*const c_char) = std::mem::transmute(ptr);
+                f(c_job.as_ptr());
+            }
+        }
+    }
+
+    pub fn call_live_activity_stop() {
+        unsafe {
+            let ptr = dlsym_fn("live_activity_stop");
+            if !ptr.is_null() {
+                let f: extern "C" fn() = std::mem::transmute(ptr);
+                f();
+            }
+        }
+    }
+
+    pub fn call_fix_viewport() {
+        unsafe {
+            let ptr = dlsym_fn("fix_ios_viewport");
+            if !ptr.is_null() {
+                let f: extern "C" fn() = std::mem::transmute(ptr);
+                f();
+            }
+        }
+    }
+}
+
+#[tauri::command]
+fn ios_start_background_audio() {
+    #[cfg(target_os = "ios")]
+    ios_ffi::call_start_background_audio();
+}
+
+#[tauri::command]
+fn ios_stop_background_audio() {
+    #[cfg(target_os = "ios")]
+    ios_ffi::call_stop_background_audio();
+}
+
+#[tauri::command]
+fn ios_is_background_audio_running() -> bool {
+    #[cfg(target_os = "ios")]
+    { ios_ffi::call_is_background_audio_running() }
+    #[cfg(not(target_os = "ios"))]
+    { false }
+}
+
+#[tauri::command]
+fn ios_live_activity_start(#[allow(unused)] job_id: String, #[allow(unused)] title: String) {
+    #[cfg(target_os = "ios")]
+    ios_ffi::call_live_activity_start(&job_id, &title);
+}
+
+#[tauri::command]
+#[allow(unused_variables)]
+fn ios_live_activity_update(
+    job_id: String,
+    progress: f64,
+    speed_bps: i64,
+    downloaded_bytes: i64,
+    total_bytes: i64,
+    eta: i32,
+) {
+    #[cfg(target_os = "ios")]
+    ios_ffi::call_live_activity_update(&job_id, progress, speed_bps, downloaded_bytes, total_bytes, eta);
+}
+
+#[tauri::command]
+fn ios_live_activity_finish(#[allow(unused)] job_id: String) {
+    #[cfg(target_os = "ios")]
+    ios_ffi::call_live_activity_finish(&job_id);
+}
+
+#[tauri::command]
+fn ios_live_activity_stop() {
+    #[cfg(target_os = "ios")]
+    ios_ffi::call_live_activity_stop();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -637,6 +795,9 @@ pub fn run() {
                 .targets([
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("comine".into()),
+                    }),
                 ])
                 .level(log::LevelFilter::Debug)
                 .build(),
@@ -786,6 +947,13 @@ pub fn run() {
         torrent_search::torrent_list_files,
         media_stream::start_media_stream,
         media_stream::stop_media_stream,
+        ios_start_background_audio,
+        ios_stop_background_audio,
+        ios_is_background_audio_running,
+        ios_live_activity_start,
+        ios_live_activity_update,
+        ios_live_activity_finish,
+        ios_live_activity_stop,
     ]);
 
     let builder = builder
@@ -806,6 +974,11 @@ pub fn run() {
             }
 
             deps::updater::start(app.handle());
+
+            #[cfg(target_os = "ios")]
+            {
+                ios_ffi::call_fix_viewport();
+            }
 
             #[cfg(desktop)]
             {

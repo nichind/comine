@@ -1,7 +1,9 @@
 import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import { translate } from '$lib/i18n';
 import { formatSpeed, formatTime } from '$lib/utils/format';
 import { safeDuration } from '$lib/utils/duration';
+import { isIOS } from '$lib/utils/android';
 import type { JobEvent } from '$lib/bindings';
 import type { DownloadStatus, QueueItem, QueueState } from './types';
 import {
@@ -14,6 +16,9 @@ import {
 } from './utils';
 import { setColorInCache } from '$lib/utils/color';
 import { pushSpeedPoint, clearSpeedPoints } from '$lib/stores/downloadSpeed';
+
+const _isIOS = typeof window !== 'undefined' && isIOS();
+let _liveActivityJobId: string | null = null;
 
 type StateUpdater = (fn: (state: QueueState) => QueueState) => void;
 
@@ -90,6 +95,13 @@ export async function setupJobEventListener(update: StateUpdater): Promise<Unlis
             statusMessage: translate('downloads.status.starting') || 'Starting',
             backendName: payload.data.backend,
           });
+          // iOS Dynamic Island: start Live Activity for the first active download
+          if (_isIOS && !_liveActivityJobId) {
+            _liveActivityJobId = jobId;
+            const title =
+              index !== -1 ? (newItems ?? state.items)[index].title || 'Downloading...' : 'Downloading...';
+            invoke('ios_live_activity_start', { jobId, title }).catch(() => {});
+          }
           break;
 
         case 'urlInfoPatched': {
@@ -155,6 +167,17 @@ export async function setupJobEventListener(update: StateUpdater): Promise<Unlis
               statusMessage,
             });
           }
+          // iOS Dynamic Island: update Live Activity
+          if (_isIOS && _liveActivityJobId === jobId) {
+            invoke('ios_live_activity_update', {
+              jobId,
+              progress: progress / 100,
+              speedBps: speedBps ?? 0,
+              downloadedBytes: payload.data.downloaded_bytes ?? 0,
+              totalBytes: payload.data.total_bytes ?? 0,
+              eta: payload.data.eta ?? 0,
+            }).catch(() => {});
+          }
           break;
         }
 
@@ -183,6 +206,10 @@ export async function setupJobEventListener(update: StateUpdater): Promise<Unlis
           if (index !== -1) {
             emit('download-status-changed', { url: newItems![index].url, status: 'cancelled' });
           }
+          if (_isIOS && _liveActivityJobId === jobId) {
+            invoke('ios_live_activity_stop').catch(() => {});
+            _liveActivityJobId = null;
+          }
           if (jobId) lastProgressUpdate.delete(jobId);
           break;
 
@@ -198,6 +225,10 @@ export async function setupJobEventListener(update: StateUpdater): Promise<Unlis
               status: 'failed',
               error: payload.data.error,
             });
+          }
+          if (_isIOS && _liveActivityJobId === jobId) {
+            invoke('ios_live_activity_stop').catch(() => {});
+            _liveActivityJobId = null;
           }
           if (jobId) lastProgressUpdate.delete(jobId);
           break;
@@ -225,6 +256,10 @@ export async function setupJobEventListener(update: StateUpdater): Promise<Unlis
               filePath: payload.data.output_path,
               title: item.title,
             });
+          }
+          if (_isIOS && _liveActivityJobId === jobId) {
+            invoke('ios_live_activity_finish', { jobId }).catch(() => {});
+            _liveActivityJobId = null;
           }
           if (jobId) lastProgressUpdate.delete(jobId);
           break;
