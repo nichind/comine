@@ -104,7 +104,7 @@ async fn get_default_download_dir() -> Result<String, String> {
 
 #[tauri::command]
 #[cfg(target_os = "android")]
-async fn open_file(path: String) -> Result<bool, String> {
+async fn open_file(path: String, _app: Option<String>) -> Result<bool, String> {
     use jni::objects::JValue;
 
     tracing::info!("open_file called with path: {}", path);
@@ -142,8 +142,29 @@ async fn open_file(path: String) -> Result<bool, String> {
 
 #[tauri::command]
 #[cfg(desktop)]
-async fn open_file(path: String) -> Result<bool, String> {
-    tracing::info!("open_file called with path: {}", path);
+async fn open_file(path: String, app: Option<String>) -> Result<bool, String> {
+    tracing::info!("open_file called with path: {}, app: {:?}", path, app);
+
+    if let Some(ref app_name) = app {
+        #[cfg(target_os = "macos")]
+        {
+            return std::process::Command::new("open")
+                .args(["-a", app_name, &path])
+                .spawn()
+                .map(|_| true)
+                .map_err(|e| format!("Failed to open with {}: {}", app_name, e));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            return std::process::Command::new(app_name.to_lowercase())
+                .arg(&path)
+                .spawn()
+                .map(|_| true)
+                .map_err(|e| format!("Failed to open with {}: {}", app_name, e));
+        }
+        // Windows / other: fall through to default opener
+    }
+
     opener::open(std::path::Path::new(&path))
         .map(|_| true)
         .map_err(|e| format!("Failed to open file: {}", e))
@@ -151,7 +172,7 @@ async fn open_file(path: String) -> Result<bool, String> {
 
 #[tauri::command]
 #[cfg(target_os = "ios")]
-async fn open_file(_path: String) -> Result<bool, String> {
+async fn open_file(_path: String, _app: Option<String>) -> Result<bool, String> {
     Ok(false)
 }
 

@@ -13,6 +13,7 @@
       entryCount?: number;
     };
     torrentQuery?: string;
+    torrentSearchState?: import('$lib/stores/navigation').TorrentSearchSnapshot;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     torrentResult?: any;
     mountedAt: number;
@@ -55,6 +56,7 @@
       url: current.url,
       cachedData: current.cachedData,
       torrentQuery: current.torrentQuery,
+      torrentSearchState: current.torrentSearchState,
       torrentResult: current.torrentResult,
       mountedAt: Date.now(),
     };
@@ -77,6 +79,7 @@
           url: topView.url,
           cachedData: topView.cachedData,
           torrentQuery: topView.torrentQuery,
+          torrentSearchState: topView.torrentSearchState,
           torrentResult: topView.torrentResult,
           mountedAt: Date.now(),
         };

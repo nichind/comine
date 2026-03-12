@@ -158,7 +158,16 @@
         toast.error($t('downloads.noFilePath'));
         return;
       }
-      if (item.type === 'video' || item.type === 'audio') {
+      if (item.type === 'torrent') {
+        // Torrent files often have codecs WebKit can't handle — use system player
+        player.openMedia({
+          filePath: item.filePath,
+          mediaType: 'video',
+          title: item.title,
+          thumbnail: item.thumbnail,
+          useSystemPlayer: true,
+        });
+      } else if (item.type === 'video' || item.type === 'audio') {
         player.openMedia({
           filePath: item.filePath,
           mediaType: item.type,

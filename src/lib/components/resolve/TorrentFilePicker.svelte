@@ -14,7 +14,7 @@
     magnetUrl: string;
     title: string;
     posterUrl?: string;
-    onConfirm?: (selectedFiles: number[]) => void;
+    onConfirm?: (selectedFiles: number[], selectedEntries: TorrentFileEntry[]) => void;
     onBack?: () => void;
   }
 
@@ -83,7 +83,9 @@
   }
 
   function handleConfirm() {
-    onConfirm?.(Array.from(selected).sort((a, b) => a - b));
+    const sortedIndices = Array.from(selected).sort((a, b) => a - b);
+    const selectedEntries = files.filter((f) => selected.has(f.index));
+    onConfirm?.(sortedIndices, selectedEntries);
   }
 
   $effect(() => {
@@ -369,7 +371,7 @@
   .file-list {
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 4px;
   }
 
   .file-row {

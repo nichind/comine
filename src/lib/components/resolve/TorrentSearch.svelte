@@ -2,7 +2,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { onMount, untrack } from 'svelte';
   import { t } from '$lib/i18n';
-  import { navigation } from '$lib/stores/navigation';
+  import { navigation, type TorrentSearchSnapshot } from '$lib/stores/navigation';
   import Icon from '$lib/components/ui/Icon.svelte';
   import { formatSize } from '$lib/utils/format';
 
@@ -37,24 +37,28 @@
 
   interface Props {
     initialQuery?: string;
+    savedState?: TorrentSearchSnapshot;
     onBack?: () => void;
   }
 
-  let { initialQuery = '', onBack }: Props = $props();
+  let { initialQuery = '', savedState, onBack }: Props = $props();
 
+  // Restore from snapshot if available, otherwise seed from initialQuery
   // eslint-disable-next-line svelte/reactivity -- intentional: seed state from prop once
-  let query = $state(untrack(() => initialQuery));
-  let contentType = $state<ContentType>('all');
-  let quality = $state<QualityFilter>('');
-  let sort = $state<SortFilter>('relevance');
-  let page = $state(1);
+  let query = $state(untrack(() => savedState?.query ?? initialQuery));
+  let contentType = $state<ContentType>(untrack(() => (savedState?.contentType as ContentType) ?? 'all'));
+  let quality = $state<QualityFilter>(untrack(() => (savedState?.quality as QualityFilter) ?? ''));
+  let sort = $state<SortFilter>(untrack(() => (savedState?.sort as SortFilter) ?? 'relevance'));
+  let page = $state(untrack(() => savedState?.page ?? 1));
 
-  let results = $state<TorrentSearchResult[]>([]);
-  let total = $state(0);
+  let results = $state<TorrentSearchResult[]>(untrack(() => savedState?.results ?? []));
+  let total = $state(untrack(() => savedState?.total ?? 0));
   let loading = $state(false);
   let loadingMore = $state(false);
   let error = $state<string | null>(null);
-  let hasSearched = $state(false);
+  let hasSearched = $state(untrack(() => savedState ? savedState.results.length > 0 : false));
+
+  let savedScrollTop = untrack(() => savedState?.scrollTop ?? 0);
 
   let suggestions = $state<string[]>([]);
   let showSuggestions = $state(false);
@@ -169,13 +173,38 @@
     applyFilter();
   });
 
+  let resultsAreaEl: HTMLDivElement | undefined;
+
   onMount(() => {
-    if (initialQuery) {
+    // If we have restored state with results, restore scroll position
+    if (savedState && savedState.results.length > 0) {
+      requestAnimationFrame(() => {
+        if (resultsAreaEl && savedScrollTop > 0) {
+          resultsAreaEl.scrollTop = savedScrollTop;
+        }
+      });
+    } else if (initialQuery) {
       doSearch();
     }
   });
 
+  function saveStateToNav() {
+    navigation.updateCurrent({
+      torrentSearchState: {
+        query,
+        contentType,
+        quality,
+        sort,
+        page,
+        results,
+        total,
+        scrollTop: resultsAreaEl?.scrollTop ?? 0,
+      },
+    });
+  }
+
   function openDetail(result: TorrentSearchResult) {
+    saveStateToNav();
     navigation.openTorrentDetail(result);
   }
 
@@ -287,7 +316,7 @@
     </div>
   </div>
 
-  <div class="results-area">
+  <div class="results-area" bind:this={resultsAreaEl}>
     {#if loading}
       <div class="state-container">
         <div class="spinner-wrap">

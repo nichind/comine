@@ -872,6 +872,7 @@
             {:else if view.type === 'torrent-search'}
               <TorrentSearch
                 initialQuery={view.torrentQuery}
+                savedState={view.torrentSearchState}
                 onBack={() => navigation.pop()}
               />
             {:else if view.type === 'torrent-detail'}

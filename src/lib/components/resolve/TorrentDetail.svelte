@@ -171,7 +171,7 @@
     return enrichedTorrents.indexOf(torrent);
   }
 
-  async function handleDownload(torrent: TorrentOption, index: number, selectedFiles?: number[]) {
+  async function handleDownload(torrent: TorrentOption, index: number, selectedFiles?: number[], displayTitle?: string) {
     const magnetUrl = torrent.magnetUrl ?? torrent.torrentUrl;
     if (!magnetUrl) {
       toast.error('No download URL available for this torrent');
@@ -183,17 +183,18 @@
       return;
     }
 
+    const title = displayTitle ?? result.title;
     downloadingIndex = index;
     try {
       queue.add(magnetUrl, {
         prefetchedInfo: {
-          title: result.title,
+          title,
           thumbnail: result.posterUrl ?? undefined,
         },
         useAria2: true,
         torrentSelectedFiles: selectedFiles,
       });
-      toast.info(`${result.title} — ${$t('downloads.started').replace('{title}', result.title)}`);
+      toast.info(`${title} — ${$t('downloads.started').replace('{title}', title)}`);
       navigation.replace({ type: 'home' });
     } catch (e) {
       toast.error(String(e));
@@ -215,11 +216,39 @@
     filePickerTorrentIndex = index;
   }
 
-  function handleFilePickerConfirm(selectedFiles: number[]) {
+  function handleFilePickerConfirm(selectedFiles: number[], selectedEntries: { index: number; path: string; size: number }[]) {
     const torrent = enrichedTorrents[filePickerTorrentIndex];
     if (!torrent) return;
     filePickerMagnet = null;
-    handleDownload(torrent, filePickerTorrentIndex, selectedFiles);
+
+    const magnetUrl = torrent.magnetUrl ?? torrent.torrentUrl;
+    if (!magnetUrl) {
+      toast.error('No download URL available for this torrent');
+      return;
+    }
+
+    // Each selected file starts its own download with its filename as the title
+    for (const entry of selectedEntries) {
+      const fileName = entry.path.split('/').pop() ?? entry.path;
+      const dot = fileName.lastIndexOf('.');
+      const title = dot > 0 ? fileName.slice(0, dot) : fileName;
+
+      queue.add(magnetUrl, {
+        prefetchedInfo: {
+          title,
+          thumbnail: result.posterUrl ?? undefined,
+        },
+        useAria2: true,
+        torrentSelectedFiles: [entry.index],
+      });
+    }
+
+    const count = selectedEntries.length;
+    toast.info(count === 1
+      ? `${selectedEntries[0].path.split('/').pop()} — download started`
+      : `${count} files — downloads started`
+    );
+    navigation.replace({ type: 'home' });
   }
 </script>
 
@@ -415,7 +444,7 @@
         magnetUrl={filePickerMagnet}
         title={filePickerTitle}
         posterUrl={result.posterUrl ?? undefined}
-        onConfirm={(selectedFiles) => handleFilePickerConfirm(selectedFiles)}
+        onConfirm={(selectedFiles, selectedEntries) => handleFilePickerConfirm(selectedFiles, selectedEntries)}
         onBack={() => (filePickerMagnet = null)}
       />
     </div>
@@ -840,7 +869,7 @@
   .file-picker-overlay {
     position: absolute;
     inset: 0;
-    background: var(--surface-base, #1a1a2e);
+    background: var(--bg-primary, #111);
     z-index: 10;
     padding: 0 16px;
     display: flex;

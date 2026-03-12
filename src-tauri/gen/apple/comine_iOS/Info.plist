@@ -27,6 +27,12 @@
 		<string>arm64</string>
 		<string>metal</string>
 	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Comine uses a local network connection to stream and manage media downloads.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

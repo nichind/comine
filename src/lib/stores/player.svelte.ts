@@ -18,6 +18,8 @@ export interface PlayerOpenOptions {
   mediaType: 'video' | 'audio';
   title?: string;
   thumbnail?: string;
+  /** Always open in the system player (VLC, etc.) instead of in-app. */
+  useSystemPlayer?: boolean;
 }
 
 export class PlayerState {
@@ -70,6 +72,10 @@ export class PlayerState {
     'opus',
   ]);
 
+  // Formats that should always open in the system player (VLC, etc.)
+  // rather than attempting in-app FFmpeg transcoding.
+  private static readonly SYSTEM_PLAYER_EXTENSIONS = new Set(['mkv']);
+
   loading = $state(false);
 
   // Whether we're currently using an FFmpeg stream (need cleanup on close)
@@ -78,6 +84,18 @@ export class PlayerState {
   // Methods
   async openMedia(opts: PlayerOpenOptions) {
     const ext = opts.filePath.split('.').pop()?.toLowerCase() ?? '';
+
+    // Explicit system player request (e.g. torrent downloads)
+    if (opts.useSystemPlayer) {
+      await openFile(opts.filePath, 'VLC');
+      return;
+    }
+
+    // Always delegate certain formats to the system player
+    if (!isMobile() && PlayerState.SYSTEM_PLAYER_EXTENSIONS.has(ext)) {
+      await openFile(opts.filePath, 'VLC');
+      return;
+    }
 
     let mediaSrc: string;
 

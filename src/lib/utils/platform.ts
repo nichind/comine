@@ -1,8 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 
-export async function openFile(filePath: string): Promise<boolean> {
+export async function openFile(filePath: string, app?: string): Promise<boolean> {
   try {
-    return await invoke<boolean>('open_file', { path: filePath });
+    return await invoke<boolean>('open_file', { path: filePath, app });
   } catch (e) {
     console.error('Failed to open file:', e);
     return false;

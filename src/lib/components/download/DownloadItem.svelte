@@ -45,6 +45,7 @@
       mediaType: 'video',
       title: item.title,
       thumbnail: item.thumbnail,
+      useSystemPlayer: true,
     });
   }
 

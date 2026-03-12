@@ -75,6 +75,8 @@
     if (!el) return;
 
     el.src = player.mediaSrc ?? '';
+    // Clear any stale error when a new source is set
+    if (player.mediaSrc) player.error = null;
 
     const onPlay = () => {
       player.playing = true;
@@ -97,6 +99,9 @@
       player.playing = false;
     };
     const onError = () => {
+      // Don't flag errors while loading (FFmpeg streaming not ready yet)
+      // or when the src is empty/unset (cleanup phase)
+      if (player.loading || !el.src) return;
       player.error = 'player.playbackError';
     };
     const onLoadedMetadata = () => {
@@ -353,16 +358,13 @@
         </div>
       {/if}
 
-      <!-- Loading overlay (remux in progress) -->
+      <!-- Loading overlay (remux in progress) — takes priority over error -->
       {#if player.loading}
         <div class="loading-display">
           <div class="loading-spinner"></div>
           <p>Preparing video...</p>
         </div>
-      {/if}
-
-      <!-- Error display -->
-      {#if player.error}
+      {:else if player.error}
         <div class="error-display">
           <p>{$t(player.error)}</p>
         </div>

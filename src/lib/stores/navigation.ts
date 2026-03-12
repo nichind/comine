@@ -4,11 +4,24 @@ import { getQuickThumbnail } from '$lib/utils/thumbnailUtils';
 
 type ViewType = 'home' | 'video' | 'playlist' | 'channel' | 'torrent-search' | 'torrent-detail';
 
+export interface TorrentSearchSnapshot {
+  query: string;
+  contentType: string;
+  quality: string;
+  sort: string;
+  page: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  results: any[];
+  total: number;
+  scrollTop: number;
+}
+
 export interface ViewState {
   type: ViewType;
   url?: string;
   cachedData?: MediaPreview;
   torrentQuery?: string;
+  torrentSearchState?: TorrentSearchSnapshot;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   torrentResult?: any;
 }
@@ -72,6 +85,16 @@ function createNavigationStore() {
         ...state,
         stack: [...state.stack.slice(0, -1), view],
       }));
+    },
+
+    /** Update the current (top) view state in-place without changing the stack structure. */
+    updateCurrent(patch: Partial<ViewState>) {
+      update((state) => {
+        const stack = [...state.stack];
+        const top = { ...stack[stack.length - 1], ...patch };
+        stack[stack.length - 1] = top;
+        return { ...state, stack };
+      });
     },
 
     reset() {

@@ -110,6 +110,7 @@ fn build_aria2_args(req: &DownloadRequest, config: &Aria2Config) -> Vec<Vec<Stri
         args.push(vec!["--enable-dht=true".to_string()]);
         args.push(vec!["--bt-enable-lpd=true".to_string()]);
         args.push(vec!["--seed-ratio".to_string(), "0.0".to_string()]);
+        args.push(vec!["--seed-time".to_string(), "0".to_string()]);
 
         // Prioritize the beginning and end of each file so that media players
         // can determine codec/duration information quickly (streaming playback).
