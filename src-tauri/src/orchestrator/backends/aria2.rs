@@ -477,6 +477,30 @@ mod exec {
             })
         };
 
+        // For torrent single-file downloads: if path is a directory with
+        // exactly one file inside, resolve to the file instead of the directory.
+        let final_path = {
+            let p = std::path::Path::new(&final_path);
+            if p.is_dir() {
+                let mut files = Vec::new();
+                if let Ok(entries) = std::fs::read_dir(p) {
+                    for entry in entries.flatten() {
+                        if entry.path().is_file() {
+                            files.push(entry.path().to_string_lossy().to_string());
+                        }
+                    }
+                }
+                if files.len() == 1 {
+                    info!(target: "aria2", "Resolved single-file dir to: {}", files[0]);
+                    files.into_iter().next().unwrap()
+                } else {
+                    final_path
+                }
+            } else {
+                final_path
+            }
+        };
+
         Ok(final_path)
     }
 
@@ -527,14 +551,8 @@ mod exec {
     pub(super) fn extract_output_path(line: &str) -> Option<String> {
         if line.contains("Download complete:") {
             let path = line.split("Download complete:").nth(1)?.trim();
-            if !path.is_empty() {
-                return Some(path.to_string());
-            }
-        }
-
-        if line.contains("[NOTICE]") && line.contains("Download complete:") {
-            let path = line.split("Download complete:").nth(1)?.trim();
-            if !path.is_empty() {
+            // Skip [MEMORY] metadata lines — these are torrent metadata, not real files
+            if !path.is_empty() && !path.starts_with("[MEMORY]") {
                 return Some(path.to_string());
             }
         }
