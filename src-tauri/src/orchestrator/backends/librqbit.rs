@@ -7,6 +7,8 @@
 //!
 //! The `librqbit::Session` is created lazily on first download to avoid noisy DHT bootstrap
 //! when the backend is never actually used (i.e. on desktop where aria2 handles torrents).
+//! The session is shared via `SharedLibrqbitSession` so that both the download backend and
+//! the `torrent_list_files` command can reuse the same DHT connections.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,24 +23,25 @@ use crate::orchestrator::backends::{
 };
 use crate::orchestrator::types::*;
 
-pub struct LibrqbitBackend {
-    download_dir: String,
+/// Shared, lazily-initialised librqbit session.
+/// Registered as Tauri managed state so that both `LibrqbitBackend` (downloads) and
+/// `torrent_list_files` (file listing on mobile) share the same DHT connections.
+pub struct SharedLibrqbitSession {
     session: OnceCell<Arc<librqbit::Session>>,
+    download_dir: String,
 }
 
-impl LibrqbitBackend {
-    /// Create a new backend. The librqbit session is NOT started yet — it will be
-    /// initialised lazily on the first `spawn()` call to avoid DHT noise at boot.
+impl SharedLibrqbitSession {
     pub fn new(download_dir: &str) -> Self {
-        info!(target: "librqbit", download_dir = %download_dir, "LibrqbitBackend created");
+        info!(target: "librqbit", download_dir = %download_dir, "SharedLibrqbitSession created");
         Self {
-            download_dir: download_dir.to_string(),
             session: OnceCell::new(),
+            download_dir: download_dir.to_string(),
         }
     }
 
     /// Get or create the librqbit session.
-    async fn session(&self) -> Result<&Arc<librqbit::Session>, BackendError> {
+    pub async fn get(&self) -> Result<&Arc<librqbit::Session>, BackendError> {
         self.session
             .get_or_try_init(|| async {
                 let path = PathBuf::from(&self.download_dir);
@@ -71,6 +74,20 @@ impl LibrqbitBackend {
                 Ok(session)
             })
             .await
+    }
+}
+
+pub struct LibrqbitBackend {
+    shared: Arc<SharedLibrqbitSession>,
+}
+
+impl LibrqbitBackend {
+    pub fn new(shared: Arc<SharedLibrqbitSession>) -> Self {
+        Self { shared }
+    }
+
+    async fn session(&self) -> Result<&Arc<librqbit::Session>, BackendError> {
+        self.shared.get().await
     }
 }
 
@@ -244,6 +261,10 @@ async fn run_progress_loop(
     let mut last_progress_bytes: u64 = 0;
     let mut last_tick = tokio::time::Instant::now();
     let mut log_counter: u32 = 0;
+    // Exponential moving average for speed smoothing (α = 0.3).
+    // Prevents the jumpy 0 → burst → 0 pattern caused by iOS network buffering.
+    let mut smoothed_speed: f64 = 0.0;
+    const EMA_ALPHA: f64 = 0.3;
 
     loop {
         tokio::select! {
@@ -256,7 +277,11 @@ async fn run_progress_loop(
 
                 let elapsed_secs = last_tick.elapsed().as_secs_f64().max(0.001);
                 let speed_bytes = stats.progress_bytes.saturating_sub(last_progress_bytes);
-                let speed = Some((speed_bytes as f64 / elapsed_secs) as u64);
+                let instant_speed = speed_bytes as f64 / elapsed_secs;
+
+                // EMA smoothing: new = α * instant + (1 - α) * previous
+                smoothed_speed = EMA_ALPHA * instant_speed + (1.0 - EMA_ALPHA) * smoothed_speed;
+                let speed = Some(smoothed_speed as u64);
 
                 let total_bytes = if stats.total_bytes > 0 {
                     Some(stats.total_bytes)

@@ -312,7 +312,7 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
         // On iOS it takes Priority::Absolute for torrent URLs (aria2 is unavailable there).
         // On other platforms it returns Priority::None so aria2 wins; it can still be forced
         // explicitly by name if needed.
-        // Session is lazy — DHT only starts on first download.
+        // Session is lazy — DHT only starts on first download or file listing.
         {
             // On iOS, download_dir() resolves to a path the sandbox doesn't permit.
             // Use document_dir() first since that's the writable Documents folder.
@@ -333,7 +333,13 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| ".".to_string());
 
-            let backend = crate::orchestrator::backends::librqbit::LibrqbitBackend::new(&default_dir);
+            let shared_session = Arc::new(
+                crate::orchestrator::backends::librqbit::SharedLibrqbitSession::new(&default_dir),
+            );
+            // Register the shared session as Tauri managed state so torrent_list_files can use it.
+            app_clone.manage(shared_session.clone());
+            let backend =
+                crate::orchestrator::backends::librqbit::LibrqbitBackend::new(shared_session);
             manager_clone.register_backend(Arc::new(backend)).await;
         }
 

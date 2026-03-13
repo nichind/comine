@@ -172,8 +172,10 @@ async fn open_file(path: String, app: Option<String>) -> Result<bool, String> {
 
 #[tauri::command]
 #[cfg(target_os = "ios")]
-async fn open_file(_path: String, _app: Option<String>) -> Result<bool, String> {
-    Ok(false)
+async fn open_file(path: String, _app: Option<String>) -> Result<bool, String> {
+    tracing::info!("open_file (iOS): presenting Open In… sheet for {}", path);
+    ios_ffi::call_open_file(&path);
+    Ok(true)
 }
 
 #[tauri::command]
@@ -720,6 +722,17 @@ mod ios_ffi {
             if !ptr.is_null() {
                 let f: extern "C" fn() = std::mem::transmute(ptr);
                 f();
+            }
+        }
+    }
+
+    pub fn call_open_file(path: &str) {
+        unsafe {
+            let ptr = dlsym_fn("ios_open_file");
+            if !ptr.is_null() {
+                let c_path = CString::new(path).unwrap_or_default();
+                let f: extern "C" fn(*const c_char) = std::mem::transmute(ptr);
+                f(c_path.as_ptr());
             }
         }
     }

@@ -875,4 +875,18 @@
     display: flex;
     flex-direction: column;
   }
+
+  @media (max-width: 640px) {
+    .col-codec, .col-score { display: none; }
+    .table-head:not(.with-name) > span:nth-child(2),
+    .table-head:not(.with-name) > span:nth-child(5) { display: none; }
+    .table-head.with-name > span:nth-child(3),
+    .table-head.with-name > span:nth-child(6) { display: none; }
+    .table-head:not(.with-name), .torrents-table:not(.with-name) .table-row {
+      grid-template-columns: 60px 60px 65px auto; gap: 6px;
+    }
+    .table-head.with-name, .torrents-table.with-name .table-row {
+      grid-template-columns: 1fr 55px 50px 60px auto; gap: 4px;
+    }
+  }
 </style>

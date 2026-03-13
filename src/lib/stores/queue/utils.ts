@@ -63,16 +63,27 @@ export function statusMessageFor(status: DownloadStatus): string {
   }
 }
 
+const KNOWN_EXTENSIONS = new Set([
+  'mp4', 'mkv', 'webm', 'avi', 'mov', 'flv', 'wmv', 'mpg', 'mpeg', 'ts', 'm4v',
+  'mp3', 'flac', 'wav', 'aac', 'ogg', 'opus', 'wma', 'm4a', 'aiff',
+  'zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz',
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'tiff', 'avif',
+  'pdf', 'srt', 'vtt', 'ass', 'sub', 'txt',
+]);
+
 export function filenameExt(path: string): string {
   const normalized = path.replace(/\\/g, '/');
   const base = normalized.split('/').pop() || '';
-  const idx = base.lastIndexOf('.');
-  if (idx === -1) return '';
-  const raw = base.slice(idx + 1).toLowerCase().replace(/[^a-z0-9]/g, '');
-  // Real file extensions are short (e.g. mp4, mkv, webm). If longer than 8
-  // chars it's likely a torrent directory name parsed incorrectly.
-  if (raw.length > 8) return '';
-  return raw;
+  // Walk dots from the end to find a known extension, skipping bracketed
+  // suffixes like [YTS.MX] that aren't real extensions.
+  const parts = base.split('.');
+  for (let i = parts.length - 1; i >= 1; i--) {
+    const candidate = parts[i].toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (candidate.length > 0 && candidate.length <= 5 && KNOWN_EXTENSIONS.has(candidate)) {
+      return candidate;
+    }
+  }
+  return '';
 }
 
 export function jobToQueuePatch(job: Job): Partial<QueueItem> {

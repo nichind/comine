@@ -8,6 +8,11 @@ Cross-platform media downloader. Tauri 2 + Svelte 5 + Rust. Targets Windows, mac
 pnpm dev                    # Frontend dev server (port 1420)
 pnpm tauri dev              # Full app dev (frontend + Rust)
 pnpm tauri dev --target android  # Android dev
+
+# iOS build + deploy (MUST use this sequence, NOT `pnpm tauri ios dev`)
+cd src-tauri/gen/apple && xcodegen generate  # 1. Regenerate Xcode project from project.yml
+pnpm tauri ios build --debug                 # 2. Build debug IPA
+ios-deploy --bundle src-tauri/gen/apple/build/arm64/comine.ipa  # 3. Deploy to device
 pnpm build                  # Production frontend build
 pnpm check                  # svelte-kit sync + svelte-check
 pnpm format                 # Prettier (frontend)
@@ -77,3 +82,4 @@ Frontend calls Rust via `invoke('command_name', { args })`. Backend emits events
 - Linux: Updater disabled (package manager handles updates).
 - Windows: Set `PYTHONIOENCODING=utf-8` for yt-dlp subprocess. Acrylic/Mica window effects.
 - macOS: Vibrancy effects. Universal binary (arm64 + x64).
+- iOS: Do NOT use `pnpm tauri ios dev` — it produces a black screen. Always use `xcodegen generate` + `pnpm tauri ios build --debug` + `ios-deploy`. Clear DerivedData (`rm -rf ~/Library/Developer/Xcode/DerivedData/comine-*`) if builds behave unexpectedly. XcodeGen project config lives in `src-tauri/gen/apple/project.yml`.

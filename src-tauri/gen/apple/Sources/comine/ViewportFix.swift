@@ -55,6 +55,55 @@ private func applyViewportFix() {
     }
 }
 
+// MARK: - Open file via system "Open In…" sheet (UIDocumentInteractionController)
+
+/// Delegate that retains itself until the interaction is dismissed.
+private class DocInteractionDelegate: NSObject, UIDocumentInteractionControllerDelegate {
+    static var current: DocInteractionDelegate?
+    var controller: UIDocumentInteractionController?
+
+    func documentInteractionControllerViewControllerForPreview(
+        _ controller: UIDocumentInteractionController
+    ) -> UIViewController {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootVC = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+            return UIViewController()
+        }
+        return rootVC
+    }
+
+    func documentInteractionControllerDidDismissOpenInMenu(
+        _ controller: UIDocumentInteractionController
+    ) {
+        DocInteractionDelegate.current = nil
+    }
+}
+
+@_cdecl("ios_open_file")
+func iosOpenFile(_ pathPtr: UnsafePointer<CChar>) {
+    let path = String(cString: pathPtr)
+    let url = URL(fileURLWithPath: path)
+
+    DispatchQueue.main.async {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootVC = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+            NSLog("[OpenFile] No root VC")
+            return
+        }
+
+        let delegate = DocInteractionDelegate()
+        let dic = UIDocumentInteractionController(url: url)
+        dic.delegate = delegate
+        delegate.controller = dic
+        DocInteractionDelegate.current = delegate
+
+        // Try "Open In…" menu first; falls back to options menu
+        if !dic.presentOpenInMenu(from: .zero, in: rootVC.view, animated: true) {
+            dic.presentOptionsMenu(from: .zero, in: rootVC.view, animated: true)
+        }
+    }
+}
+
 @_cdecl("fix_ios_viewport")
 func fixIosViewport() {
     NSLog("[ViewportFix] Called from Rust")

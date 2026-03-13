@@ -3,6 +3,7 @@ import type { UnifiedDownloadItem } from '$lib/stores/downloadsState.svelte';
 import type { DownloadsContext } from '$lib/stores/downloadsContext';
 import { getConversionFormats, type FormatOption } from '$lib/utils/conversion';
 import { openFile } from '$lib/utils/platform';
+import { isMobile } from '$lib/utils/android';
 import { queue } from '$lib/stores/queue';
 import { history } from '$lib/stores/history';
 
@@ -44,13 +45,19 @@ export function buildHistoryItemMenuItems(
 ): MenuItem[] {
   const isMediaType = item.type === 'video' || item.type === 'audio';
   const hasChannelUrl = !!item.authorUrl;
+  const isTorrentOnMobile = item.type === 'torrent' && isMobile();
 
   const items: MenuItem[] = [
-    { id: 'play', label: t('downloads.play'), icon: 'play', disabled: fileMissing },
+    {
+      id: 'play',
+      label: isTorrentOnMobile ? 'Open in VLC' : t('downloads.play'),
+      icon: isTorrentOnMobile ? 'arrow_outward' : 'play',
+      disabled: fileMissing,
+    },
     { id: 'details', label: t('downloads.showDetails'), icon: 'info' },
   ];
 
-  if (isMediaType) {
+  if (isMediaType && !isTorrentOnMobile) {
     items.push({
       id: 'systemPlayer',
       label: t('downloads.playWithSystemPlayer'),

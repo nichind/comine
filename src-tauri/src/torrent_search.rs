@@ -263,14 +263,52 @@ pub async fn torrent_list_files(
     Ok(entries)
 }
 
-/// Mobile stub — aria2 is not available on mobile.
+/// Mobile: list files via librqbit's list_only mode (no aria2 subprocess available).
 #[cfg(mobile)]
 #[tauri::command]
 pub async fn torrent_list_files(
-    _app: AppHandle,
-    _magnet_url: String,
+    app: AppHandle,
+    magnet_url: String,
 ) -> Result<Vec<TorrentFileEntry>, String> {
-    Err("Torrent file listing is not supported on mobile.".to_string())
+    use std::sync::Arc;
+    use tauri::Manager;
+    use crate::orchestrator::backends::librqbit::SharedLibrqbitSession;
+
+    debug!("torrent_list_files (mobile): magnet_url={:?}", magnet_url);
+
+    let shared = app.state::<Arc<SharedLibrqbitSession>>();
+    let session = shared.get().await.map_err(|e| e.to_string())?;
+
+    let add_opts = librqbit::AddTorrentOptions {
+        list_only: true,
+        ..Default::default()
+    };
+
+    let response = session
+        .add_torrent(librqbit::AddTorrent::from_url(&magnet_url), Some(add_opts))
+        .await
+        .map_err(|e| format!("Failed to fetch torrent metadata: {}", e))?;
+
+    match response {
+        librqbit::AddTorrentResponse::ListOnly(list) => {
+            let entries: Vec<TorrentFileEntry> = list
+                .info
+                .iter_file_details()
+                .map_err(|e| format!("Failed to parse file details: {}", e))?
+                .enumerate()
+                .map(|(i, details)| TorrentFileEntry {
+                    index: (i + 1) as u32, // 1-based to match aria2 convention
+                    path: details
+                        .filename
+                        .to_string()
+                        .unwrap_or_else(|_| format!("file_{}", i)),
+                    size: details.len,
+                })
+                .collect();
+            Ok(entries)
+        }
+        _ => Err("Unexpected response from librqbit (expected ListOnly)".to_string()),
+    }
 }
 
 // ── aria2 subprocess helpers (desktop only) ──────────────────────────────────

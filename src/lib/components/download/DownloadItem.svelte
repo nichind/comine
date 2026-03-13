@@ -38,6 +38,8 @@
     item.type === 'torrent' && dl.isDownloading && !!item.filePath
   );
 
+  let isTorrentOnMobile = $derived(item.type === 'torrent' && isMobile());
+
   function playTorrentFile() {
     if (!item.filePath) return;
     player.openMedia({
@@ -603,7 +605,12 @@
     <div class="col-thumb">
       {@render thumbnailContent(getTypeIcon(item.type), 20, 'thumbnail-placeholder')}
 
-      {#if dl.isDownloading}
+      {#if dl.isDownloading && canPlayWhileDownloading && isTorrentOnMobile}
+        <button class="thumb-vlc-overlay" onclick={(e) => { e.stopPropagation(); playTorrentFile(); }}
+          use:tooltip={'Open in VLC'}>
+          <Icon name="arrow_outward" size={14} />
+        </button>
+      {:else if dl.isDownloading}
         <div class="spinner-overlay">
           <div class="spinner"></div>
         </div>
@@ -1033,6 +1040,15 @@
   .col-thumb:hover .thumb-play-overlay,
   .thumb-play-overlay:focus {
     opacity: 1;
+  }
+
+  .thumb-vlc-overlay {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(99, 102, 241, 0.7);
+    backdrop-filter: blur(2px);
+    border: none; border-radius: inherit;
+    color: white; cursor: pointer;
   }
 
   .spinner-overlay {
