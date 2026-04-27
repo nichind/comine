@@ -95,7 +95,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Icon, { type IconName } from '$lib/components/ui/Icon.svelte';
   import { settings, type ToastPosition } from '$lib/stores/settings';
-  import { isAndroid } from '$lib/utils/android';
+  import { isMobile } from '$lib/utils/android';
 
   const iconMap: Record<ToastType, IconName> = {
     success: 'check',
@@ -107,7 +107,7 @@
   };
 
   let position = $derived<ToastPosition>(
-    $settings.toastPosition || (browser && isAndroid() ? 'top-right' : 'bottom-right')
+    $settings.toastPosition || (browser && isMobile() ? 'top-right' : 'bottom-right')
   );
 
   let flyX = $derived(position.includes('left') ? -18 : position.includes('right') ? 18 : 0);

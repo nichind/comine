@@ -40,7 +40,7 @@
   let dropdownEl = $state<HTMLElement>();
 
   const isRich = $derived(options.some((o) => !!o.description));
-  const rowHeight = $derived(isRich ? 60 : 40);
+  const rowHeight = $derived(isRich ? 60 : 36);
 
   let layout = $state({
     top: 0,

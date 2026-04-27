@@ -1,48 +1,48 @@
 use std::path::Path;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 use futures_util::StreamExt;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 use tracing::{debug, error, info, warn};
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 use tokio::io::AsyncWriteExt;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 use tokio_util::sync::CancellationToken;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 use crate::proxy::{proxy_strategies, ProxyConfig};
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 use crate::types::InstallProgress;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 use super::progress::ProgressEmitter;
 
 use crate::deps::error::{DepsError, DepsResult, DownloadError};
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 const HTTP_TIMEOUT_SECS: u64 = 600;
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 const HTTP_CONNECT_TIMEOUT_SECS: u64 = 60;
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 const TCP_KEEPALIVE_SECS: u64 = 30;
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 const MAX_REDIRECTS: usize = 10;
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 const MAX_RETRY_ATTEMPTS: u32 = 5;
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 const PROGRESS_EMIT_INTERVAL_MS: u128 = 100;
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 use crate::orchestrator::types::constants::USER_AGENT;
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 const RATELIMIT_DELAY_SECS: u64 = 10;
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 const RATELIMIT_MAX_DELAY_SECS: u64 = 60;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 fn http_client(proxy_url: Option<&str>) -> Result<reqwest::Client, DownloadError> {
     let mut builder = reqwest::Client::builder()
         .user_agent(USER_AGENT)
@@ -74,7 +74,7 @@ fn http_client(proxy_url: Option<&str>) -> Result<reqwest::Client, DownloadError
         .map_err(|e| DownloadError::Request(format!("Failed to build HTTP client: {e}")))
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 async fn fetch(
     url: &str,
     proxy_config: &ProxyConfig,
@@ -158,7 +158,7 @@ async fn fetch(
     Err(last_error)
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub async fn download_file_with_checksum(
     url: &str,
     dest: &Path,
@@ -295,7 +295,7 @@ pub async fn download_file_with_checksum(
     Ok(())
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub async fn fetch_json<T: serde::de::DeserializeOwned>(
     url: &str,
     proxy_config: &ProxyConfig,
@@ -307,7 +307,7 @@ pub async fn fetch_json<T: serde::de::DeserializeOwned>(
         .map_err(|e| DepsError::other(format!("Failed to parse JSON: {}", e)))
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub async fn fetch_text(url: &str, proxy_config: &ProxyConfig) -> DepsResult<String> {
     let response = fetch(url, proxy_config, None).await?;
     response
@@ -316,27 +316,27 @@ pub async fn fetch_text(url: &str, proxy_config: &ProxyConfig) -> DepsResult<Str
         .map_err(|e| DepsError::other(format!("Failed to read text: {}", e)))
 }
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 pub async fn fetch_json<T: serde::de::DeserializeOwned>(
     _url: &str,
     _proxy_config: &crate::proxy::ProxyConfig,
 ) -> DepsResult<T> {
     Err(DepsError::UnsupportedPlatform(
-        "fetch_json not supported on Android",
+        "fetch_json not supported on mobile",
     ))
 }
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 pub async fn fetch_text(
     _url: &str,
     _proxy_config: &crate::proxy::ProxyConfig,
 ) -> DepsResult<String> {
     Err(DepsError::UnsupportedPlatform(
-        "fetch_text not supported on Android",
+        "fetch_text not supported on mobile",
     ))
 }
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 pub async fn download_file_with_checksum(
     _url: &str,
     _dest: &std::path::Path,
@@ -348,6 +348,6 @@ pub async fn download_file_with_checksum(
     _cancel: Option<&tokio_util::sync::CancellationToken>,
 ) -> DepsResult<()> {
     Err(DepsError::UnsupportedPlatform(
-        "Downloading dependencies is not supported on Android",
+        "Downloading dependencies is not supported on mobile",
     ))
 }

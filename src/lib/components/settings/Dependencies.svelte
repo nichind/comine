@@ -18,7 +18,7 @@
     name: DependencyName;
     label: string;
     descriptionKey: string;
-    badge: 'required' | 'optional';
+    badge: 'required' | 'optional' | 'podcast';
     installer: () => Promise<boolean>;
     uninstaller: () => Promise<boolean>;
   }
@@ -29,7 +29,11 @@
       name,
       label: cfg.label,
       descriptionKey: `settings.deps.${name === 'gallery_dl' ? 'galleryDl' : name}Description`,
-      badge: cfg.required ? ('required' as const) : ('optional' as const),
+      badge: cfg.required
+        ? ('required' as const)
+        : name === 'edge_tts' || name === 'whisper'
+          ? ('podcast' as const)
+          : ('optional' as const),
       installer: name === 'ytdlp' ? () => deps.installYtdlp() : () => deps.install(name),
       uninstaller: () => deps.uninstall(name),
     };
@@ -232,6 +236,11 @@
   .dep-badge.optional {
     background: rgba(255, 255, 255, 0.08);
     color: rgba(255, 255, 255, 0.5);
+  }
+
+  .dep-badge.podcast {
+    background: rgba(168, 85, 247, 0.18);
+    color: #c084fc;
   }
 
   .dep-version {

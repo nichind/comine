@@ -1,5 +1,5 @@
-use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use rusqlite::{params, Connection};
 use tracing::{error, info, warn};
@@ -7,10 +7,16 @@ use tracing::{error, info, warn};
 use crate::orchestrator::types::HistoryItem;
 
 pub struct Database {
-    conn: Mutex<Connection>,
+    db_path: PathBuf,
+    data_dir: PathBuf,
+    conn: OnceLock<Mutex<Connection>>,
 }
 
 impl Database {
+    /// Create a Database handle without opening the SQLite file.
+    /// The actual connection, schema creation, and migrations are deferred
+    /// to the first `conn()` call. This keeps app startup non-blocking on
+    /// iOS where a watchdog kills the process if the main thread stalls.
     pub fn new(data_dir: &Path) -> Result<Arc<Self>, String> {
         let db_path = data_dir.join("comine.db");
 
@@ -18,8 +24,18 @@ impl Database {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database at {:?}: {}", db_path, e))?;
+        Ok(Arc::new(Self {
+            db_path,
+            data_dir: data_dir.to_path_buf(),
+            conn: OnceLock::new(),
+        }))
+    }
+
+    /// Open the connection and run all one-time setup.
+    /// Called exactly once via `OnceLock::get_or_init`.
+    fn init_connection(&self) -> Mutex<Connection> {
+        let conn = Connection::open(&self.db_path)
+            .unwrap_or_else(|e| panic!("Failed to open database at {:?}: {}", self.db_path, e));
 
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
@@ -27,28 +43,25 @@ impl Database {
              PRAGMA synchronous=NORMAL;
              PRAGMA foreign_keys=ON;",
         )
-        .map_err(|e| format!("Failed to set database pragmas: {}", e))?;
+        .unwrap_or_else(|e| panic!("Failed to set database pragmas: {}", e));
 
-        let db = Arc::new(Self {
-            conn: Mutex::new(conn),
-        });
+        Self::init_schema_on(&conn)
+            .unwrap_or_else(|e| panic!("Failed to initialize schema: {}", e));
+        Self::run_migrations_on(&conn);
+        Self::migrate_from_json_on(&conn, &self.data_dir);
 
-        db.init_schema()?;
-        db.run_migrations();
-        db.migrate_from_json(data_dir);
-
-        info!("Database initialized at {:?}", db_path);
-        Ok(db)
+        info!("Database initialized at {:?}", self.db_path);
+        Mutex::new(conn)
     }
 
     pub fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn
+            .get_or_init(|| self.init_connection())
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn init_schema(&self) -> Result<(), String> {
-        let conn = self.conn();
+    fn init_schema_on(conn: &Connection) -> Result<(), String> {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS history (
                 id TEXT PRIMARY KEY,
@@ -112,9 +125,7 @@ impl Database {
         Ok(())
     }
 
-    fn run_migrations(&self) {
-        let conn = self.conn();
-
+    fn run_migrations_on(conn: &Connection) {
         // Add is_directory and file_count columns for multi-file download support
         let has_is_directory: bool = conn
             .prepare("SELECT is_directory FROM history LIMIT 0")
@@ -133,36 +144,52 @@ impl Database {
                 info!("Migration: added is_directory and file_count columns to history");
             }
         }
+
+        // Add podcast columns for auto-podcast generation pipeline
+        let has_podcast_path: bool = conn
+            .prepare("SELECT podcast_path FROM history LIMIT 0")
+            .is_ok();
+
+        if !has_podcast_path {
+            if let Err(e) = conn.execute_batch(
+                "ALTER TABLE history ADD COLUMN podcast_path TEXT;
+                 ALTER TABLE history ADD COLUMN podcast_subtitle_path TEXT;
+                 ALTER TABLE history ADD COLUMN podcast_status TEXT;",
+            ) {
+                warn!(
+                    "Migration: adding podcast columns failed (may already exist): {}",
+                    e
+                );
+            } else {
+                info!("Migration: added podcast_path, podcast_subtitle_path, podcast_status columns to history");
+            }
+        }
     }
 
-    fn migrate_from_json(&self, data_dir: &Path) {
-        self.migrate_history_json(data_dir);
-        self.migrate_jobs_json(data_dir);
-        self.migrate_stats_json(data_dir);
+    fn migrate_from_json_on(conn: &Connection, data_dir: &Path) {
+        Self::migrate_history_json_on(conn, data_dir);
+        Self::migrate_jobs_json_on(conn, data_dir);
+        Self::migrate_stats_json_on(conn, data_dir);
     }
 
-    fn migrate_history_json(&self, data_dir: &Path) {
+    fn migrate_history_json_on(conn: &Connection, data_dir: &Path) {
         let json_path = data_dir.join("history_backend.json");
         if !json_path.exists() {
             return;
         }
 
         // Check if we already have data (avoid re-migration)
-        {
-            let conn = self.conn();
-            let count: i64 = conn
-                .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
-                .unwrap_or(0);
-            if count > 0 {
-                // DB already has data, rename JSON as backup
-                let backup = data_dir.join("history_backend.json.bak");
-                let _ = std::fs::rename(&json_path, &backup);
-                info!(
-                    "History DB already populated ({} items), backed up JSON",
-                    count
-                );
-                return;
-            }
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
+            .unwrap_or(0);
+        if count > 0 {
+            let backup = data_dir.join("history_backend.json.bak");
+            let _ = std::fs::rename(&json_path, &backup);
+            info!(
+                "History DB already populated ({} items), backed up JSON",
+                count
+            );
+            return;
         }
 
         let json_str = match std::fs::read_to_string(&json_path) {
@@ -192,7 +219,6 @@ impl Database {
             items.len()
         );
 
-        let conn = self.conn();
         let tx = match conn.unchecked_transaction() {
             Ok(tx) => tx,
             Err(e) => {
@@ -234,24 +260,21 @@ impl Database {
         }
     }
 
-    fn migrate_jobs_json(&self, data_dir: &Path) {
+    fn migrate_jobs_json_on(conn: &Connection, data_dir: &Path) {
         let json_path = data_dir.join("jobs.json");
         if !json_path.exists() {
             return;
         }
 
         // Check if we already have data
-        {
-            let conn = self.conn();
-            let count: i64 = conn
-                .query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))
-                .unwrap_or(0);
-            if count > 0 {
-                let backup = data_dir.join("jobs.json.bak");
-                let _ = std::fs::rename(&json_path, &backup);
-                info!("Jobs DB already populated ({} jobs), backed up JSON", count);
-                return;
-            }
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))
+            .unwrap_or(0);
+        if count > 0 {
+            let backup = data_dir.join("jobs.json.bak");
+            let _ = std::fs::rename(&json_path, &backup);
+            info!("Jobs DB already populated ({} jobs), backed up JSON", count);
+            return;
         }
 
         let json_str = match std::fs::read_to_string(&json_path) {
@@ -279,7 +302,6 @@ impl Database {
 
         info!("Migrating {} jobs from JSON to SQLite", jobs.len());
 
-        let conn = self.conn();
         let tx = match conn.unchecked_transaction() {
             Ok(tx) => tx,
             Err(e) => {
@@ -346,28 +368,25 @@ impl Database {
         }
     }
 
-    fn migrate_stats_json(&self, data_dir: &Path) {
+    fn migrate_stats_json_on(conn: &Connection, data_dir: &Path) {
         let json_path = data_dir.join("stats.json");
         if !json_path.exists() {
             return;
         }
 
         // Check if stats have been populated (total_downloads > 0 or installation_id set)
-        {
-            let conn = self.conn();
-            let has_data: bool = conn
-                .query_row(
-                    "SELECT total_downloads > 0 OR installation_id != '' FROM stats WHERE id = 1",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap_or(false);
-            if has_data {
-                let backup = data_dir.join("stats.json.bak");
-                let _ = std::fs::rename(&json_path, &backup);
-                info!("Stats DB already populated, backed up JSON");
-                return;
-            }
+        let has_data: bool = conn
+            .query_row(
+                "SELECT total_downloads > 0 OR installation_id != '' FROM stats WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if has_data {
+            let backup = data_dir.join("stats.json.bak");
+            let _ = std::fs::rename(&json_path, &backup);
+            info!("Stats DB already populated, backed up JSON");
+            return;
         }
 
         let json_str = match std::fs::read_to_string(&json_path) {
@@ -412,7 +431,6 @@ impl Database {
             .unwrap_or_default();
         let last_sync_time = stats.get("last_sync_time").and_then(|v| v.as_str());
 
-        let conn = self.conn();
         if let Err(e) = conn.execute(
             "UPDATE stats SET total_downloads = ?1, successful_downloads = ?2, failed_downloads = ?3, total_size_mb = ?4, first_launch = ?5, installation_id = ?6, last_sync_time = ?7 WHERE id = 1",
             params![
@@ -428,8 +446,6 @@ impl Database {
             error!("Failed to migrate stats: {}", e);
             return;
         }
-
-        drop(conn);
 
         let backup = data_dir.join("stats.json.bak");
         if let Err(e) = std::fs::rename(&json_path, &backup) {

@@ -65,6 +65,10 @@
       "appimage": {
         "bundleMediaFramework": true
       }
+    },
+    "iOS": {
+      "developmentTeam": "365KJHJCW7",
+      "minimumSystemVersion": "15.0"
     }
   }
 }

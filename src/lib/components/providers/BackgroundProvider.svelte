@@ -1,6 +1,6 @@
 <script lang="ts">
   import { settings, type BackgroundType } from '$lib/stores/settings';
-  import { isAndroid } from '$lib/utils/android';
+  import { isMobile } from '$lib/utils/android';
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { convertFileSrc } from '@tauri-apps/api/core';
@@ -86,7 +86,7 @@
   let videoEl: HTMLVideoElement | null = $state(null);
 
   onMount(async () => {
-    onDesktop = !isAndroid();
+    onDesktop = !isMobile();
 
     if (onDesktop && typeof navigator !== 'undefined') {
       const userAgent = navigator.userAgent.toLowerCase();

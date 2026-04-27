@@ -136,12 +136,12 @@ pub async fn show_notification_window(
     monitor: Option<NotificationMonitor>,
     offset: Option<i32>,
 ) -> Result<(), String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
-        return Err("Notification windows not supported on Android".to_string());
+        return Err("Notification windows not supported on mobile".to_string());
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         use std::sync::atomic::{AtomicU32, Ordering};
         static NOTIFICATION_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -419,7 +419,7 @@ pub async fn show_notification_window(
 
 #[tauri::command]
 pub async fn reveal_notification_window(app: AppHandle, window_id: String) -> Result<(), String> {
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         info!("Revealing notification window: {}", window_id);
         if let Some(window) = app.get_webview_window(&window_id) {
@@ -471,7 +471,7 @@ pub async fn reveal_notification_window(app: AppHandle, window_id: String) -> Re
 
 #[tauri::command]
 pub async fn close_notification_window(app: AppHandle, window_id: String) -> Result<(), String> {
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         info!("Closing notification: {}", window_id);
 
@@ -512,7 +512,7 @@ pub async fn close_notification_window(app: AppHandle, window_id: String) -> Res
 
 #[tauri::command]
 pub async fn close_all_notifications(app: AppHandle) -> Result<(), String> {
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         info!("Closing all notification windows");
 
@@ -540,7 +540,7 @@ pub async fn notification_action(
     metadata: Option<serde_json::Value>,
     keep_open: Option<bool>,
 ) -> Result<(), String> {
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         info!(
             "Notification action triggered: window_id={}, url={:?}, has_metadata={}, keep_open={:?}",
@@ -585,7 +585,7 @@ pub async fn notification_action(
                     let _ = main_window.emit("notification-start-download", payload);
                     info!("Emitted notification-start-download to main window for playlist/channel/track-builder");
                 } else {
-                    #[cfg(not(target_os = "android"))]
+                    #[cfg(desktop)]
                     {
                         if let Err(e) = crate::window_manager::recreate_main_window(&app) {
                             tracing::error!("Failed to recreate window: {}", e);

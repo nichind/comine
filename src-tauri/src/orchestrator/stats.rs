@@ -17,41 +17,44 @@ pub struct StatsStore {
 
 impl StatsStore {
     pub fn new(db: Arc<Database>) -> Arc<Self> {
-        // Ensure first_launch and installation_id are set
-        {
-            let conn = db.conn();
-            let (first_launch, installation_id): (String, String) = conn
-                .query_row(
-                    "SELECT first_launch, installation_id FROM stats WHERE id = 1",
-                    [],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .unwrap_or_default();
+        Arc::new(Self { db })
+    }
 
-            let mut needs_update = false;
-            let new_first_launch = if first_launch.is_empty() {
-                needs_update = true;
-                chrono::Utc::now().to_rfc3339()
-            } else {
-                first_launch
-            };
-            let new_installation_id = if installation_id.is_empty() {
-                needs_update = true;
-                uuid::Uuid::new_v4().to_string()
-            } else {
-                installation_id
-            };
+    /// Seed first_launch and installation_id if not yet set.
+    /// Called from the async init block (off the main thread) so that
+    /// the lazy Database connection is not triggered on iOS's main thread.
+    pub fn ensure_seeded(&self) {
+        let conn = self.db.conn();
+        let (first_launch, installation_id): (String, String) = conn
+            .query_row(
+                "SELECT first_launch, installation_id FROM stats WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap_or_default();
 
-            if needs_update {
-                let _ = conn.execute(
-                    "UPDATE stats SET first_launch = ?1, installation_id = ?2 WHERE id = 1",
-                    params![new_first_launch, new_installation_id],
-                );
-            }
+        let mut needs_update = false;
+        let new_first_launch = if first_launch.is_empty() {
+            needs_update = true;
+            chrono::Utc::now().to_rfc3339()
+        } else {
+            first_launch
+        };
+        let new_installation_id = if installation_id.is_empty() {
+            needs_update = true;
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            installation_id
+        };
+
+        if needs_update {
+            let _ = conn.execute(
+                "UPDATE stats SET first_launch = ?1, installation_id = ?2 WHERE id = 1",
+                params![new_first_launch, new_installation_id],
+            );
         }
 
         info!("Stats store initialized from database");
-        Arc::new(Self { db })
     }
 
     pub fn start(self: &Arc<Self>, app: AppHandle) {

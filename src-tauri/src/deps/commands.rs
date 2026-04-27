@@ -4,7 +4,7 @@ use crate::proxy::ProxyConfig;
 use crate::types::{DependencyStatus, ReleaseInfo};
 
 use super::engine::cancel;
-use super::specs::{aria2, deno, ffmpeg, gallery_dl, lux, quickjs, ytdlp};
+use super::specs::{aria2, deno, edge_tts, ffmpeg, gallery_dl, lux, quickjs, whisper, ytdlp};
 
 #[allow(unused_imports)]
 pub use aria2::get_aria2_path;
@@ -201,7 +201,7 @@ pub async fn install_gallery_dl(
 
     // Dynamically register gallery-dl backend now that it's installed.
     // This avoids requiring an app restart after install.
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         use crate::orchestrator::manager::JobManager;
         use std::sync::Arc;
@@ -225,7 +225,7 @@ pub async fn install_gallery_dl(
 pub async fn uninstall_gallery_dl(app: AppHandle) -> Result<(), String> {
     gallery_dl::uninstall_gallery_dl(app.clone()).await?;
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         use crate::orchestrator::manager::JobManager;
         use std::sync::Arc;
@@ -247,6 +247,42 @@ pub async fn get_gallery_dl_releases(
 }
 
 #[tauri::command]
+pub async fn check_edge_tts(
+    app: AppHandle,
+    check_updates: Option<bool>,
+) -> Result<DependencyStatus, String> {
+    edge_tts::check_edge_tts(app, check_updates).await
+}
+
+#[tauri::command]
+pub async fn install_edge_tts(app: AppHandle) -> Result<String, String> {
+    edge_tts::install_edge_tts(app).await
+}
+
+#[tauri::command]
+pub async fn uninstall_edge_tts(app: AppHandle) -> Result<(), String> {
+    edge_tts::uninstall_edge_tts(app).await
+}
+
+#[tauri::command]
+pub async fn check_whisper(
+    app: AppHandle,
+    check_updates: Option<bool>,
+) -> Result<DependencyStatus, String> {
+    whisper::check_whisper(app, check_updates).await
+}
+
+#[tauri::command]
+pub async fn install_whisper(app: AppHandle) -> Result<String, String> {
+    whisper::install_whisper(app).await
+}
+
+#[tauri::command]
+pub async fn uninstall_whisper(app: AppHandle) -> Result<(), String> {
+    whisper::uninstall_whisper(app).await
+}
+
+#[tauri::command]
 pub async fn cancel_dep_install(dep: String) -> Result<(), String> {
     const KNOWN_DEPS: &[&str] = &[
         "ytdlp",
@@ -256,6 +292,8 @@ pub async fn cancel_dep_install(dep: String) -> Result<(), String> {
         "quickjs",
         "lux",
         "gallery-dl",
+        "edge-tts",
+        "whisper",
     ];
     if KNOWN_DEPS.contains(&dep.as_str()) {
         cancel::cancel(&dep);

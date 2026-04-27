@@ -4,8 +4,8 @@
 //! collections from several image hosting sites. This backend wraps it
 //! following the same subprocess pattern as the yt-dlp backend.
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 mod process;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub use process::GalleryDlBackend;

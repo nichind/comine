@@ -1,14 +1,18 @@
 use std::path::PathBuf;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 use tauri::AppHandle;
 #[cfg(target_os = "android")]
+use tauri::{AppHandle, Manager};
+#[cfg(target_os = "ios")]
 use tauri::{AppHandle, Manager};
 
 use crate::proxy::ProxyConfig;
 use crate::types::DependencyStatus;
 
+#[cfg(not(target_os = "ios"))]
 use crate::deps::engine::installer::{self, get_bin_dir, ExtractStrategy, InstallPlan};
+#[cfg(not(target_os = "ios"))]
 use crate::deps::engine::verify::run_capture_async;
 
 const EVENT_PROGRESS: &str = "ffmpeg-install-progress";
@@ -47,7 +51,17 @@ fn get_binary_path(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
         Ok(custom_path)
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_os = "ios")]
+    {
+        let bin_dir = app
+            .path()
+            .app_cache_dir()
+            .map_err(|e| format!("Failed to get app cache dir: {}", e))?
+            .join("bin");
+        Ok(bin_dir.join(name))
+    }
+
+    #[cfg(desktop)]
     Ok(get_bin_dir(app)?.join(name))
 }
 
@@ -101,21 +115,30 @@ pub async fn check_ffmpeg(
     app: AppHandle,
     check_updates: Option<bool>,
 ) -> Result<DependencyStatus, String> {
+    #[cfg(target_os = "ios")]
+    {
+        let _ = (app, check_updates);
+        return Ok(DependencyStatus::not_installed());
+    }
+
+    #[cfg(not(target_os = "ios"))]
     let ffmpeg_path = match resolve_ffmpeg_path(&app) {
         Some(path) => path,
         None => {
             #[cfg(target_os = "android")]
             return Ok(DependencyStatus::embedded("youtubedl-android library"));
 
-            #[cfg(not(target_os = "android"))]
+            #[cfg(desktop)]
             return Ok(DependencyStatus::not_installed());
         }
     };
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     let ffprobe_path = resolve_ffprobe_path(&app);
 
+    #[cfg(not(target_os = "ios"))]
     let _ = check_updates;
 
+    #[cfg(not(target_os = "ios"))]
     match run_capture_async(&ffmpeg_path, &["-version"]).await {
         Ok(output) if output.status_code == Some(0) => {
             let version = output
@@ -127,7 +150,7 @@ pub async fn check_ffmpeg(
                 .unwrap_or("unknown")
                 .to_string();
 
-            #[cfg(not(target_os = "android"))]
+            #[cfg(desktop)]
             let disk_size = {
                 let ffmpeg_size = tokio::fs::metadata(&ffmpeg_path)
                     .await
@@ -158,7 +181,7 @@ pub async fn check_ffmpeg(
             return Ok(DependencyStatus::embedded(
                 "youtubedl-android library (not found in path)",
             ));
-            #[cfg(not(target_os = "android"))]
+            #[cfg(desktop)]
             Ok(DependencyStatus::not_installed())
         }
     }
@@ -202,11 +225,10 @@ pub async fn install_ffmpeg(
 ) -> Result<String, String> {
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
-        let _ = proxy_config;
+        let _ = (app, proxy_config);
         return Err(
-			"ffmpeg installation is not supported on this platform. On Android, install via Termux."
-				.to_string(),
-		);
+            "ffmpeg installation is not supported on this platform.".to_string(),
+        );
     }
 
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
@@ -262,18 +284,27 @@ pub async fn install_ffmpeg(
 }
 
 pub async fn uninstall_ffmpeg(app: AppHandle) -> Result<(), String> {
-    let ffmpeg_path = get_ffmpeg_path(&app)?;
-    let ffprobe_path = get_ffprobe_path(&app)?;
-
-    if ffmpeg_path.exists() {
-        tokio::fs::remove_file(&ffmpeg_path)
-            .await
-            .map_err(|e| format!("Failed to remove ffmpeg: {}", e))?;
+    #[cfg(mobile)]
+    {
+        let _ = app;
+        return Ok(());
     }
 
-    if ffprobe_path.exists() {
-        let _ = tokio::fs::remove_file(&ffprobe_path).await;
-    }
+    #[cfg(desktop)]
+    {
+        let ffmpeg_path = get_ffmpeg_path(&app)?;
+        let ffprobe_path = get_ffprobe_path(&app)?;
 
-    Ok(())
+        if ffmpeg_path.exists() {
+            tokio::fs::remove_file(&ffmpeg_path)
+                .await
+                .map_err(|e| format!("Failed to remove ffmpeg: {}", e))?;
+        }
+
+        if ffprobe_path.exists() {
+            let _ = tokio::fs::remove_file(&ffprobe_path).await;
+        }
+
+        Ok(())
+    }
 }

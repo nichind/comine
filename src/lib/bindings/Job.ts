@@ -3,4 +3,9 @@ import type { ContentType } from "./ContentType";
 import type { DownloadRequest } from "./DownloadRequest";
 import type { JobStatus } from "./JobStatus";
 
-export type Job = { id: string, request: DownloadRequest, status: JobStatus, backend: string, createdAt: number, startedAt: number | null, completedAt: number | null, progress: number, downloadedBytes: number, totalBytes: number | null, speed: number | null, eta: number | null, tempFiles: Array<string>, retryCount: number, lastError: string | null, title: string | null, thumbnail: string | null, author: string | null, authorUrl: string | null, duration: number | null, playlistId: string | null, playlistTitle: string | null, playlistIndex: number | null, contentType: ContentType | null, };
+export type Job = { id: string, request: DownloadRequest, status: JobStatus, backend: string, createdAt: number, startedAt: number | null, completedAt: number | null, progress: number, downloadedBytes: number, totalBytes: number | null, speed: number | null, eta: number | null, tempFiles: Array<string>, retryCount: number, lastError: string | null, title: string | null, thumbnail: string | null, author: string | null, authorUrl: string | null, duration: number | null, playlistId: string | null, playlistTitle: string | null, playlistIndex: number | null, contentType: ContentType | null, 
+/**
+ * When true, the yt-dlp backend should omit the --proxy argument on the next attempt.
+ * Set after a ProxyError to retry the download over a direct connection.
+ */
+skipProxy: boolean, };

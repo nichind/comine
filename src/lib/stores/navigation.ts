@@ -2,12 +2,28 @@ import { writable, derived } from 'svelte/store';
 import { mediaCache, type MediaPreview } from './mediaCache';
 import { getQuickThumbnail } from '$lib/utils/thumbnailUtils';
 
-type ViewType = 'home' | 'video' | 'playlist' | 'channel';
+type ViewType = 'home' | 'video' | 'playlist' | 'channel' | 'torrent-search' | 'torrent-detail';
+
+export interface TorrentSearchSnapshot {
+  query: string;
+  contentType: string;
+  quality: string;
+  sort: string;
+  page: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  results: any[];
+  total: number;
+  scrollTop: number;
+}
 
 export interface ViewState {
   type: ViewType;
   url?: string;
   cachedData?: MediaPreview;
+  torrentQuery?: string;
+  torrentSearchState?: TorrentSearchSnapshot;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  torrentResult?: any;
 }
 
 interface NavigationState {
@@ -71,6 +87,16 @@ function createNavigationStore() {
       }));
     },
 
+    /** Update the current (top) view state in-place without changing the stack structure. */
+    updateCurrent(patch: Partial<ViewState>) {
+      update((state) => {
+        const stack = [...state.stack];
+        const top = { ...stack[stack.length - 1], ...patch };
+        stack[stack.length - 1] = top;
+        return { ...state, stack };
+      });
+    },
+
     reset() {
       set({ stack: [{ type: 'home' }] });
     },
@@ -85,6 +111,30 @@ function createNavigationStore() {
 
     openChannel(url: string, previewData?: MediaPreview) {
       this._openView('channel', url, false, previewData);
+    },
+
+    openTorrentSearch(query?: string) {
+      update((state) => {
+        let newStack = [...state.stack, { type: 'torrent-search' as ViewType, torrentQuery: query }];
+        if (newStack.length > MAX_STACK_DEPTH) {
+          newStack = [newStack[0], ...newStack.slice(-(MAX_STACK_DEPTH - 1))];
+        }
+        return { ...state, stack: newStack };
+      });
+    },
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    openTorrentDetail(result: any) {
+      update((state) => {
+        let newStack = [
+          ...state.stack,
+          { type: 'torrent-detail' as ViewType, torrentResult: result },
+        ];
+        if (newStack.length > MAX_STACK_DEPTH) {
+          newStack = [newStack[0], ...newStack.slice(-(MAX_STACK_DEPTH - 1))];
+        }
+        return { ...state, stack: newStack };
+      });
     },
 
     _openView(type: ViewType, url: string, isPlaylist: boolean, previewData?: MediaPreview) {

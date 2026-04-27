@@ -6,7 +6,7 @@ use tracing::info;
 
 use crate::orchestrator::backends::{
     extract_filename_from_url, extract_magnet_name, guess_mime_type, has_file_extension,
-    is_torrent_url, parse_size_str, Backend, BackendCapabilities, SpawnContext,
+    is_torrent_url, parse_size_str, Backend, BackendCapabilities, MetadataEvent, SpawnContext,
     DIRECT_FILE_EXTENSIONS,
 };
 use crate::orchestrator::types::*;
@@ -110,6 +110,26 @@ fn build_aria2_args(req: &DownloadRequest, config: &Aria2Config) -> Vec<Vec<Stri
         args.push(vec!["--enable-dht=true".to_string()]);
         args.push(vec!["--bt-enable-lpd=true".to_string()]);
         args.push(vec!["--seed-ratio".to_string(), "0.0".to_string()]);
+        args.push(vec!["--seed-time".to_string(), "0".to_string()]);
+
+        // Prioritize the beginning and end of each file so that media players
+        // can determine codec/duration information quickly (streaming playback).
+        // MP4 moov atoms are often at the end and can be 10-30MB for large files.
+        args.push(vec![
+            "--bt-prioritize-piece=head=100M,tail=32M".to_string(),
+        ]);
+
+        // Selective file download — only fetch the chosen indices (1-based).
+        if let Some(ref selected) = req.options.torrent_selected_files {
+            if !selected.is_empty() {
+                let indices = selected
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                args.push(vec![format!("--select-file={}", indices)]);
+            }
+        }
     }
 
     args.push(vec![req.url.clone()]);
@@ -210,7 +230,7 @@ fn parse_eta_str(s: &str) -> Option<u64> {
 }
 
 pub struct Aria2Backend {
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     binary_path: PathBuf,
 }
 
@@ -314,14 +334,14 @@ pub fn cancel_aria2(job_id: &str) -> Result<(), String> {
 mod exec {
     use super::*;
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     pub fn create_backend(app: &AppHandle) -> Option<Aria2Backend> {
         let binary_path = crate::deps::resolve_aria2_path(app)?;
         info!("aria2 backend using binary: {:?}", binary_path);
         Some(Aria2Backend { binary_path })
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     pub async fn run_aria2(
         backend: &Aria2Backend,
         ctx: SpawnContext,
@@ -367,6 +387,10 @@ mod exec {
         let mut output_path_count: u32 = 0;
         let mut last_update = std::time::Instant::now();
         let job_id = ctx.job.id.clone();
+        let is_torrent = is_torrent_url(&ctx.job.request.url);
+        let mut early_path_sent = false;
+        // Track the actual file path detected from aria2's FILE: lines (for torrents).
+        let mut detected_file_path: Option<String> = None;
 
         loop {
             tokio::select! {
@@ -393,6 +417,24 @@ mod exec {
                                 output_path = Some(path);
                                 output_path_count += 1;
                             }
+
+                            // For torrent downloads, detect the file path early
+                            // from aria2's "FILE:" lines and emit it so the
+                            // frontend can show a play button while downloading.
+                            if is_torrent {
+                                if let Some(path) = extract_aria2_file_line(&line) {
+                                    if detected_file_path.is_none() {
+                                        detected_file_path = Some(path.clone());
+                                    }
+                                    if !early_path_sent && is_media_extension(&path) {
+                                        info!(target: "aria2", "Early file path detected: {}", path);
+                                        let _ = ctx.metadata_tx.send(
+                                            MetadataEvent::FilePath(path),
+                                        );
+                                        early_path_sent = true;
+                                    }
+                                }
+                            }
                         }
                         Ok(None) => break,
                         Err(e) => {
@@ -416,7 +458,25 @@ mod exec {
             )));
         }
 
-        let final_path = if output_path_count > 1 {
+        // For torrent single-file downloads, use the detected FILE: path
+        // directly — this is the actual file, not the torrent directory.
+        let has_single_selected = ctx
+            .job
+            .request
+            .options
+            .torrent_selected_files
+            .as_ref()
+            .map(|f| f.len() == 1)
+            .unwrap_or(false);
+
+        let final_path = if has_single_selected {
+            if let Some(ref path) = detected_file_path {
+                info!(target: "aria2", "Using detected file path for single-file torrent: {}", path);
+                path.clone()
+            } else {
+                output_path.unwrap_or_else(|| ctx.job.request.output.directory.clone())
+            }
+        } else if output_path_count > 1 {
             // Multi-file download (torrent): use parent directory
             output_path
                 .as_ref()
@@ -441,18 +501,55 @@ mod exec {
         Ok(final_path)
     }
 
-    #[cfg(not(target_os = "android"))]
+    /// Extract a real file path from aria2's `FILE: /path/to/file` output lines.
+    /// Ignores `[MEMORY]` metadata lines. Strips trailing ` (Nmore)` suffixes.
+    #[cfg(desktop)]
+    pub(super) fn extract_aria2_file_line(line: &str) -> Option<String> {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("FILE:") {
+            return None;
+        }
+        let path = trimmed.strip_prefix("FILE:")?.trim();
+        if path.is_empty() || path.starts_with("[MEMORY]") {
+            return None;
+        }
+        // Strip trailing " (1more)", " (2more)", etc.
+        let clean = if let Some(idx) = path.rfind(" (") {
+            if path[idx..].ends_with("more)") {
+                path[..idx].trim()
+            } else {
+                path
+            }
+        } else {
+            path
+        };
+        if clean.is_empty() {
+            return None;
+        }
+        Some(clean.to_string())
+    }
+
+    /// Check if a file path has a media (video/audio) extension.
+    /// Used to filter out subtitle/text files when detecting early file paths from torrents.
+    #[cfg(desktop)]
+    fn is_media_extension(path: &str) -> bool {
+        const MEDIA_EXTS: &[&str] = &[
+            "mkv", "mp4", "avi", "wmv", "flv", "mov", "webm", "m4v", "mpg", "mpeg", "ts",
+            "vob", "ogv", "3gp", "m2ts", "mts", "divx", "rmvb", "asf",
+            "mp3", "flac", "wav", "aac", "ogg", "opus", "m4a", "wma", "alac", "ape", "aiff",
+        ];
+        path.rsplit('.')
+            .next()
+            .map(|ext| MEDIA_EXTS.contains(&ext.to_lowercase().as_str()))
+            .unwrap_or(false)
+    }
+
+    #[cfg(desktop)]
     pub(super) fn extract_output_path(line: &str) -> Option<String> {
         if line.contains("Download complete:") {
             let path = line.split("Download complete:").nth(1)?.trim();
-            if !path.is_empty() {
-                return Some(path.to_string());
-            }
-        }
-
-        if line.contains("[NOTICE]") && line.contains("Download complete:") {
-            let path = line.split("Download complete:").nth(1)?.trim();
-            if !path.is_empty() {
+            // Skip [MEMORY] metadata lines — these are torrent metadata, not real files
+            if !path.is_empty() && !path.starts_with("[MEMORY]") {
                 return Some(path.to_string());
             }
         }
@@ -460,15 +557,26 @@ mod exec {
         None
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     async fn graceful_shutdown(child: &mut tokio::process::Child) {
         crate::orchestrator::backends::graceful_shutdown(child, "aria2").await;
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     pub fn create_backend(_app: &AppHandle) -> Option<Aria2Backend> {
-        info!("aria2 backend initialized for Android");
+        info!("aria2 backend initialized for mobile");
         Some(Aria2Backend {})
+    }
+
+    #[cfg(target_os = "ios")]
+    pub async fn run_aria2(
+        _backend: &Aria2Backend,
+        _ctx: SpawnContext,
+        _args: Vec<Vec<String>>,
+    ) -> Result<String, BackendError> {
+        Err(BackendError::Other(
+            "aria2 downloads are not supported on iOS".to_string(),
+        ))
     }
 
     #[cfg(target_os = "android")]
@@ -908,7 +1016,7 @@ mod tests {
         assert_eq!(config.speed_limit, Some(512_000));
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     #[test]
     fn test_extract_output_path_basic() {
         assert_eq!(
@@ -917,7 +1025,7 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     #[test]
     fn test_extract_output_path_with_notice() {
         assert_eq!(
@@ -926,7 +1034,7 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     #[test]
     fn test_extract_output_path_no_match() {
         assert_eq!(exec::extract_output_path("Some random output line"), None);

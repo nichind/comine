@@ -2,6 +2,7 @@ pub mod backends;
 pub mod convert;
 pub mod history;
 pub mod manager;
+pub mod podcast;
 pub mod stats;
 pub mod store;
 pub mod thumbnail;
@@ -264,6 +265,9 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
         .app_data_dir()
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
+    // Database uses lazy initialization — the SQLite connection is opened on
+    // first `conn()` call, not here. This prevents blocking the main thread
+    // on iOS where a watchdog kills apps that stall during startup.
     let db = crate::database::Database::new(&app_data_dir)
         .unwrap_or_else(|e| panic!("Failed to initialize database: {}", e));
 
@@ -281,6 +285,10 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
     let manager_clone = Arc::clone(&manager);
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
+        // Seed stats (first_launch, installation_id) — this triggers the lazy
+        // DB connection for the first time, safely off the main thread.
+        manager_clone.stats.ensure_seeded();
+
         manager_clone
             .stats
             .backfill_from_history(&manager_clone.history)
@@ -300,7 +308,42 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
             ))
             .await;
 
-        #[cfg(not(target_os = "android"))]
+        // librqbit backend — handles torrents/magnets natively (no subprocess).
+        // On iOS it takes Priority::Absolute for torrent URLs (aria2 is unavailable there).
+        // On other platforms it returns Priority::None so aria2 wins; it can still be forced
+        // explicitly by name if needed.
+        // Session is lazy — DHT only starts on first download or file listing.
+        {
+            // On iOS, download_dir() resolves to a path the sandbox doesn't permit.
+            // Use document_dir() first since that's the writable Documents folder.
+            #[cfg(target_os = "ios")]
+            let default_dir = app_clone
+                .path()
+                .document_dir()
+                .or_else(|_| app_clone.path().app_data_dir())
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| ".".to_string());
+
+            #[cfg(not(target_os = "ios"))]
+            let default_dir = app_clone
+                .path()
+                .download_dir()
+                .or_else(|_| app_clone.path().document_dir())
+                .or_else(|_| app_clone.path().app_data_dir())
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| ".".to_string());
+
+            let shared_session = Arc::new(
+                crate::orchestrator::backends::librqbit::SharedLibrqbitSession::new(&default_dir),
+            );
+            // Register the shared session as Tauri managed state so torrent_list_files can use it.
+            app_clone.manage(shared_session.clone());
+            let backend =
+                crate::orchestrator::backends::librqbit::LibrqbitBackend::new(shared_session);
+            manager_clone.register_backend(Arc::new(backend)).await;
+        }
+
+        #[cfg(desktop)]
         {
             match crate::deps::resolve_ytdlp_path(&app_clone) {
                 Some(path) => {
@@ -319,7 +362,7 @@ pub fn init(app: &AppHandle) -> Arc<JobManager> {
             }
         }
 
-        #[cfg(not(target_os = "android"))]
+        #[cfg(desktop)]
         {
             match crate::deps::resolve_gallery_dl_path(&app_clone) {
                 Some(path) => {

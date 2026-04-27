@@ -21,8 +21,8 @@ impl HistoryStore {
         tokio::task::spawn_blocking(move || {
             let conn = db.conn();
             if let Err(e) = conn.execute(
-                "INSERT OR REPLACE INTO history (id, url, title, author, author_url, thumbnail, extension, size, duration, file_path, downloaded_at, item_type, playlist_id, playlist_title, playlist_index, converted_format, download_source, is_favourite, is_directory, file_count)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                "INSERT OR REPLACE INTO history (id, url, title, author, author_url, thumbnail, extension, size, duration, file_path, downloaded_at, item_type, playlist_id, playlist_title, playlist_index, converted_format, download_source, is_favourite, is_directory, file_count, podcast_path, podcast_subtitle_path, podcast_status)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
                 params![
                     item_clone.id, item_clone.url, item_clone.title, item_clone.author,
                     item_clone.author_url, item_clone.thumbnail, item_clone.extension,
@@ -34,6 +34,9 @@ impl HistoryStore {
                     item_clone.is_favourite as i32,
                     item_clone.is_directory as i32,
                     item_clone.file_count.map(|v| v as i64),
+                    item_clone.podcast_path,
+                    item_clone.podcast_subtitle_path,
+                    item_clone.podcast_status,
                 ],
             ) {
                 error!("Failed to insert history item: {}", e);
@@ -58,7 +61,7 @@ impl HistoryStore {
     fn get_all_sync(db: &Database) -> Vec<HistoryItem> {
         let conn = db.conn();
         let mut stmt = match conn.prepare(
-            "SELECT id, url, title, author, author_url, thumbnail, extension, size, duration, file_path, downloaded_at, item_type, playlist_id, playlist_title, playlist_index, converted_format, download_source, is_favourite, is_directory, file_count
+            "SELECT id, url, title, author, author_url, thumbnail, extension, size, duration, file_path, downloaded_at, item_type, playlist_id, playlist_title, playlist_index, converted_format, download_source, is_favourite, is_directory, file_count, podcast_path, podcast_subtitle_path, podcast_status
              FROM history ORDER BY downloaded_at DESC",
         ) {
             Ok(s) => s,
@@ -90,6 +93,9 @@ impl HistoryStore {
                 is_favourite: row.get::<_, i32>(17)? != 0,
                 is_directory: row.get::<_, i32>(18)? != 0,
                 file_count: row.get::<_, Option<i64>>(19)?.map(|v| v as u32),
+                podcast_path: row.get(20)?,
+                podcast_subtitle_path: row.get(21)?,
+                podcast_status: row.get(22)?,
             })
         });
 
@@ -167,6 +173,75 @@ impl HistoryStore {
         .ok();
     }
 
+    pub async fn update_podcast_status(
+        &self,
+        id: &str,
+        status: &str,
+        podcast_path: Option<&str>,
+        podcast_subtitle_path: Option<&str>,
+    ) {
+        let db = self.db.clone();
+        let id = id.to_string();
+        let status = status.to_string();
+        let podcast_path = podcast_path.map(|s| s.to_string());
+        let podcast_subtitle_path = podcast_subtitle_path.map(|s| s.to_string());
+        tokio::task::spawn_blocking(move || {
+            let conn = db.conn();
+            if let Err(e) = conn.execute(
+                "UPDATE history SET podcast_status = ?1, podcast_path = ?2, podcast_subtitle_path = ?3 WHERE id = ?4",
+                params![status, podcast_path, podcast_subtitle_path, id],
+            ) {
+                warn!("Failed to update podcast status for {}: {}", id, e);
+            }
+        })
+        .await
+        .ok();
+    }
+
+    pub async fn get_by_id(&self, id: &str) -> Option<crate::orchestrator::types::HistoryItem> {
+        let db = self.db.clone();
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = db.conn();
+            conn.query_row(
+                "SELECT id, url, title, author, author_url, thumbnail, extension, size, duration, file_path, downloaded_at, item_type, playlist_id, playlist_title, playlist_index, converted_format, download_source, is_favourite, is_directory, file_count, podcast_path, podcast_subtitle_path, podcast_status
+                 FROM history WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(crate::orchestrator::types::HistoryItem {
+                        id: row.get(0)?,
+                        url: row.get(1)?,
+                        title: row.get(2)?,
+                        author: row.get(3)?,
+                        author_url: row.get(4)?,
+                        thumbnail: row.get(5)?,
+                        extension: row.get(6)?,
+                        size: row.get::<_, i64>(7)? as u64,
+                        duration: row.get(8)?,
+                        file_path: row.get(9)?,
+                        downloaded_at: row.get::<_, i64>(10)? as u64,
+                        item_type: row.get(11)?,
+                        playlist_id: row.get(12)?,
+                        playlist_title: row.get(13)?,
+                        playlist_index: row.get::<_, Option<i64>>(14)?.map(|v| v as u32),
+                        converted_format: row.get(15)?,
+                        download_source: row.get(16)?,
+                        is_favourite: row.get::<_, i32>(17)? != 0,
+                        is_directory: row.get::<_, i32>(18)? != 0,
+                        file_count: row.get::<_, Option<i64>>(19)?.map(|v| v as u32),
+                        podcast_path: row.get(20)?,
+                        podcast_subtitle_path: row.get(21)?,
+                        podcast_status: row.get(22)?,
+                    })
+                },
+            )
+            .ok()
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
     pub async fn update_duration(&self, id: &str, duration: f64) {
         let db = self.db.clone();
         let id = id.to_string();
@@ -190,8 +265,8 @@ impl HistoryStore {
             let mut added = 0usize;
             for item in &new_items {
                 match conn.execute(
-                    "INSERT OR IGNORE INTO history (id, url, title, author, author_url, thumbnail, extension, size, duration, file_path, downloaded_at, item_type, playlist_id, playlist_title, playlist_index, converted_format, download_source, is_favourite, is_directory, file_count)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                    "INSERT OR IGNORE INTO history (id, url, title, author, author_url, thumbnail, extension, size, duration, file_path, downloaded_at, item_type, playlist_id, playlist_title, playlist_index, converted_format, download_source, is_favourite, is_directory, file_count, podcast_path, podcast_subtitle_path, podcast_status)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
                     params![
                         item.id, item.url, item.title, item.author,
                         item.author_url, item.thumbnail, item.extension,
@@ -203,6 +278,9 @@ impl HistoryStore {
                         item.is_favourite as i32,
                         item.is_directory as i32,
                         item.file_count.map(|v| v as i64),
+                        item.podcast_path,
+                        item.podcast_subtitle_path,
+                        item.podcast_status,
                     ],
                 ) {
                     Ok(n) => added += n,

@@ -14,9 +14,10 @@
   import { initConversions, cleanupConversions, startConversion } from '$lib/stores/conversions';
   import { settings } from '$lib/stores/settings';
   import { navigation } from '$lib/stores/navigation';
+  import { player } from '$lib/stores/player.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import { isAndroid } from '$lib/utils/android';
+  import { isMobile } from '$lib/utils/android';
   import { openFile, revealFile, openFolder } from '$lib/utils/platform';
   import {
     DownloadsState,
@@ -112,13 +113,13 @@
         toast.error($t('downloads.fileMissing'));
         return;
       }
-      if (item.type === 'video' || item.type === 'audio') {
-        navigation.openVideo(item.url, {
+      if ((item.type === 'video' || item.type === 'audio') && item.filePath) {
+        player.openMedia({
+          filePath: item.filePath,
+          mediaType: item.type,
           title: item.title,
           thumbnail: item.thumbnail,
-          author: item.author,
         });
-        await goto('/');
       } else {
         if (!item.filePath) {
           toast.error($t('downloads.noFilePath'));
@@ -157,9 +158,27 @@
         toast.error($t('downloads.noFilePath'));
         return;
       }
-      const success = await openFile(item.filePath);
-      if (!success) {
-        toast.error($t('downloads.openError'));
+      if (item.type === 'torrent') {
+        // Torrent files often have codecs WebKit can't handle — use system player
+        player.openMedia({
+          filePath: item.filePath,
+          mediaType: 'video',
+          title: item.title,
+          thumbnail: item.thumbnail,
+          useSystemPlayer: true,
+        });
+      } else if (item.type === 'video' || item.type === 'audio') {
+        player.openMedia({
+          filePath: item.filePath,
+          mediaType: item.type,
+          title: item.title,
+          thumbnail: item.thumbnail,
+        });
+      } else {
+        const success = await openFile(item.filePath);
+        if (!success) {
+          toast.error($t('downloads.openError'));
+        }
       }
     },
     deleteItem: async (id) => {
@@ -178,7 +197,7 @@
     },
     openFileLocation: async (path) => {
       const success = await revealFile(path);
-      if (!success && !isAndroid()) {
+      if (!success && !isMobile()) {
         toast.error($t('downloads.revealError'));
       }
     },
@@ -1287,6 +1306,7 @@
     top: 0;
     left: 48px;
     right: 0;
+    padding-right: 12px;
     height: 36px;
     display: flex;
     align-items: center;
@@ -1722,12 +1742,8 @@
   }
 
   .speed-sparkline {
-    position: absolute;
-    top: calc(100% + 2px);
-    left: 0;
-    right: 0;
+    position: relative;
     height: 26px;
-    z-index: 24;
     pointer-events: none;
     opacity: 0.95;
 
@@ -1807,8 +1823,7 @@
     }
 
     .speed-sparkline {
-      left: 4px;
-      right: 4px;
+      margin-inline: 4px;
     }
 
     .stats-panel {

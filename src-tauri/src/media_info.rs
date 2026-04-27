@@ -1,9 +1,10 @@
 use tauri::AppHandle;
+use tracing::{debug, info, warn};
 
 #[cfg(feature = "ts-export")]
 use ts_rs::TS;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 fn resolve_ffprobe_cmd(app: &AppHandle) -> Result<String, String> {
     match crate::deps::resolve_ffprobe_path(app) {
         Some(path) => Ok(path.to_string_lossy().to_string()),
@@ -11,7 +12,7 @@ fn resolve_ffprobe_cmd(app: &AppHandle) -> Result<String, String> {
     }
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 async fn run_ffprobe(app: &AppHandle, args: &[&str]) -> Result<String, String> {
     use std::process::Stdio;
 
@@ -35,12 +36,12 @@ async fn run_ffprobe(app: &AppHandle, args: &[&str]) -> Result<String, String> {
 #[tauri::command]
 #[allow(unused_variables)]
 pub async fn get_media_duration(app: AppHandle, file_path: String) -> Result<f64, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
-        return Err("get_media_duration not supported on Android".to_string());
+        return Err("get_media_duration not supported on mobile".to_string());
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         if !std::path::Path::new(&file_path).exists() {
             return Err(format!("File not found: {}", file_path));
@@ -103,12 +104,12 @@ pub async fn get_media_technical_info(
     app: AppHandle,
     file_path: String,
 ) -> Result<MediaTechnicalInfo, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
-        return Err("get_media_technical_info not supported on Android".to_string());
+        return Err("get_media_technical_info not supported on mobile".to_string());
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         if !std::path::Path::new(&file_path).exists() {
             return Err(format!("File not found: {}", file_path));
@@ -176,4 +177,305 @@ pub async fn generate_local_thumbnail(
     item_id: String,
 ) -> Result<String, String> {
     crate::orchestrator::thumbnail::generate_local_thumbnail(&app, &file_path, &item_id).await
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts-export", derive(TS))]
+#[cfg_attr(feature = "ts-export", ts(export))]
+pub struct SubtitleFile {
+    pub path: String,
+    pub label: String,
+    pub format: String,
+}
+
+#[tauri::command]
+pub async fn find_subtitles(file_path: String) -> Result<Vec<SubtitleFile>, String> {
+    let path = std::path::Path::new(&file_path);
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Could not determine parent directory of: {}", file_path))?;
+
+    let stem = path
+        .file_stem()
+        .ok_or_else(|| format!("Could not determine file stem of: {}", file_path))?
+        .to_string_lossy()
+        .to_string();
+
+    const SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt"];
+
+    let parent_buf = parent.to_path_buf();
+    let subtitles = tokio::task::spawn_blocking(move || -> Result<Vec<SubtitleFile>, String> {
+        let read_dir = std::fs::read_dir(&parent_buf)
+            .map_err(|e| format!("Failed to read directory: {}", e))?;
+
+        let mut subtitles: Vec<SubtitleFile> = Vec::new();
+
+        for entry in read_dir.flatten() {
+            let entry_path = entry.path();
+
+            let ext = match entry_path.extension() {
+                Some(e) => e.to_string_lossy().to_lowercase(),
+                None => continue,
+            };
+
+            if !SUBTITLE_EXTENSIONS.contains(&ext.as_str()) {
+                continue;
+            }
+
+            let entry_stem = match entry_path.file_stem() {
+                Some(s) => s.to_string_lossy().to_string(),
+                None => continue,
+            };
+
+            if entry_stem != stem && !entry_stem.starts_with(&format!("{}.", stem)) {
+                continue;
+            }
+
+            let label = if entry_stem == stem {
+                "Default".to_string()
+            } else {
+                // Extract the suffix between the media stem and the subtitle extension.
+                // e.g. stem="video", entry_stem="video.en" → suffix=".en" → label="en"
+                let suffix = &entry_stem[stem.len()..];
+                suffix.trim_start_matches('.').to_string()
+            };
+
+            subtitles.push(SubtitleFile {
+                path: entry_path.to_string_lossy().to_string(),
+                label,
+                format: ext.to_string(),
+            });
+        }
+
+        subtitles.sort_by(|a, b| a.label.cmp(&b.label));
+
+        Ok(subtitles)
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+
+    Ok(subtitles)
+}
+
+#[tauri::command]
+#[allow(unused_variables)]
+pub async fn remux_for_playback(app: AppHandle, file_path: String) -> Result<String, String> {
+    #[cfg(mobile)]
+    {
+        return Err("remux_for_playback not supported on mobile".to_string());
+    }
+
+    #[cfg(desktop)]
+    {
+        use std::path::Path;
+        use std::process::Stdio;
+        use tauri::Manager;
+
+        const HTML5_EXTS: &[&str] = &["mp4", "webm", "ogg"];
+
+        let input_path = Path::new(&file_path);
+
+        if !input_path.exists() {
+            return Err(format!("File not found: {}", file_path));
+        }
+
+        // If the file is already HTML5-compatible, return it as-is.
+        let ext = input_path
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+
+        if HTML5_EXTS.contains(&ext.as_str()) {
+            debug!(path = %file_path, "File already HTML5-compatible, skipping remux");
+            return Ok(file_path);
+        }
+
+        // Resolve the ffmpeg binary.
+        let ffmpeg_path = match crate::deps::resolve_ffmpeg_path(&app) {
+            Some(p) => p,
+            None => {
+                return Err(
+                    "FFmpeg not installed. Please install it from Settings → Dependencies."
+                        .to_string(),
+                )
+            }
+        };
+
+        // Determine the cache directory: <app_cache_dir>/playback_remux/
+        let cache_dir = app
+            .path()
+            .app_cache_dir()
+            .map_err(|e| format!("Failed to resolve app cache dir: {}", e))?
+            .join("playback_remux");
+
+        tokio::fs::create_dir_all(&cache_dir)
+            .await
+            .map_err(|e| format!("Failed to create remux cache dir: {}", e))?;
+
+        let stem = input_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "remuxed".to_string());
+
+        // Try MP4 first, then WebM as a fallback.
+        let mp4_output = cache_dir.join(format!("{}.mp4", stem));
+        let webm_output = cache_dir.join(format!("{}.webm", stem));
+
+        // Return a cached file if it already exists and is non-empty.
+        for cached in [&mp4_output, &webm_output] {
+            if cached.exists() {
+                if let Ok(meta) = tokio::fs::metadata(cached).await {
+                    if meta.len() > 0 {
+                        info!(
+                            input = %file_path,
+                            output = %cached.display(),
+                            "Returning cached remux"
+                        );
+                        return Ok(cached.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+
+        let t_start = std::time::Instant::now();
+
+        // Attempt 1: remux to MP4 with -c copy + faststart.
+        info!(input = %file_path, output = %mp4_output.display(), "Remuxing to MP4 for playback");
+
+        let mp4_result = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            async {
+                let mut cmd = crate::utils::new_command(&ffmpeg_path);
+                cmd.arg("-i")
+                    .arg(&file_path)
+                    .args(["-c", "copy", "-movflags", "+faststart", "-y"])
+                    .arg(&mp4_output)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped());
+
+                let output = cmd
+                    .output()
+                    .await
+                    .map_err(|e| format!("Failed to spawn FFmpeg: {}", e))?;
+
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    Err(stderr)
+                }
+            },
+        )
+        .await;
+
+        match mp4_result {
+            Ok(Ok(())) => {
+                let elapsed = t_start.elapsed();
+                info!(
+                    input = %file_path,
+                    output = %mp4_output.display(),
+                    elapsed_ms = elapsed.as_millis(),
+                    "Remux to MP4 completed"
+                );
+                return Ok(mp4_output.to_string_lossy().to_string());
+            }
+            Ok(Err(stderr)) => {
+                warn!(
+                    input = %file_path,
+                    stderr = %stderr,
+                    "MP4 remux failed (incompatible codecs?), trying WebM"
+                );
+                // Clean up any partial output.
+                let _ = tokio::fs::remove_file(&mp4_output).await;
+            }
+            Err(_) => {
+                warn!(input = %file_path, "MP4 remux timed out, trying WebM");
+                let _ = tokio::fs::remove_file(&mp4_output).await;
+            }
+        }
+
+        // Attempt 2: fallback — remux to WebM with -c copy.
+        info!(input = %file_path, output = %webm_output.display(), "Remuxing to WebM as fallback");
+
+        let webm_result = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            async {
+                let mut cmd = crate::utils::new_command(&ffmpeg_path);
+                cmd.arg("-i")
+                    .arg(&file_path)
+                    .args(["-c", "copy", "-y"])
+                    .arg(&webm_output)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped());
+
+                let output = cmd
+                    .output()
+                    .await
+                    .map_err(|e| format!("Failed to spawn FFmpeg: {}", e))?;
+
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    Err(stderr)
+                }
+            },
+        )
+        .await;
+
+        match webm_result {
+            Ok(Ok(())) => {
+                let elapsed = t_start.elapsed();
+                info!(
+                    input = %file_path,
+                    output = %webm_output.display(),
+                    elapsed_ms = elapsed.as_millis(),
+                    "Remux to WebM completed"
+                );
+                Ok(webm_output.to_string_lossy().to_string())
+            }
+            Ok(Err(stderr)) => {
+                let _ = tokio::fs::remove_file(&webm_output).await;
+                Err(format!(
+                    "Both MP4 and WebM remux failed. Last error: {}",
+                    stderr.lines().last().unwrap_or("unknown")
+                ))
+            }
+            Err(_) => {
+                let _ = tokio::fs::remove_file(&webm_output).await;
+                Err("Remux timed out (30s limit exceeded)".to_string())
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn read_subtitle_file(file_path: String) -> Result<String, String> {
+    let path = std::path::Path::new(&file_path);
+
+    if !path.exists() {
+        return Err(format!("File not found: {}", file_path));
+    }
+
+    let meta = tokio::fs::metadata(path)
+        .await
+        .map_err(|e| format!("Cannot stat subtitle file: {}", e))?;
+    if meta.len() > 10 * 1024 * 1024 {
+        return Err(format!("Subtitle file too large: {} bytes", meta.len()));
+    }
+
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| format!("Failed to read subtitle file: {}", e))?;
+
+    // Try strict UTF-8 first; fall back to lossy decoding so the frontend always
+    // receives a valid string rather than an error on non-UTF-8 encoded files.
+    let content = match String::from_utf8(bytes.clone()) {
+        Ok(s) => s,
+        Err(_) => String::from_utf8_lossy(&bytes).into_owned(),
+    };
+
+    Ok(content)
 }

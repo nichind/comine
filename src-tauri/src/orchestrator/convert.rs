@@ -317,7 +317,7 @@ pub async fn convert_local_file(
         final_path
     };
 
-    let force_software = cfg!(target_os = "android");
+    let force_software = cfg!(mobile);
     let (pre_args, post_args) = build_ffmpeg_components(&request, force_software);
 
     let result = exec::run_ffmpeg_convert(
@@ -394,7 +394,12 @@ mod exec {
         {
             run_ffmpeg_concat_android(concat_list_path, output_path).await
         }
-        #[cfg(not(target_os = "android"))]
+        #[cfg(target_os = "ios")]
+        {
+            let _ = (app, concat_list_path, output_path);
+            Err("FFmpeg concat is not supported on iOS".to_string())
+        }
+        #[cfg(desktop)]
         {
             run_ffmpeg_concat_desktop(app, concat_list_path, output_path).await
         }
@@ -412,17 +417,22 @@ mod exec {
         {
             run_ffmpeg_convert_android(app, job_id, source_path, output_path, post_args).await
         }
-        #[cfg(not(target_os = "android"))]
+        #[cfg(target_os = "ios")]
+        {
+            let _ = (app, job_id, source_path, output_path, pre_args, post_args);
+            Err("FFmpeg conversion is not supported on iOS".to_string())
+        }
+        #[cfg(desktop)]
         {
             run_ffmpeg_convert_desktop(app, job_id, source_path, output_path, pre_args, post_args)
                 .await
         }
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     use crate::utils::get_media_duration;
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     async fn run_ffmpeg_concat_desktop(
         app: &AppHandle,
         concat_list_path: &Path,
@@ -454,7 +464,7 @@ mod exec {
         Ok(())
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     async fn run_ffmpeg_convert_desktop(
         app: &AppHandle,
         job_id: &str,

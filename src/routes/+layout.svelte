@@ -18,6 +18,7 @@
   import AccentProvider from '$lib/components/providers/AccentProvider.svelte';
   import SurfaceProvider from '$lib/components/providers/SurfaceProvider.svelte';
   import { toast } from '$lib/components/ui/Toast.svelte';
+  import MediaPlayer from '$lib/components/player/MediaPlayer.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { t } from '$lib/i18n';
   import {
@@ -39,6 +40,8 @@
 
   import {
     isAndroid,
+    isIOS,
+    isMobile as isMobilePlatform,
     onShareIntent,
     onNavigateTo,
     setupAndroidLogHandler,
@@ -87,7 +90,8 @@
   let appWindow: TauriWindow | null = $state(null);
 
   let isMobile = $derived(
-    $settings.navigationStyle === 'navbar' || ($settings.navigationStyle === 'auto' && isAndroid())
+    $settings.navigationStyle === 'navbar' ||
+      ($settings.navigationStyle === 'auto' && isMobilePlatform())
   );
 
   let hasShownTrayNotification = false;
@@ -236,7 +240,7 @@
         splash.remove();
         ensureAppRootVisible();
       } else {
-        if (!isAndroid()) {
+        if (!isMobilePlatform()) {
           try {
             emit('frontend-ready');
           } catch (e) {}
@@ -300,7 +304,7 @@
 
     setTimeout(async () => {
       await deps.checkAll();
-      if (!isAndroid()) {
+      if (!isMobilePlatform()) {
         await deps.autoInstallBundle();
         checkDiskSpace();
       }
@@ -312,13 +316,13 @@
 
     setupListeners();
 
-    if (!isAndroid()) {
+    if (!isMobilePlatform()) {
       setupKeyboardShortcuts();
     }
 
     setupLogForwarding();
 
-    if (!isAndroid()) {
+    if (!isMobilePlatform()) {
       setupClipboardWatcher();
     }
 
@@ -335,6 +339,23 @@
         logs.log(level, source, message);
       });
       logs.info('system', 'Android log forwarding initialized');
+    }
+
+    // iOS: auto-start/stop background audio keep-alive when downloads are active
+    if (isIOS()) {
+      let bgAudioActive = false;
+      const unsub = activeDownloadsCount.subscribe((count) => {
+        if (count > 0 && !bgAudioActive) {
+          bgAudioActive = true;
+          invoke('ios_start_background_audio').catch(() => {});
+          logs.info('ios', 'Background audio started (downloads active)');
+        } else if (count === 0 && bgAudioActive) {
+          bgAudioActive = false;
+          invoke('ios_stop_background_audio').catch(() => {});
+          logs.info('ios', 'Background audio stopped (no active downloads)');
+        }
+      });
+      cleanups.push(unsub);
     }
   });
 
@@ -501,7 +522,7 @@
           return;
         }
 
-        if (!isAndroid()) {
+        if (!isMobilePlatform()) {
           await deps.checkAll();
         }
 
@@ -569,6 +590,50 @@
       }
     });
     cleanups.push(ulDlStatus);
+
+    const ulPodcastStarted = await listen<{ historyId: string }>('podcast-generation-started', () => {
+      toast.info('Generating podcast...');
+    });
+    cleanups.push(ulPodcastStarted);
+
+    const ulPodcastProgress = await listen<{
+      historyId: string;
+      step: string;
+      progress: number;
+      error: string | null;
+    }>('podcast-generation-progress', (event) => {
+      const { step, error } = event.payload;
+      if (step === 'fetching_transcript') {
+        toast.info('Podcast: fetching transcript...');
+      } else if (step === 'generating_script') {
+        toast.info('Podcast: generating script...');
+      } else if (step === 'narrating') {
+        toast.info('Podcast: narrating...');
+      } else if (step === 'mastering') {
+        toast.info('Podcast: mastering audio...');
+      } else if (step === 'complete') {
+        toast.success('Podcast generated!');
+      } else if (step === 'failed') {
+        toast.error('Podcast generation failed: ' + error);
+      }
+    });
+    cleanups.push(ulPodcastProgress);
+
+    const ulPodcastCompleted = await listen<{ historyId: string; podcastPath: string }>(
+      'podcast-generation-completed',
+      () => {
+        toast.success('Podcast ready!');
+      },
+    );
+    cleanups.push(ulPodcastCompleted);
+
+    const ulPodcastFailed = await listen<{ historyId: string; error: string }>(
+      'podcast-generation-failed',
+      (event) => {
+        toast.error('Podcast failed: ' + event.payload.error);
+      },
+    );
+    cleanups.push(ulPodcastFailed);
 
     const ulShown = await listen('window-shown', () => {
       onWindowShown();
@@ -1047,6 +1112,7 @@
 
   <Toast />
   <NotificationPopup />
+  <MediaPlayer />
 {/if}
 
 <style>
@@ -1566,6 +1632,7 @@
   .app.mobile {
     border-radius: 0;
     border: none;
+    background: rgb(19, 19, 19);
   }
 
   .app.mobile .main-container {
@@ -1576,7 +1643,16 @@
   .app.mobile .content-area {
     --mobile-nav-clearance: 96px;
     padding: 0 0 0 0;
-    padding-top: env(safe-area-inset-top, 24px);
+    padding-top: calc(env(safe-area-inset-top, 24px) + 8px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  @media (orientation: landscape) {
+    .app.mobile .content-area {
+      padding-top: calc(env(safe-area-inset-top, 8px) + 12px);
+    }
   }
 
   .app.mobile :global(.page-shell) {

@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 #[allow(unused_imports)]
 use tracing::{debug, error, info, warn};
 
-use crate::orchestrator::backends::{Backend, BackendRegistry, SpawnContext};
+use crate::orchestrator::backends::{is_torrent_url, Backend, BackendRegistry, SpawnContext};
 use crate::orchestrator::store::JobStore;
 use crate::orchestrator::types::*;
 
@@ -391,6 +391,12 @@ impl JobManager {
                 .unwrap_or_else(|| "ytdlp".to_string())
         };
 
+        let content_type = if is_torrent_url(&request.url) {
+            Some(ContentType::Torrent)
+        } else {
+            None
+        };
+
         let job = Job {
             id: job_id.clone(),
             request,
@@ -415,7 +421,8 @@ impl JobManager {
             playlist_id: None,
             playlist_title: None,
             playlist_index: None,
-            content_type: None,
+            content_type,
+            skip_proxy: false,
         };
 
         self.jobs.insert(job_id.clone(), job.clone());
@@ -683,6 +690,7 @@ impl JobManager {
                 clip_ranges: o.clip_ranges.clone(),
                 use_aria2,
                 force_keyframes_at_cuts: false,
+                torrent_selected_files: o.torrent_selected_files.clone(),
             },
             post_process: Vec::new(),
         };
@@ -697,14 +705,22 @@ impl JobManager {
         let playlist_id = req.playlist_id.clone();
         let playlist_title = req.playlist_title.clone();
         let playlist_index = req.playlist_index;
+        let prefetched_title = req.overrides.title.clone();
+        let prefetched_thumbnail = req.overrides.thumbnail.clone();
         let request = self.build_request_from_enqueue(&req).await?;
         let job_id = self.start_job(request).await?;
 
-        if playlist_id.is_some() || playlist_title.is_some() || playlist_index.is_some() {
-            if let Some(mut job) = self.jobs.get_mut(&job_id) {
+        if let Some(mut job) = self.jobs.get_mut(&job_id) {
+            if playlist_id.is_some() || playlist_title.is_some() || playlist_index.is_some() {
                 job.playlist_id = playlist_id;
                 job.playlist_title = playlist_title;
                 job.playlist_index = playlist_index;
+            }
+            if let Some(title) = prefetched_title {
+                job.title = Some(title);
+            }
+            if let Some(thumb) = prefetched_thumbnail {
+                job.thumbnail = Some(thumb);
             }
         }
 
@@ -1030,6 +1046,14 @@ impl JobManager {
                 MetadataEvent::PostProcessing => {
                     self.set_post_processing(&job_id);
                 }
+                MetadataEvent::FilePath(path) => {
+                    info!("FilePathResolved for {}: {}", job_id, path);
+                    // Emit to frontend so play-while-downloading can work.
+                    self.emit_event(JobEvent::FilePathResolved {
+                        job_id: job_id.clone(),
+                        output_path: path,
+                    });
+                }
             }
         }
     }
@@ -1113,6 +1137,9 @@ impl JobManager {
                     is_favourite: false,
                     is_directory,
                     file_count,
+                    podcast_path: None,
+                    podcast_subtitle_path: None,
+                    podcast_status: None,
                 };
 
                 (
@@ -1136,11 +1163,18 @@ impl JobManager {
                 let _ = app.emit("history-item-added", &added);
                 let history_stats = history.compute_stats().await;
                 let _ = app.emit("history-stats-changed", &history_stats);
-                #[cfg(not(target_os = "android"))]
+                #[cfg(desktop)]
                 {
                     if let Err(e) = crate::tray::rebuild_menu_async(&app).await {
                         tracing::warn!("[Tray] Failed to rebuild after download: {}", e);
                     }
+                    // Auto-trigger podcast generation for YouTube downloads if enabled
+                    crate::orchestrator::podcast::maybe_auto_generate_podcast(
+                        app.clone(),
+                        history.clone(),
+                        added,
+                    )
+                    .await;
                 }
             });
         }
@@ -1233,10 +1267,19 @@ impl JobManager {
         };
 
         if retryable && retry_count < max_retries {
+            let is_proxy_error = error.is_proxy_error();
             if let Some(mut job) = self.jobs.get_mut(job_id) {
                 job.retry_count += 1;
                 job.last_error = Some(error.to_string());
                 job.status = JobStatus::Queued;
+                // On a proxy error, set skip_proxy so the next attempt omits --proxy.
+                if is_proxy_error && !job.skip_proxy {
+                    warn!(
+                        "Proxy error for job {} — next retry will skip proxy",
+                        job_id
+                    );
+                    job.skip_proxy = true;
+                }
             }
 
             let delay_secs = 3 * 2u64.pow(retry_count);
@@ -1251,6 +1294,7 @@ impl JobManager {
             let manager = Arc::clone(self);
             let job_id = job_id.to_string();
             let current_backend = current_backend.clone();
+            let is_proxy_error = error.is_proxy_error();
             let error_str = error.to_string();
 
             tokio::spawn(async move {
@@ -1271,10 +1315,20 @@ impl JobManager {
                     }
                     manager.schedule_try_start_next();
                 } else {
+                    // Build a user-facing error message. Proxy errors get a more helpful hint.
+                    let final_error = if is_proxy_error {
+                        format!(
+                            "All backends failed — proxy may be blocking the connection. {}",
+                            error_str
+                        )
+                    } else {
+                        format!("All backends failed: {}", error_str)
+                    };
+
                     manager.update_job_status(
                         &job_id,
                         JobStatus::Failed {
-                            error: error_str.clone(),
+                            error: final_error.clone(),
                             retryable,
                         },
                     );
@@ -1287,7 +1341,7 @@ impl JobManager {
 
                     manager.emit_event(JobEvent::Failed {
                         job_id: job_id.clone(),
-                        error: error_str,
+                        error: final_error,
                         retryable,
                     });
 
@@ -1306,17 +1360,32 @@ impl JobManager {
     }
 
     async fn find_fallback_backend(&self, job_id: &str, current: &str) -> Option<String> {
+        use crate::orchestrator::backends::{has_file_extension, DIRECT_FILE_EXTENSIONS};
+
         let job = self.jobs.get(job_id)?;
         let url = job.request.url.clone();
         let request = job.request.clone();
         drop(job);
 
+        // Only allow the "direct" backend as a fallback when the URL looks like a real
+        // file download. Without this guard, platform URLs (YouTube, etc.) would fall
+        // back to direct HTTP GET and download the HTML page instead of the video.
+        let url_has_file_ext = has_file_extension(&url, DIRECT_FILE_EXTENSIONS);
+
         let registry = self.registry.read().await;
         let candidates = registry.candidates_for(&url);
 
+        // First pass: prefer a backend that is capability-compatible with the request.
         for (backend, _priority) in &candidates {
             let name = backend.name();
             if name == current {
+                continue;
+            }
+            if name == "direct" && !url_has_file_ext {
+                debug!(
+                    "Skipping 'direct' fallback for job {} — URL has no recognized file extension",
+                    job_id
+                );
                 continue;
             }
             let caps = backend.capabilities();
@@ -1325,11 +1394,16 @@ impl JobManager {
             }
         }
 
+        // Second pass: accept any compatible backend.
         for (backend, _priority) in &candidates {
             let name = backend.name();
-            if name != current {
-                return Some(name.to_string());
+            if name == current {
+                continue;
             }
+            if name == "direct" && !url_has_file_ext {
+                continue;
+            }
+            return Some(name.to_string());
         }
 
         None

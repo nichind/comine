@@ -1,18 +1,23 @@
 use std::path::PathBuf;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 use tauri::AppHandle;
 #[cfg(target_os = "android")]
+use tauri::{AppHandle, Manager};
+#[cfg(target_os = "ios")]
 use tauri::{AppHandle, Manager};
 use tracing::{error, info, warn};
 
 use crate::proxy::ProxyConfig;
 use crate::types::{DependencyStatus, ReleaseInfo};
 
+#[cfg(desktop)]
 use crate::deps::engine::download::fetch_json;
+#[cfg(desktop)]
 use crate::deps::engine::installer::{
     self, get_bin_dir as get_bin_dir_default, ExtractStrategy, GitHubRelease, InstallPlan,
 };
+#[cfg(desktop)]
 use crate::deps::engine::verify::run_capture_async;
 
 const EVENT_PROGRESS: &str = "ytdlp-install-progress";
@@ -21,7 +26,9 @@ const EVENT_PROGRESS: &str = "ytdlp-install-progress";
 const BINARY_NAME: &str = "yt-dlp.exe";
 #[cfg(target_os = "android")]
 const BINARY_NAME: &str = "libytdlp.so";
-#[cfg(all(not(target_os = "windows"), not(target_os = "android")))]
+#[cfg(target_os = "ios")]
+const BINARY_NAME: &str = "";
+#[cfg(all(not(target_os = "windows"), not(target_os = "android"), not(target_os = "ios")))]
 const BINARY_NAME: &str = "yt-dlp";
 
 #[cfg(target_os = "windows")]
@@ -31,6 +38,8 @@ const RELEASE_ASSET: &str = "yt-dlp_macos";
 #[cfg(target_os = "linux")]
 const RELEASE_ASSET: &str = "yt-dlp_linux";
 #[cfg(target_os = "android")]
+const RELEASE_ASSET: &str = "";
+#[cfg(target_os = "ios")]
 const RELEASE_ASSET: &str = "";
 
 fn get_bin_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -44,7 +53,17 @@ fn get_bin_dir(app: &AppHandle) -> Result<PathBuf, String> {
         Ok(cache_dir.join("bin"))
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_os = "ios")]
+    {
+        let cache_dir = app
+            .path()
+            .app_cache_dir()
+            .map_err(|e| format!("Failed to get app cache dir: {}", e))?;
+        info!("Using iOS cache dir: {:?}", cache_dir);
+        Ok(cache_dir.join("bin"))
+    }
+
+    #[cfg(desktop)]
     {
         get_bin_dir_default(app)
     }
@@ -63,6 +82,7 @@ pub fn resolve_ytdlp_path(app: &AppHandle) -> Option<PathBuf> {
     crate::deps::engine::verify::find_in_system_path(BINARY_NAME)
 }
 
+#[cfg(desktop)]
 async fn fetch_latest_release(proxy_config: &ProxyConfig) -> Result<GitHubRelease, String> {
     crate::deps::engine::installer::fetch_github_latest_release("yt-dlp/yt-dlp", proxy_config).await
 }
@@ -77,7 +97,13 @@ pub async fn check_ytdlp(
         return Ok(DependencyStatus::embedded("youtubedl-android library"));
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_os = "ios")]
+    {
+        let _ = (app, check_updates);
+        return Ok(DependencyStatus::not_installed());
+    }
+
+    #[cfg(desktop)]
     {
         let ytdlp_path = match resolve_ytdlp_path(&app) {
             Some(path) => path,
@@ -131,13 +157,13 @@ pub async fn install_ytdlp(
     version: Option<String>,
     proxy_config: Option<ProxyConfig>,
 ) -> Result<String, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
-        let _ = (version, proxy_config);
+        let _ = (app, version, proxy_config);
         return Ok("embedded".to_string());
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let config = proxy_config.unwrap_or_default();
 
@@ -185,31 +211,36 @@ pub async fn install_ytdlp(
 }
 
 pub async fn uninstall_ytdlp(app: AppHandle) -> Result<(), String> {
-    let ytdlp_path = get_ytdlp_path(&app)?;
-
-    if ytdlp_path.exists() {
-        tokio::fs::remove_file(&ytdlp_path)
-            .await
-            .map_err(|e| format!("Failed to remove yt-dlp: {}", e))?;
+    #[cfg(mobile)]
+    {
+        let _ = app;
+        return Ok(());
     }
 
-    Ok(())
+    #[cfg(desktop)]
+    {
+        let ytdlp_path = get_ytdlp_path(&app)?;
+
+        if ytdlp_path.exists() {
+            tokio::fs::remove_file(&ytdlp_path)
+                .await
+                .map_err(|e| format!("Failed to remove yt-dlp: {}", e))?;
+        }
+
+        Ok(())
+    }
 }
 
 pub async fn get_ytdlp_releases(
     proxy_config: Option<ProxyConfig>,
 ) -> Result<Vec<ReleaseInfo>, String> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         let _ = proxy_config;
-        return Ok(vec![ReleaseInfo {
-            tag: "embedded".to_string(),
-            name: "youtubedl-android (embedded)".to_string(),
-            published_at: "".to_string(),
-        }]);
+        return Ok(vec![]);
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let config = proxy_config.unwrap_or_default();
         let releases: Vec<GitHubRelease> = fetch_json(
@@ -243,7 +274,13 @@ pub async fn self_update_ytdlp(app: AppHandle) -> Result<String, String> {
         .map_err(|e| format!("Task panicked: {}", e))?
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_os = "ios")]
+    {
+        let _ = app;
+        return Err("yt-dlp self-update is not supported on iOS".to_string());
+    }
+
+    #[cfg(desktop)]
     {
         let ytdlp_path = match resolve_ytdlp_path(&app) {
             Some(path) => path,
@@ -286,7 +323,13 @@ pub async fn update_ytdlp_channel(app: AppHandle, channel: String) -> Result<Str
         .map_err(|e| format!("Task panicked: {}", e))?
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_os = "ios")]
+    {
+        let _ = (app, channel);
+        return Err("yt-dlp channel update is not supported on iOS".to_string());
+    }
+
+    #[cfg(desktop)]
     {
         let ytdlp_path = match resolve_ytdlp_path(&app) {
             Some(path) => path,

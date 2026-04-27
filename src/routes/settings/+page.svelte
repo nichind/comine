@@ -44,6 +44,8 @@
   import DataActions from '$lib/components/settings/DataActions.svelte';
   import ProxyConfig from '$lib/components/settings/ProxyConfig.svelte';
   import NetworkCheck from '$lib/components/settings/NetworkCheck.svelte';
+  import ProxyStatus from '$lib/components/settings/ProxyStatus.svelte';
+  import PodcastSettings from '$lib/components/settings/PodcastSettings.svelte';
   import AppUpdates from '$lib/components/settings/AppUpdates.svelte';
   import { calculateMatchScore } from '$lib/utils/search';
   import {
@@ -789,6 +791,10 @@
         <ProxyConfig {searchQuery} />
       {:else if def.key === 'network-check'}
         <NetworkCheck {searchQuery} />
+      {:else if def.key === 'proxy-status'}
+        <ProxyStatus {searchQuery} />
+      {:else if def.key === 'podcast-settings'}
+        <PodcastSettings {searchQuery} />
       {:else if def.key === 'app-updates'}
         <AppUpdates {searchQuery} />
       {:else if def.key === 'integration-settings'}

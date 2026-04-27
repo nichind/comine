@@ -18,6 +18,9 @@ export type HistoryItem = Omit<
   | 'isFavourite'
   | 'isDirectory'
   | 'fileCount'
+  | 'podcastPath'
+  | 'podcastSubtitlePath'
+  | 'podcastStatus'
 > & {
   type: 'video' | 'audio' | 'image' | 'file' | 'gallery' | 'torrent';
   authorUrl?: string;
@@ -29,6 +32,11 @@ export type HistoryItem = Omit<
   isFavourite?: boolean;
   isDirectory?: boolean;
   fileCount?: number;
+  podcastPath?: string;
+  podcastSubtitlePath?: string;
+  podcastStatus?: string;
+  podcastProgress?: number;
+  podcastStep?: string;
 };
 
 export type FilterType =
@@ -76,6 +84,9 @@ function normalizeItem(raw: BindingHistoryItem): HistoryItem {
     isFavourite: raw.isFavourite ?? false,
     isDirectory: raw.isDirectory ?? false,
     fileCount: raw.fileCount ?? undefined,
+    podcastPath: raw.podcastPath ?? undefined,
+    podcastSubtitlePath: raw.podcastSubtitlePath ?? undefined,
+    podcastStatus: raw.podcastStatus ?? undefined,
   };
 }
 
@@ -101,6 +112,9 @@ function toBackendItem(item: HistoryItem): BindingHistoryItem {
     isFavourite: item.isFavourite ?? false,
     isDirectory: item.isDirectory ?? false,
     fileCount: item.fileCount ?? null,
+    podcastPath: item.podcastPath ?? null,
+    podcastSubtitlePath: item.podcastSubtitlePath ?? null,
+    podcastStatus: item.podcastStatus ?? null,
   };
 }
 
@@ -158,6 +172,65 @@ function createHistoryStore() {
         }));
       });
       unlistenHistoryItem = unlisten;
+
+      // Update history items when podcast status changes
+      await listen<{ historyId: string; podcastPath?: string; subtitlePath?: string }>(
+        'podcast-generation-completed',
+        (event) => {
+          const { historyId, podcastPath } = event.payload;
+          update((state) => ({
+            ...state,
+            items: state.items.map((item) =>
+              item.id === historyId
+                ? { ...item, podcastStatus: 'completed', podcastPath: podcastPath ?? item.podcastPath, podcastProgress: undefined, podcastStep: undefined }
+                : item
+            ),
+          }));
+        }
+      );
+
+      await listen<{ historyId: string }>(
+        'podcast-generation-started',
+        (event) => {
+          update((state) => ({
+            ...state,
+            items: state.items.map((item) =>
+              item.id === event.payload.historyId
+                ? { ...item, podcastStatus: 'generating', podcastProgress: 0, podcastStep: 'starting' }
+                : item
+            ),
+          }));
+        }
+      );
+
+      await listen<{ historyId: string; step: string; progress: number; error: string | null }>(
+        'podcast-generation-progress',
+        (event) => {
+          const { historyId, step, progress } = event.payload;
+          update((state) => ({
+            ...state,
+            items: state.items.map((item) =>
+              item.id === historyId
+                ? { ...item, podcastProgress: Math.round(progress * 100), podcastStep: step }
+                : item
+            ),
+          }));
+        }
+      );
+
+      await listen<{ historyId: string; error: string }>(
+        'podcast-generation-failed',
+        (event) => {
+          update((state) => ({
+            ...state,
+            items: state.items.map((item) =>
+              item.id === event.payload.historyId
+                ? { ...item, podcastStatus: 'failed', podcastProgress: undefined, podcastStep: undefined }
+                : item
+            ),
+          }));
+        }
+      );
     },
 
     async add(item: Omit<HistoryItem, 'id' | 'downloadedAt'>) {

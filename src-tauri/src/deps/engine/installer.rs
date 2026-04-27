@@ -225,7 +225,10 @@ pub async fn run_install(
     );
 
     if let Some(custom_verify) = plan.custom_verify {
-        custom_verify(&plan.binary_path).await?;
+        if let Err(e) = custom_verify(&plan.binary_path).await {
+            delete_corrupt_binary(&plan.binary_path, plan.display_name).await;
+            return Err(e);
+        }
     } else {
         let args: Vec<&str> = plan.verify_args.to_vec();
         match super::verify::run_capture_async(&plan.binary_path, &args).await {
@@ -233,12 +236,29 @@ pub async fn run_install(
                 info!("{} installed successfully", plan.display_name);
             }
             Ok(output) => {
+                let reason = if output.stderr.is_empty() {
+                    format!("exited with code {:?}", output.status_code)
+                } else {
+                    output.stderr.clone()
+                };
+                tracing::error!(
+                    "{} verification failed after install: {}",
+                    plan.display_name,
+                    reason
+                );
+                delete_corrupt_binary(&plan.binary_path, plan.display_name).await;
                 return Err(format!(
                     "{} verification failed: {}",
-                    plan.display_name, output.stderr
+                    plan.display_name, reason
                 ));
             }
             Err(e) => {
+                tracing::error!(
+                    "{} verification error (binary may be incompatible): {}",
+                    plan.display_name,
+                    e
+                );
+                delete_corrupt_binary(&plan.binary_path, plan.display_name).await;
                 return Err(format!("{} verification failed: {}", plan.display_name, e));
             }
         }
@@ -251,6 +271,35 @@ pub async fn run_install(
     );
 
     Ok(plan.binary_path.to_string_lossy().to_string())
+}
+
+/// Delete a binary that failed verification so future install attempts re-download it fresh.
+///
+/// Verification failures often indicate the wrong architecture was downloaded (e.g., x86_64
+/// binary on an ARM Mac). Leaving the corrupt file on disk causes a loop: the startup check
+/// finds it, fails to run it, and subsequent installs fail at verification again.
+async fn delete_corrupt_binary(binary_path: &Path, display_name: &str) {
+    if !binary_path.exists() {
+        return;
+    }
+    tracing::warn!(
+        "Deleting corrupt/incompatible {} binary at {:?} so next install re-downloads it",
+        display_name,
+        binary_path
+    );
+    if let Err(e) = tokio::fs::remove_file(binary_path).await {
+        tracing::warn!(
+            "Failed to delete corrupt {} binary at {:?}: {}",
+            display_name,
+            binary_path,
+            e
+        );
+    } else {
+        tracing::info!(
+            "Deleted corrupt {} binary — next install will fetch a fresh copy",
+            display_name
+        );
+    }
 }
 
 async fn check_cancelled(token: &CancellationToken, temp_archive: &Path) -> Result<(), String> {

@@ -132,6 +132,7 @@ export const SECTIONS = [
   { id: 'appearance', titleKey: 'settings.appearance.title', icon: 'pen_new' },
   { id: 'app', titleKey: 'settings.app.title', icon: 'widgets' },
   { id: 'deps', titleKey: 'settings.deps.title', icon: 'package' },
+  { id: 'podcast', titleKey: 'settings.podcast.title', icon: 'headphones', platforms: ['desktop'] },
   { id: 'data', titleKey: 'settings.data.title', icon: 'folder' },
 ] as const;
 
@@ -849,6 +850,14 @@ export const SETTINGS: SettingDef[] = [
     platforms: ['desktop'],
     visible: (s) => s.proxyMode !== 'none',
   },
+  {
+    type: 'custom',
+    key: 'proxy-status',
+    section: 'network',
+    titleKey: 'settings.proxy.status',
+    platforms: ['desktop'],
+    visible: (s) => s.proxyMode !== 'none',
+  },
 
   {
     type: 'toggle',
@@ -1375,6 +1384,16 @@ export const SETTINGS: SettingDef[] = [
     descriptionKey: 'settings.deps.autoUpdateDepsDescription',
     platforms: ['desktop'],
     visible: (s) => s.checkDepUpdates,
+  },
+
+  // ── Podcast ─────────────────────────────────────────────────────────────────
+  {
+    type: 'custom',
+    key: 'podcast-settings',
+    section: 'podcast',
+    titleKey: 'settings.podcast.title',
+    platforms: ['desktop'],
+    keywords: ['podcast', 'tts', 'narration', 'transcript', 'voice', 'claude', 'edge-tts'],
   },
 
   {

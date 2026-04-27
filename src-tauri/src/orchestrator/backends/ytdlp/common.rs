@@ -140,6 +140,16 @@ pub fn parse_is_playlist_line(line: &str) -> Option<bool> {
     Some(n > 0)
 }
 
+/// Returns true when the stderr text indicates a proxy connection failure.
+pub fn stderr_is_proxy_error(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    lower.contains("unable to connect to proxy")
+        || lower.contains("tunnel connection failed")
+        || lower.contains("proxyerror")
+        || lower.contains("proxy connection")
+        || (lower.contains("proxy") && lower.contains("403 forbidden"))
+}
+
 pub fn parse_ytdlp_error(stderr: &str) -> BackendError {
     let lower = stderr.to_lowercase();
 
@@ -151,7 +161,9 @@ pub fn parse_ytdlp_error(stderr: &str) -> BackendError {
         }
     }
 
-    if lower.contains("video unavailable") || lower.contains("not available") {
+    if stderr_is_proxy_error(stderr) {
+        BackendError::ProxyError(truncate(stderr, 200))
+    } else if lower.contains("video unavailable") || lower.contains("not available") {
         BackendError::NotFound(truncate(stderr, 200))
     } else if lower.contains("private video") || lower.contains("sign in") {
         BackendError::Unauthorized(truncate(stderr, 200))

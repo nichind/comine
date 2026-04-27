@@ -177,7 +177,7 @@
     display: grid;
     gap: 12px;
     align-items: center;
-    padding: 8px 16px;
+    padding: 0 16px;
     border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
     height: 36px;
   }
@@ -200,7 +200,8 @@
     cursor: pointer;
     background: transparent;
     border: none;
-    padding: 4px 8px;
+    padding: 0 8px;
+    height: 100%;
     border-radius: var(--radius-sm, 4px);
     transition: all 0.15s ease;
   }
