@@ -757,6 +757,8 @@ export type TranslationKeys =
   | 'settings.app.updateCheckFailed'
   | 'settings.app.updates'
   | 'settings.app.useAnyway'
+  | 'settings.app.useAlternativeSelector'
+  | 'settings.app.useAlternativeSelectorDescription'
   | 'settings.app.useSystemAccent'
   | 'settings.app.useSystemAccentDescription'
   | 'settings.app.whatsNew'

@@ -92,6 +92,7 @@
   import { flip } from 'svelte/animate';
   import { fly, fade } from 'svelte/transition';
   import { browser } from '$app/environment';
+  import Button from '$lib/components/ui/Button.svelte';
   import Icon, { type IconName } from '$lib/components/ui/Icon.svelte';
   import { settings, type ToastPosition } from '$lib/stores/settings';
   import { isAndroid } from '$lib/utils/android';
@@ -109,6 +110,7 @@
     $settings.toastPosition || (browser && isAndroid() ? 'top-right' : 'bottom-right')
   );
 
+  let flyX = $derived(position.includes('left') ? -18 : position.includes('right') ? 18 : 0);
   let flyY = $derived(position.startsWith('top') ? -20 : 20);
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -147,9 +149,9 @@
   {#each $toasts as t (t.id)}
     <div
       class="toast {t.type}"
-      animate:flip={{ duration: 200 }}
-      in:fly={{ y: flyY, duration: 200 }}
-      out:fade={{ duration: 150 }}
+      animate:flip={{ duration: 220 }}
+      in:fly={{ x: flyX, y: flyY, duration: 220 }}
+      out:fade={{ duration: 140 }}
       role="alert"
       aria-atomic="true"
     >
@@ -157,35 +159,47 @@
         <span class="toast-icon" class:spinning={t.type === 'loading'} aria-hidden="true">
           <Icon name={iconMap[t.type]} size={15} />
         </span>
-        <div class="toast-text">
-          <span class="message">{t.message}</span>
-          {#if t.subMessage}
-            <span class="sub-message">{t.subMessage}</span>
+        <div class="toast-main">
+          <div class="toast-header">
+            <div class="toast-text">
+              <span class="message">{t.message}</span>
+              {#if t.subMessage}
+                <span class="sub-message">{t.subMessage}</span>
+              {/if}
+            </div>
+
+            <button
+              class="dismiss"
+              onclick={() => dismissToast(t.id)}
+              aria-label="Dismiss notification"
+            >
+              <Icon name="cross" size={10} />
+            </button>
+          </div>
+
+          {#if t.type === 'progress'}
+            <div class="progress-block">
+              <div
+                class="progress-track"
+                role="progressbar"
+                aria-valuenow={t.progress ?? 0}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label="{t.message} progress"
+              >
+                <div class="progress-fill" style="width: {t.progress ?? 0}%"></div>
+              </div>
+              <span class="progress-value">{Math.round(t.progress ?? 0)}%</span>
+            </div>
+          {/if}
+
+          {#if t.actionLabel && t.action}
+            <div class="toast-footer">
+              <Button variant="ghost" size="sm" onclick={t.action}>{t.actionLabel}</Button>
+            </div>
           {/if}
         </div>
-        {#if t.actionLabel && t.action}
-          <button class="action" onclick={t.action}>{t.actionLabel}</button>
-        {/if}
-        <button
-          class="dismiss"
-          onclick={() => dismissToast(t.id)}
-          aria-label="Dismiss notification"
-        >
-          <Icon name="cross" size={12} />
-        </button>
       </div>
-      {#if t.type === 'progress'}
-        <div
-          class="progress-track"
-          role="progressbar"
-          aria-valuenow={t.progress ?? 0}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label="{t.message} progress"
-        >
-          <div class="progress-fill" style="width: {t.progress ?? 0}%"></div>
-        </div>
-      {/if}
     </div>
   {/each}
 </div>
@@ -195,22 +209,22 @@
     position: fixed;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
     z-index: 2000;
     pointer-events: none;
   }
 
   .toast-container.bottom {
-    bottom: 16px;
+    bottom: 18px;
   }
   .toast-container.top {
-    top: 16px;
+    top: 18px;
   }
   .toast-container.right {
-    right: 16px;
+    right: 18px;
   }
   .toast-container.left {
-    left: 16px;
+    left: 18px;
   }
   .toast-container.center {
     left: 50%;
@@ -237,69 +251,75 @@
     .toast-container.top {
       top: calc(env(safe-area-inset-top, 0px) + 12px);
     }
-    .toast {
-      min-width: unset;
-      max-width: unset;
-    }
   }
 
   .toast {
+    --toast-accent: var(--accent, #7aa2ff);
+    --toast-accent-soft: rgba(122, 162, 255, 0.14);
+    --toast-accent-border: rgba(122, 162, 255, 0.26);
+    --toast-accent-track: rgba(122, 162, 255, 0.2);
+
+    position: relative;
     display: flex;
     flex-direction: column;
-    background: var(--surface-bg, rgba(18, 18, 18, 0.92));
-    border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.06));
-    border-radius: var(--radius-lg, 12px);
-    box-shadow: var(
-      --surface-shadow,
-      0 8px 32px rgba(0, 0, 0, 0.32),
-      0 2px 8px rgba(0, 0, 0, 0.16)
-    );
+    width: min(380px, calc(100vw - 24px));
+    background: rgba(14, 16, 21, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    box-shadow:
+      0 18px 44px rgba(0, 0, 0, 0.34),
+      0 4px 14px rgba(0, 0, 0, 0.18);
     pointer-events: auto;
     overflow: hidden;
-    min-width: 280px;
-    max-width: 380px;
-  }
-
-  @supports (backdrop-filter: blur(16px)) or (-webkit-backdrop-filter: blur(16px)) {
-    .toast {
-      background: var(--surface-bg, rgba(18, 18, 18, 0.85));
-      backdrop-filter: blur(var(--surface-blur, 16px));
-      -webkit-backdrop-filter: blur(var(--surface-blur, 16px));
-    }
   }
 
   .toast-body {
     display: flex;
     align-items: flex-start;
-    gap: 12px;
-    padding: 14px 16px;
+    gap: 11px;
+    padding: 14px;
   }
 
   .toast-icon {
     display: flex;
     align-items: center;
     justify-content: center;
+    width: auto;
+    height: auto;
+    margin-top: 2px;
+    color: var(--toast-accent);
     flex-shrink: 0;
-    margin-top: 1px;
+    opacity: 0.95;
   }
 
-  .toast.success .toast-icon {
-    color: #4ade80;
+  .toast.success {
+    --toast-accent: #4fd18b;
+    --toast-accent-soft: rgba(79, 209, 139, 0.14);
+    --toast-accent-border: rgba(79, 209, 139, 0.26);
+    --toast-accent-track: rgba(79, 209, 139, 0.2);
   }
-  .toast.error .toast-icon {
-    color: #f87171;
+
+  .toast.error {
+    --toast-accent: #ff7a7a;
+    --toast-accent-soft: rgba(255, 122, 122, 0.14);
+    --toast-accent-border: rgba(255, 122, 122, 0.26);
+    --toast-accent-track: rgba(255, 122, 122, 0.2);
   }
-  .toast.warning .toast-icon {
-    color: #fbbf24;
+
+  .toast.warning {
+    --toast-accent: #f3b34c;
+    --toast-accent-soft: rgba(243, 179, 76, 0.14);
+    --toast-accent-border: rgba(243, 179, 76, 0.26);
+    --toast-accent-track: rgba(243, 179, 76, 0.2);
   }
-  .toast.info .toast-icon {
-    color: var(--accent, #818cf8);
-  }
-  .toast.progress .toast-icon {
-    color: var(--accent, #818cf8);
-  }
-  .toast.loading .toast-icon {
-    color: var(--accent, #818cf8);
+
+  .toast.info,
+  .toast.progress,
+  .toast.loading {
+    --toast-accent: var(--accent, #7aa2ff);
+    --toast-accent-soft: rgba(122, 162, 255, 0.14);
+    --toast-accent-border: rgba(122, 162, 255, 0.26);
+    --toast-accent-track: rgba(122, 162, 255, 0.2);
   }
 
   .spinning {
@@ -313,26 +333,42 @@
     }
   }
 
+  .toast-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .toast-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
   .toast-text {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
     min-width: 0;
   }
 
   .message {
     font-size: 13px;
-    font-weight: 500;
-    color: var(--surface-text, rgba(255, 255, 255, 0.92));
-    line-height: 1.4;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.94);
+    line-height: 1.35;
+    letter-spacing: 0.01em;
+    word-break: break-word;
   }
 
   .sub-message {
     font-size: 12px;
     font-weight: 400;
-    color: var(--surface-text-muted, rgba(255, 255, 255, 0.5));
-    line-height: 1.35;
+    color: rgba(255, 255, 255, 0.58);
+    line-height: 1.42;
     word-break: break-word;
   }
 
@@ -340,49 +376,27 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
-    margin: -2px -4px -2px 0;
+    width: 22px;
+    height: 22px;
+    margin: 0;
+    padding: 0;
     background: transparent;
     border: none;
-    border-radius: var(--radius-sm, 6px);
-    color: var(--surface-text-muted, rgba(255, 255, 255, 0.3));
+    border-radius: 999px;
+    color: rgba(255, 255, 255, 0.34);
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition:
+      background 0.15s ease,
+      color 0.15s ease,
+      opacity 0.15s ease;
     flex-shrink: 0;
-  }
-
-  .action {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 22px;
-    padding: 0 10px;
-    margin: -2px 0;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: var(--radius-sm, 6px);
-    color: var(--surface-text, rgba(255, 255, 255, 0.8));
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    flex-shrink: 0;
-  }
-
-  .action:hover {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.14);
-  }
-
-  .action:focus-visible {
-    outline: 2px solid var(--accent, #6366f1);
-    outline-offset: 2px;
+    opacity: 0.9;
   }
 
   .dismiss:hover {
-    background: var(--surface-bg-hover, rgba(255, 255, 255, 0.08));
-    color: var(--surface-text, rgba(255, 255, 255, 0.7));
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.72);
+    opacity: 1;
   }
 
   .dismiss:focus-visible {
@@ -390,14 +404,66 @@
     outline-offset: 1px;
   }
 
+  .toast-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .toast-footer :global(.btn) {
+    align-self: flex-start;
+    min-height: 28px;
+    padding: 0 8px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .toast-footer :global(.btn.ghost) {
+    background: transparent;
+    color: var(--toast-accent);
+    box-shadow: none;
+  }
+
+  .toast-footer :global(.btn.ghost:hover:not(:disabled)) {
+    background: rgba(255, 255, 255, 0.04);
+    color: color-mix(in srgb, var(--toast-accent) 82%, white 18%);
+    filter: none;
+  }
+
+  .toast-footer :global(.btn.ghost:focus-visible) {
+    outline: 2px solid color-mix(in srgb, var(--toast-accent) 72%, white 28%);
+    outline-offset: 2px;
+  }
+
+  .progress-block {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
   .progress-track {
-    height: 3px;
-    background: var(--surface-border, rgba(255, 255, 255, 0.06));
+    flex: 1;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    overflow: hidden;
   }
 
   .progress-fill {
     height: 100%;
-    background: var(--accent, #6366f1);
+    border-radius: inherit;
+    background: var(--toast-accent);
     transition: width 0.25s ease-out;
+  }
+
+  .progress-value {
+    min-width: 36px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    text-align: right;
+    color: rgba(255, 255, 255, 0.48);
+    font-variant-numeric: tabular-nums;
   }
 </style>

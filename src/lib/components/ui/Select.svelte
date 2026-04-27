@@ -1,6 +1,7 @@
 <script lang="ts">
   import { portal } from '$lib/actions/portal';
   import Icon, { type IconName } from '$lib/components/ui/Icon.svelte';
+  import { settings } from '$lib/stores/settings';
   import { tick } from 'svelte';
 
   interface SelectOption {
@@ -17,6 +18,7 @@
     placeholder?: string;
     disabled?: boolean;
     onchange?: (value: string) => void;
+    variant?: 'default' | 'alternative';
   }
 
   let {
@@ -25,6 +27,7 @@
     placeholder = 'Select...',
     disabled = false,
     onchange,
+    variant,
   }: Props = $props();
 
   let isOpen = $state(false);
@@ -51,6 +54,13 @@
   let themeStyle = $state('');
 
   const selectedOption = $derived(options.find((o) => o.value === value));
+  const resolvedVariant = $derived(
+    variant
+      ? variant
+      : $settings.useAlternativeSelector
+        ? 'alternative'
+        : 'default'
+  );
   const selectedIndex = $derived(
     Math.max(
       0,
@@ -121,8 +131,12 @@
 
   function close() {
     if (!isOpen) return;
-    isClosing = true;
-    isAnimating = true;
+    if (resolvedVariant === 'alternative') {
+      isClosing = true;
+      isAnimating = true;
+    } else {
+      isOpen = false;
+    }
   }
 
   function select(option: SelectOption) {
@@ -184,7 +198,7 @@
 
   function scrollFocusedIntoView() {
     if (!dropdownEl || focusedIndex < 0) return;
-    const optionEls = dropdownEl.querySelectorAll('.select-option');
+    const optionEls = dropdownEl.querySelectorAll('.select-option, .sd-option');
     const el = optionEls[focusedIndex] as HTMLElement | undefined;
     el?.scrollIntoView({ block: 'nearest' });
   }
@@ -212,9 +226,89 @@
     --row-height: ${rowHeight}px;
     --selected-idx: ${selectedIndex};
   `);
+
+  let simpleLayout = $state({ top: 0, left: 0, width: 0, above: false });
+
+  function measureSimple() {
+    if (!triggerEl) return;
+    const rect = triggerEl.getBoundingClientRect();
+    const winH = window.innerHeight;
+    const gap = 4;
+    const listH = Math.min(options.length * rowHeight + 8, 240);
+    const spaceBelow = winH - rect.bottom - gap;
+    const above = spaceBelow < listH && rect.top > spaceBelow;
+
+    simpleLayout = {
+      top: above ? rect.top - listH - gap : rect.bottom + gap,
+      left: rect.left,
+      width: rect.width,
+      above,
+    };
+  }
+
+  function openSimple() {
+    measureSimple();
+    isOpen = true;
+    focusedIndex = selectedIndex;
+  }
+
+  function toggleSimple() {
+    if (disabled) return;
+    if (isOpen) close();
+    else openSimple();
+  }
+
+  function handleKeydownSimple(e: KeyboardEvent) {
+    if (!isOpen) {
+      if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) {
+        e.preventDefault();
+        openSimple();
+      }
+      return;
+    }
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        focusedIndex = Math.min(focusedIndex + 1, options.length - 1);
+        scrollFocusedIntoView();
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        focusedIndex = Math.max(focusedIndex - 1, 0);
+        scrollFocusedIntoView();
+        break;
+      case 'Home':
+        e.preventDefault();
+        focusedIndex = 0;
+        scrollFocusedIntoView();
+        break;
+      case 'End':
+        e.preventDefault();
+        focusedIndex = options.length - 1;
+        scrollFocusedIntoView();
+        break;
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        if (focusedIndex >= 0 && focusedIndex < options.length) {
+          select(options[focusedIndex]);
+        }
+        break;
+      case 'Escape':
+        e.preventDefault();
+        close();
+        triggerEl?.focus();
+        break;
+      case 'Tab':
+        close();
+        break;
+    }
+  }
 </script>
 
 <svelte:window onresize={() => isOpen && close()} onscroll={() => isOpen && close()} />
+
+{#if resolvedVariant === 'alternative'}
 
 {#snippet rowContent(opt: SelectOption | undefined, mode: 'trigger' | 'option', active: boolean)}
   <div class="row-content">
@@ -269,9 +363,13 @@
 
 {#if isOpen}
   <div use:portal>
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="select-backdrop" onclick={close}></div>
+    <button
+      class="select-backdrop"
+      onclick={close}
+      type="button"
+      tabindex="-1"
+      aria-label="Close select menu"
+    ></button>
 
     <div
       bind:this={dropdownEl}
@@ -311,6 +409,71 @@
       </div>
     </div>
   </div>
+{/if}
+
+{:else}
+
+<button
+  bind:this={triggerEl}
+  class="sd-trigger"
+  {disabled}
+  onclick={toggleSimple}
+  onkeydown={handleKeydownSimple}
+  type="button"
+  role="combobox"
+  aria-haspopup="listbox"
+  aria-controls="sd-listbox"
+  aria-expanded={isOpen}
+  aria-activedescendant={isOpen && focusedIndex >= 0 ? `sd-option-${focusedIndex}` : undefined}
+>
+  <span class="sd-trigger-label">
+    {selectedOption?.label ?? placeholder}
+  </span>
+  <Icon name="chevron" size={14} class="sd-chevron {isOpen ? 'sd-chevron-open' : ''}" />
+</button>
+
+{#if isOpen}
+  <div use:portal>
+    <button
+      class="sd-backdrop"
+      onclick={close}
+      type="button"
+      tabindex="-1"
+      aria-label="Close select menu"
+    ></button>
+
+    <div
+      bind:this={dropdownEl}
+      class="sd-dropdown"
+      class:sd-above={simpleLayout.above}
+      style="top:{simpleLayout.top}px;left:{simpleLayout.left}px;width:{simpleLayout.width}px;"
+      onkeydown={handleKeydownSimple}
+      role="listbox"
+      id="sd-listbox"
+      tabindex="-1"
+      aria-label={placeholder}
+    >
+      {#each options as option, i}
+        {@const isActive = option.value === value}
+        {@const isFocused = i === focusedIndex}
+        <button
+          id="sd-option-{i}"
+          class="sd-option"
+          class:sd-option-active={isActive}
+          class:sd-option-focused={isFocused}
+          onclick={() => select(option)}
+          onmouseenter={() => { focusedIndex = i; }}
+          type="button"
+          role="option"
+          aria-selected={isActive}
+        >
+          {option.label}
+        </button>
+      {/each}
+    </div>
+  </div>
+{/if}
+
 {/if}
 
 <style>
@@ -463,6 +626,9 @@
     width: 100vw;
     height: 100vh;
     z-index: 9998;
+    padding: 0;
+    background: transparent;
+    border: none;
     cursor: default;
   }
 
@@ -596,5 +762,148 @@
     100% {
       transform: translateY(calc(-1 * (var(--selected-idx) * var(--row-height))));
     }
+  }
+
+  .sd-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    height: 36px;
+    padding: 0 12px;
+    font-family: inherit;
+    font-size: var(--text-base, 13px);
+    color: white;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: var(--radius, 8px);
+    box-sizing: border-box;
+    cursor: pointer;
+    outline: none;
+    user-select: none;
+    transition:
+      background 0.15s,
+      border-color 0.15s;
+  }
+
+  .sd-trigger:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.22);
+  }
+
+  .sd-trigger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .sd-trigger-label {
+    flex: 1;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sd-trigger :global(.sd-chevron) {
+    flex-shrink: 0;
+    color: rgba(255, 255, 255, 0.5);
+    transition: transform 0.2s ease;
+  }
+
+  .sd-trigger :global(.sd-chevron-open) {
+    transform: rotate(180deg);
+  }
+
+  .sd-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9998;
+    padding: 0;
+    background: transparent;
+    border: none;
+  }
+
+  .sd-dropdown {
+    position: fixed;
+    z-index: 9999;
+    padding: 4px;
+    background: rgba(30, 30, 30, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius, 8px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    box-sizing: border-box;
+    max-height: 240px;
+    overflow-y: auto;
+
+    animation: sd-enter 0.15s ease-out;
+    transform-origin: top center;
+
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+  }
+
+  .sd-dropdown::-webkit-scrollbar {
+    width: 4px;
+  }
+  .sd-dropdown::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+  }
+
+  .sd-dropdown.sd-above {
+    animation: sd-enter-above 0.15s ease-out;
+    transform-origin: bottom center;
+  }
+
+  @keyframes sd-enter {
+    0% {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes sd-enter-above {
+    0% {
+      opacity: 0;
+      transform: translateY(4px) scale(0.98);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .sd-option {
+    display: block;
+    width: 100%;
+    padding: 8px 12px;
+    font-family: inherit;
+    font-size: var(--text-base, 13px);
+    color: rgba(255, 255, 255, 0.7);
+    background: transparent;
+    border: none;
+    border-radius: calc(var(--radius, 8px) - 2px);
+    cursor: pointer;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 0.1s;
+  }
+
+  .sd-option:hover,
+  .sd-option.sd-option-focused {
+    background: rgba(255, 255, 255, 0.08);
+    color: white;
+  }
+
+  .sd-option.sd-option-active {
+    color: white;
   }
 </style>

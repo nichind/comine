@@ -228,6 +228,7 @@ export interface AppSettings {
 
   textScale: TextScalePreset;
   textScaleCustom: number;
+  useAlternativeSelector: boolean;
 
   sizeUnit: 'binary' | 'decimal';
   showHistoryStats: boolean;
@@ -431,6 +432,7 @@ export const defaultSettings: AppSettings = {
   borderRadiusCustom: 10,
   textScale: 'default',
   textScaleCustom: 1.0,
+  useAlternativeSelector: false,
 
   sizeUnit: 'binary',
   showHistoryStats: false,

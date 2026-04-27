@@ -654,6 +654,8 @@
       "builderThumbnailGlowDescription": "Apply a subtle glow effect using thumbnail colors in video, playlist, and channel views",
       "compactSidebar": "Compact sidebar",
       "compactSidebarDescription": "Reduces sidebar width, icon sizes and item spacing",
+      "useAlternativeSelector": "Use alternative selector",
+      "useAlternativeSelectorDescription": "Use animated selector instead of the standard dropdown",
       "navigationStyle": "Navigation style",
       "navigationStyleDescription": "Choose between a sidebar or bottom navigation bar",
       "navigationStyleAuto": "Auto (detect platform)",

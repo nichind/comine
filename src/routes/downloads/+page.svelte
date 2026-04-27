@@ -1175,6 +1175,7 @@
     display: block;
     height: 36px;
     margin-bottom: 16px;
+    margin-right: 4px;
     overflow: hidden;
     transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
     will-change: height;

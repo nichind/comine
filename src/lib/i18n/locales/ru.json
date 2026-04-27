@@ -738,6 +738,8 @@
       "builderThumbnailGlowDescription": "Применять мягкое свечение цветов миниатюры в окнах видео, плейлистов и каналов",
       "compactSidebar": "Компактная боковая панель",
       "compactSidebarDescription": "Уменьшает ширину боковой панели, размер иконок и отступы",
+      "useAlternativeSelector": "Использовать альтернативный селектор",
+      "useAlternativeSelectorDescription": "Использовать анимированный селектор вместо стандартного выпадающего списка",
       "navigationStyle": "Стиль навигации",
       "navigationStyleDescription": "Выберите боковую панель или нижнюю панель навигации",
       "navigationStyleAuto": "Авто (определить платформу)",

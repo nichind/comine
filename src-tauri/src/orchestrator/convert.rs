@@ -720,47 +720,74 @@ mod exec {
         concat_list_path: &Path,
         output_path: &str,
     ) -> Result<(), String> {
-        use crate::orchestrator::backends::android_jni::get_jni_env;
-        use jni::objects::{JClass, JValue};
+        use crate::orchestrator::backends::android_jni::{get_activity, get_jni_env};
+        use jni::objects::JValue;
 
         let concat_list_str = concat_list_path.to_string_lossy().to_string();
         let output = output_path.to_string();
 
-        tokio::task::spawn_blocking(move || {
-            let mut env = get_jni_env()?;
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
 
-            let cls = crate::orchestrator::backends::android_jni::get_rust_bridge_class()?;
+        std::thread::spawn(move || {
+            let result = (|| -> Result<(), String> {
+                let mut env = get_jni_env()?;
 
-            let j_concat = env
-                .new_string(&concat_list_str)
-                .map_err(|e| format!("JNI string error: {}", e))?;
-            let j_output = env
-                .new_string(&output)
-                .map_err(|e| format!("JNI string error: {}", e))?;
+                let ffmpeg_cmd = format!(
+                    "-f concat -safe 0 -i {} -c copy -y {}",
+                    concat_list_str, output
+                );
+                let j_cmd = env
+                    .new_string(&ffmpeg_cmd)
+                    .map_err(|e| format!("JNI string error: {}", e))?;
 
-            let result = env
-                .call_static_method(
-                    <&JClass>::from(cls.as_obj()),
-                    "concatFiles",
-                    "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
-                    &[JValue::Object(&j_concat), JValue::Object(&j_output)],
-                )
-                .map_err(|e| format!("JNI concatFiles call failed: {}", e))?;
+                let ffmpeg_kit_class = env
+                    .find_class("com/arthenica/ffmpegkit/FFmpegKit")
+                    .map_err(|e| format!("FFmpegKit class not found: {}", e))?;
 
-            let jstr = result.l().map_err(|e| format!("JNI return error: {}", e))?;
+                let session = env
+                    .call_static_method(
+                        ffmpeg_kit_class,
+                        "execute",
+                        "(Ljava/lang/String;)Lcom/arthenica/ffmpegkit/FFmpegSession;",
+                        &[JValue::Object(&j_cmd)],
+                    )
+                    .map_err(|e| format!("FFmpegKit.execute failed: {}", e))?
+                    .l()
+                    .map_err(|e| format!("Failed to get session: {}", e))?;
 
-            if jstr.is_null() {
-                Ok(())
-            } else {
-                let error: String = env
-                    .get_string((&jstr).into())
-                    .map_err(|e| format!("JNI string read error: {}", e))?
-                    .into();
-                Err(format!("FFmpeg concat failed: {}", error))
-            }
-        })
-        .await
-        .map_err(|e| format!("JNI task panicked: {}", e))?
+                let return_code = env
+                    .call_method(
+                        &session,
+                        "getReturnCode",
+                        "()Lcom/arthenica/ffmpegkit/ReturnCode;",
+                        &[],
+                    )
+                    .map_err(|e| format!("getReturnCode failed: {}", e))?
+                    .l()
+                    .map_err(|e| format!("ReturnCode error: {}", e))?;
+
+                let is_success = env
+                    .call_static_method(
+                        "com/arthenica/ffmpegkit/ReturnCode",
+                        "isSuccess",
+                        "(Lcom/arthenica/ffmpegkit/ReturnCode;)Z",
+                        &[JValue::Object(&return_code)],
+                    )
+                    .map_err(|e| format!("isSuccess failed: {}", e))?
+                    .z()
+                    .map_err(|e| format!("Boolean error: {}", e))?;
+
+                if is_success {
+                    Ok(())
+                } else {
+                    Err("FFmpeg concat failed".to_string())
+                }
+            })();
+            let _ = tx.send(result);
+        });
+
+        rx.await.map_err(|_| "FFmpeg channel closed")??;
+        Ok(())
     }
 
     #[cfg(target_os = "android")]

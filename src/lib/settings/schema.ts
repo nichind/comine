@@ -1205,6 +1205,16 @@ export const SETTINGS: SettingDef[] = [
   },
   {
     type: 'toggle',
+    key: 'useAlternativeSelector',
+    section: 'appearance',
+    subsection: 'layout',
+    icon: 'checklist',
+    titleKey: 'settings.app.useAlternativeSelector',
+    descriptionKey: 'settings.app.useAlternativeSelectorDescription',
+    keywords: ['select', 'selector', 'dropdown', 'menu', 'alternative'],
+  },
+  {
+    type: 'toggle',
     key: 'thumbnailTheming',
     section: 'appearance',
     subsection: 'layout',
