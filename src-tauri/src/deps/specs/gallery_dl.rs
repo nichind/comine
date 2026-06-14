@@ -24,7 +24,7 @@ const RELEASE_ASSET: &str = "gallery-dl.exe";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const RELEASE_ASSET: &str = "gallery-dl.bin";
 // gallery-dl doesn't provide a standalone macOS binary; users must install via pip/brew.
-// We'll still attempt the GitHub release but fall back gracefully.
+// We'll still attempt the Codeberg release but fall back gracefully.
 
 pub fn get_gallery_dl_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(get_bin_dir(app)?.join(BINARY_NAME))
@@ -40,7 +40,8 @@ pub fn resolve_gallery_dl_path(app: &AppHandle) -> Option<PathBuf> {
 }
 
 async fn fetch_latest_release(proxy_config: &ProxyConfig) -> Result<GitHubRelease, String> {
-    installer::fetch_github_latest_release("mikf/gallery-dl", proxy_config).await
+    let url = "https://codeberg.org/api/v1/repos/mikf/gallery-dl/releases/latest";
+    fetch_json(url, proxy_config).await.map_err(|e| e.to_string())
 }
 
 pub async fn check_gallery_dl(
@@ -130,7 +131,7 @@ pub async fn install_gallery_dl(
 
         let gdl_path = get_gallery_dl_path(&app)?;
         let download_url = format!(
-            "https://github.com/mikf/gallery-dl/releases/download/{}/{}",
+            "https://codeberg.org/mikf/gallery-dl/releases/download/{}/{}",
             target_version, RELEASE_ASSET
         );
 
@@ -173,7 +174,7 @@ pub async fn get_gallery_dl_releases(
     proxy_config: Option<ProxyConfig>,
 ) -> Result<Vec<ReleaseInfo>, String> {
     let config = proxy_config.unwrap_or_default();
-    let url = "https://api.github.com/repos/mikf/gallery-dl/releases?per_page=10";
+    let url = "https://codeberg.org/api/v1/repos/mikf/gallery-dl/releases?limit=10";
 
     let releases: Vec<GitHubRelease> = fetch_json(url, &config)
         .await
