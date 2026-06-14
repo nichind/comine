@@ -55,11 +55,7 @@
 
   const selectedOption = $derived(options.find((o) => o.value === value));
   const resolvedVariant = $derived(
-    variant
-      ? variant
-      : $settings.useAlternativeSelector
-        ? 'alternative'
-        : 'default'
+    variant ? variant : $settings.useAlternativeSelector ? 'alternative' : 'default'
   );
   const selectedIndex = $derived(
     Math.max(
@@ -309,91 +305,157 @@
 <svelte:window onresize={() => isOpen && close()} onscroll={() => isOpen && close()} />
 
 {#if resolvedVariant === 'alternative'}
-
-{#snippet rowContent(opt: SelectOption | undefined, mode: 'trigger' | 'option', active: boolean)}
-  <div class="row-content">
-    {#if opt?.image}
-      <img src={opt.image} alt="" class="row-image" />
-    {:else if opt?.icon}
-      <div class="row-item-icon">
-        <Icon name={opt.icon} size={16} />
-      </div>
-    {/if}
-
-    <div class="row-text">
-      <span class="row-label"
-        >{mode === 'trigger' ? (active ? opt?.label : placeholder) : opt?.label}</span
-      >
-      {#if opt?.description}
-        <span class="row-desc">{opt.description}</span>
-      {/if}
-    </div>
-
-    <div class="row-icon">
-      {#if mode === 'trigger'}
-        <Icon name="chevron" size={16} class="icon-chevron" />
-      {:else if active}
-        <div class="morph-icon-wrapper">
-          <Icon name="check" size={16} class="icon-morph icon-check" />
-          <Icon name="chevron" size={16} class="icon-morph icon-chevron-morph" />
+  {#snippet rowContent(opt: SelectOption | undefined, mode: 'trigger' | 'option', active: boolean)}
+    <div class="row-content">
+      {#if opt?.image}
+        <img src={opt.image} alt="" class="row-image" />
+      {:else if opt?.icon}
+        <div class="row-item-icon">
+          <Icon name={opt.icon} size={16} />
         </div>
       {/if}
+
+      <div class="row-text">
+        <span class="row-label"
+          >{mode === 'trigger' ? (active ? opt?.label : placeholder) : opt?.label}</span
+        >
+        {#if opt?.description}
+          <span class="row-desc">{opt.description}</span>
+        {/if}
+      </div>
+
+      <div class="row-icon">
+        {#if mode === 'trigger'}
+          <Icon name="chevron" size={16} class="icon-chevron" />
+        {:else if active}
+          <div class="morph-icon-wrapper">
+            <Icon name="check" size={16} class="icon-morph icon-check" />
+            <Icon name="chevron" size={16} class="icon-morph icon-chevron-morph" />
+          </div>
+        {/if}
+      </div>
     </div>
-  </div>
-{/snippet}
+  {/snippet}
 
-<button
-  bind:this={triggerEl}
-  class="select-trigger"
-  class:rich={isRich}
-  {disabled}
-  onclick={toggle}
-  onkeydown={handleKeydown}
-  type="button"
-  role="combobox"
-  aria-haspopup="listbox"
-  aria-controls="select-listbox"
-  aria-expanded={isOpen}
-  aria-activedescendant={isOpen && focusedIndex >= 0 ? `select-option-${focusedIndex}` : undefined}
-  style:opacity={isTriggerVisible ? 1 : 0}
-  style:height="{rowHeight}px"
->
-  {@render rowContent(selectedOption, 'trigger', !!selectedOption)}
-</button>
+  <button
+    bind:this={triggerEl}
+    class="select-trigger"
+    class:rich={isRich}
+    {disabled}
+    onclick={toggle}
+    onkeydown={handleKeydown}
+    type="button"
+    role="combobox"
+    aria-haspopup="listbox"
+    aria-controls="select-listbox"
+    aria-expanded={isOpen}
+    aria-activedescendant={isOpen && focusedIndex >= 0
+      ? `select-option-${focusedIndex}`
+      : undefined}
+    style:opacity={isTriggerVisible ? 1 : 0}
+    style:height="{rowHeight}px"
+  >
+    {@render rowContent(selectedOption, 'trigger', !!selectedOption)}
+  </button>
 
-{#if isOpen}
-  <div use:portal>
-    <button
-      class="select-backdrop"
-      onclick={close}
-      type="button"
-      tabindex="-1"
-      aria-label="Close select menu"
-    ></button>
+  {#if isOpen}
+    <div use:portal>
+      <button
+        class="select-backdrop"
+        onclick={close}
+        type="button"
+        tabindex="-1"
+        aria-label="Close select menu"
+      ></button>
 
-    <div
-      bind:this={dropdownEl}
-      class="select-dropdown"
-      class:closing={isClosing}
-      class:animating={isAnimating}
-      style="{dropdownStyle} {themeStyle}"
-      onanimationend={onAnimationEnd}
-      onkeydown={handleKeydown}
-      role="listbox"
-      id="select-listbox"
-      tabindex="-1"
-      aria-label={placeholder}
-    >
-      <div class="select-list">
+      <div
+        bind:this={dropdownEl}
+        class="select-dropdown"
+        class:closing={isClosing}
+        class:animating={isAnimating}
+        style="{dropdownStyle} {themeStyle}"
+        onanimationend={onAnimationEnd}
+        onkeydown={handleKeydown}
+        role="listbox"
+        id="select-listbox"
+        tabindex="-1"
+        aria-label={placeholder}
+      >
+        <div class="select-list">
+          {#each options as option, i}
+            {@const isActive = option.value === value}
+            {@const isFocused = i === focusedIndex}
+            <button
+              id="select-option-{i}"
+              class="select-option"
+              class:selected={isActive}
+              class:focused={isFocused}
+              class:rich={isRich}
+              onclick={() => select(option)}
+              onmouseenter={() => {
+                focusedIndex = i;
+              }}
+              type="button"
+              role="option"
+              aria-selected={isActive}
+              style:height="{rowHeight}px"
+            >
+              {@render rowContent(option, 'option', isActive)}
+            </button>
+          {/each}
+        </div>
+      </div>
+    </div>
+  {/if}
+{:else}
+  <button
+    bind:this={triggerEl}
+    class="sd-trigger"
+    {disabled}
+    onclick={toggleSimple}
+    onkeydown={handleKeydownSimple}
+    type="button"
+    role="combobox"
+    aria-haspopup="listbox"
+    aria-controls="sd-listbox"
+    aria-expanded={isOpen}
+    aria-activedescendant={isOpen && focusedIndex >= 0 ? `sd-option-${focusedIndex}` : undefined}
+  >
+    <span class="sd-trigger-label">
+      {selectedOption?.label ?? placeholder}
+    </span>
+    <Icon name="chevron" size={14} class="sd-chevron {isOpen ? 'sd-chevron-open' : ''}" />
+  </button>
+
+  {#if isOpen}
+    <div use:portal>
+      <button
+        class="sd-backdrop"
+        onclick={close}
+        type="button"
+        tabindex="-1"
+        aria-label="Close select menu"
+      ></button>
+
+      <div
+        bind:this={dropdownEl}
+        class="sd-dropdown"
+        class:sd-above={simpleLayout.above}
+        style="top:{simpleLayout.top}px;left:{simpleLayout.left}px;width:{simpleLayout.width}px;"
+        onkeydown={handleKeydownSimple}
+        role="listbox"
+        id="sd-listbox"
+        tabindex="-1"
+        aria-label={placeholder}
+      >
         {#each options as option, i}
           {@const isActive = option.value === value}
           {@const isFocused = i === focusedIndex}
           <button
-            id="select-option-{i}"
-            class="select-option"
-            class:selected={isActive}
-            class:focused={isFocused}
-            class:rich={isRich}
+            id="sd-option-{i}"
+            class="sd-option"
+            class:sd-option-active={isActive}
+            class:sd-option-focused={isFocused}
             onclick={() => select(option)}
             onmouseenter={() => {
               focusedIndex = i;
@@ -401,79 +463,13 @@
             type="button"
             role="option"
             aria-selected={isActive}
-            style:height="{rowHeight}px"
           >
-            {@render rowContent(option, 'option', isActive)}
+            {option.label}
           </button>
         {/each}
       </div>
     </div>
-  </div>
-{/if}
-
-{:else}
-
-<button
-  bind:this={triggerEl}
-  class="sd-trigger"
-  {disabled}
-  onclick={toggleSimple}
-  onkeydown={handleKeydownSimple}
-  type="button"
-  role="combobox"
-  aria-haspopup="listbox"
-  aria-controls="sd-listbox"
-  aria-expanded={isOpen}
-  aria-activedescendant={isOpen && focusedIndex >= 0 ? `sd-option-${focusedIndex}` : undefined}
->
-  <span class="sd-trigger-label">
-    {selectedOption?.label ?? placeholder}
-  </span>
-  <Icon name="chevron" size={14} class="sd-chevron {isOpen ? 'sd-chevron-open' : ''}" />
-</button>
-
-{#if isOpen}
-  <div use:portal>
-    <button
-      class="sd-backdrop"
-      onclick={close}
-      type="button"
-      tabindex="-1"
-      aria-label="Close select menu"
-    ></button>
-
-    <div
-      bind:this={dropdownEl}
-      class="sd-dropdown"
-      class:sd-above={simpleLayout.above}
-      style="top:{simpleLayout.top}px;left:{simpleLayout.left}px;width:{simpleLayout.width}px;"
-      onkeydown={handleKeydownSimple}
-      role="listbox"
-      id="sd-listbox"
-      tabindex="-1"
-      aria-label={placeholder}
-    >
-      {#each options as option, i}
-        {@const isActive = option.value === value}
-        {@const isFocused = i === focusedIndex}
-        <button
-          id="sd-option-{i}"
-          class="sd-option"
-          class:sd-option-active={isActive}
-          class:sd-option-focused={isFocused}
-          onclick={() => select(option)}
-          onmouseenter={() => { focusedIndex = i; }}
-          type="button"
-          role="option"
-          aria-selected={isActive}
-        >
-          {option.label}
-        </button>
-      {/each}
-    </div>
-  </div>
-{/if}
-
+  {/if}
 {/if}
 
 <style>

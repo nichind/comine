@@ -41,7 +41,9 @@ pub fn resolve_gallery_dl_path(app: &AppHandle) -> Option<PathBuf> {
 
 async fn fetch_latest_release(proxy_config: &ProxyConfig) -> Result<GitHubRelease, String> {
     let url = "https://codeberg.org/api/v1/repos/mikf/gallery-dl/releases/latest";
-    fetch_json(url, proxy_config).await.map_err(|e| e.to_string())
+    fetch_json(url, proxy_config)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 pub async fn check_gallery_dl(

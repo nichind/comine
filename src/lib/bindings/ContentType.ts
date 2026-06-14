@@ -4,4 +4,13 @@
  * Content type hint - UI can use this to select primary layout,
  * but should ALWAYS render components based on what data exists.
  */
-export type ContentType = "Video" | "Audio" | "Image" | "Gallery" | "Torrent" | "File" | "Playlist" | "Article" | "Other";
+export type ContentType =
+  | 'Video'
+  | 'Audio'
+  | 'Image'
+  | 'Gallery'
+  | 'Torrent'
+  | 'File'
+  | 'Playlist'
+  | 'Article'
+  | 'Other';
